@@ -21,7 +21,7 @@ public static class OrganisationEndpoints
     public static void MapOrganisationEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/admin/organisations")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
 
         // The sales queue. Not a report — a work list.
@@ -37,7 +37,7 @@ public static class OrganisationEndpoints
         // Plans are platform-wide reference data, not tenant data — no RLS,
         // no scope switch, just the catalogue the change-plan dialog offers.
         var plans = app.MapGroup("/api/admin/plans")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         plans.MapGet("/", PlansAsync);
         plans.MapPost("/", CreatePlanAsync);
@@ -53,7 +53,7 @@ public static class OrganisationEndpoints
         // does, drifts again. Read-only on purpose: the catalogue is changed
         // by a migration, not by an operator.
         var products = app.MapGroup("/api/admin/products")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         products.MapGet("/", ProductsAsync);
     }
@@ -73,14 +73,20 @@ public static class OrganisationEndpoints
     {
         var plans = await db.Plans.AsNoTracking()
             .OrderBy(p => p.PricePerUserMonthly ?? p.PriceMonthly ?? 0)
-            .Select(p => new
-            {
-                p.Id, p.Name, p.MaxUsers, p.StorageModel,
-                p.PerUserQuotaBytes, p.PooledStorageBytes, p.MaxDomains,
-                p.IncludedProducts, p.PricePerUserMonthly, p.PriceMonthly,
-            })
             .ToListAsync(ct);
-        return Results.Ok(plans);
+        var limits = (await db.PlanFeatureLimits.AsNoTracking().ToListAsync(ct))
+            .ToLookup(l => l.PlanId);
+        return Results.Ok(plans.Select(p => new
+        {
+            p.Id, p.Name, p.MaxUsers, p.StorageModel,
+            p.PerUserQuotaBytes, p.PooledStorageBytes, p.MaxDomains,
+            p.IncludedProducts, p.PricePerUserMonthly, p.PriceMonthly,
+            p.AiCreditModel, p.AiCreditsPerUser, p.AiCreditsPooled,
+            p.PricePerUserYearly, p.PriceYearly,
+            // null = every feature of the included modules (see PlanEntitlements).
+            p.IncludedFeatures,
+            featureLimits = limits[p.Id].ToDictionary(l => l.FeatureCode, l => l.LimitValue),
+        }));
     }
 
     private static string? ValidatePlan(UpsertPlanRequest req)
@@ -92,6 +98,44 @@ public static class OrganisationEndpoints
             return "A per-user plan needs a per-user storage quota.";
         if (req.StorageModel == "pooled" && req.PooledStorageBytes is null or <= 0)
             return "A pooled plan needs a pool size.";
+        if (req.AiCreditModel is not (null or "per_user" or "pooled"))
+            return "AI credit model must be 'per_user' or 'pooled'.";
+        if (req.PricePerUserYearly is < 0 || req.PriceYearly is < 0)
+            return "Yearly prices cannot be negative. Leave empty for twelve times the monthly price.";
+        if (req.AiCreditsPerUser is < 0 || req.AiCreditsPooled is < 0)
+            return "AI credits cannot be negative. Leave it empty for no limit, or 0 for none.";
+        return null;
+    }
+
+    /// <summary>
+    /// The plan's features and limits, from the request. Codes are checked
+    /// against core.features here for a clear message; the foreign keys would
+    /// refuse them anyway, as a 500.
+    /// </summary>
+    private static async Task<string?> ApplyFeaturesAsync(
+        AppDbContext db, Plan plan, UpsertPlanRequest req, CancellationToken ct)
+    {
+        var catalogue = await db.Features.AsNoTracking().ToDictionaryAsync(f => f.Code, f => f.Kind, ct);
+
+        if (req.AllFeatures == true) plan.IncludedFeatures = null;
+        else if (req.IncludedFeatures is not null)
+        {
+            var unknown = req.IncludedFeatures.Where(c => catalogue.GetValueOrDefault(c) != "switch").ToList();
+            if (unknown.Count > 0) return $"Not a feature that can be included: {string.Join(", ", unknown)}.";
+            plan.IncludedFeatures = req.IncludedFeatures.Distinct().OrderBy(c => c).ToArray();
+        }
+
+        if (req.FeatureLimits is not null)
+        {
+            var bad = req.FeatureLimits.Where(kv => catalogue.GetValueOrDefault(kv.Key) != "limit" || kv.Value < 0)
+                .Select(kv => kv.Key).ToList();
+            if (bad.Count > 0) return $"Not a limit, or a negative number: {string.Join(", ", bad)}.";
+
+            var existing = await db.PlanFeatureLimits.Where(l => l.PlanId == plan.Id).ToListAsync(ct);
+            db.PlanFeatureLimits.RemoveRange(existing);
+            foreach (var (code, value) in req.FeatureLimits)
+                db.PlanFeatureLimits.Add(new PlanFeatureLimit { PlanId = plan.Id, FeatureCode = code, LimitValue = value });
+        }
         return null;
     }
 
@@ -111,11 +155,16 @@ public static class OrganisationEndpoints
             IncludedProducts = req.IncludedProducts ?? ["mail"],
             PricePerUserMonthly = req.PricePerUserMonthly,
             PriceMonthly = req.PriceMonthly,
+            PricePerUserYearly = req.PricePerUserMonthly is null ? null : req.PricePerUserYearly,
+            PriceYearly = req.PriceMonthly is null ? null : req.PriceYearly,
         };
+        ApplyAiCredits(plan, req);
         db.Plans.Add(plan);
+        if (await ApplyFeaturesAsync(db, plan, req, ct) is string ferr)
+            return Results.BadRequest(new { error = ferr });
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("plan.created", "plan", plan.Id.ToString(),
-            after: new { plan.Name, plan.StorageModel }, ct: ct);
+            after: new { plan.Name, plan.StorageModel, plan.IncludedFeatures, req.FeatureLimits }, ct: ct);
         return Results.Created($"/api/admin/plans/{plan.Id}", new { plan.Id, plan.Name });
     }
 
@@ -126,7 +175,13 @@ public static class OrganisationEndpoints
         if (plan is null) return Results.NotFound();
         if (ValidatePlan(req) is string err) return Results.BadRequest(new { error = err });
 
-        var before = new { plan.Name, plan.MaxUsers, plan.PricePerUserMonthly, plan.PriceMonthly };
+        var before = new
+        {
+            plan.Name, plan.MaxUsers, plan.PricePerUserMonthly, plan.PriceMonthly, plan.IncludedFeatures,
+            plan.AiCreditModel, plan.AiCreditsPerUser, plan.AiCreditsPooled,
+            featureLimits = await db.PlanFeatureLimits.AsNoTracking().Where(l => l.PlanId == id)
+                .ToDictionaryAsync(l => l.FeatureCode, l => l.LimitValue, ct),
+        };
 
         // Editing a plan changes it for GROWTH — the seat/domain/quota limits it
         // imposes on new users and domains. It does NOT retroactively resize the
@@ -141,11 +196,30 @@ public static class OrganisationEndpoints
         if (req.IncludedProducts is not null) plan.IncludedProducts = req.IncludedProducts;
         plan.PricePerUserMonthly = req.PricePerUserMonthly;
         plan.PriceMonthly = req.PriceMonthly;
+        plan.PricePerUserYearly = req.PricePerUserMonthly is null ? null : req.PricePerUserYearly;
+        plan.PriceYearly = req.PriceMonthly is null ? null : req.PriceYearly;
+        ApplyAiCredits(plan, req);
+        if (await ApplyFeaturesAsync(db, plan, req, ct) is string ferr)
+            return Results.BadRequest(new { error = ferr });
 
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("plan.updated", "plan", id.ToString(),
-            before: before, after: new { plan.Name, plan.MaxUsers }, ct: ct);
+            before: before, after: new { plan.Name, plan.MaxUsers, plan.IncludedFeatures, req.FeatureLimits,
+                                         plan.AiCreditModel, plan.AiCreditsPerUser, plan.AiCreditsPooled }, ct: ct);
         return Results.Ok(new { plan.Id, plan.Name });
+    }
+
+    /// <summary>
+    /// AI credits on a plan. Only the amount for the chosen model is kept —
+    /// switching a plan from pooled to per-user must not quietly keep the old
+    /// pool (the same rule the storage fields follow). Sent nothing = leave as is.
+    /// </summary>
+    private static void ApplyAiCredits(Plan plan, UpsertPlanRequest req)
+    {
+        if (req.AiCreditModel is null) return;
+        plan.AiCreditModel = req.AiCreditModel;
+        plan.AiCreditsPerUser = req.AiCreditModel == "per_user" ? req.AiCreditsPerUser : null;
+        plan.AiCreditsPooled = req.AiCreditModel == "pooled" ? req.AiCreditsPooled : null;
     }
 
     private static async Task<IResult> DeletePlanAsync(
@@ -626,7 +700,7 @@ public static class OrganisationEndpoints
     // ------------------------------------------------------------------
 
     private static Guid CurrentUserId(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var id) ? id : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 
     /// <summary>
     /// Turns "ABC School & Co." into abcschool.tatvaos.com, adding a numeric

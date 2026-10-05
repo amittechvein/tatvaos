@@ -25,7 +25,16 @@ export interface ThreadRow {
   isRead: boolean;
   /** A conversation legitimately spans Inbox and Sent — say which. */
   folderName?: string | null;
+  /**
+   * Other stored copies of this SAME message. Mail you address to yourself
+   * is held twice, in Sent and in Inbox; the server folds the pair into one
+   * row, and the open message may be the copy the row does not carry.
+   */
+  copyIds?: string[];
 }
+
+/** True when the row is this message, or stands for it. */
+const rowIs = (t: ThreadRow, id: string) => t.id === id || (t.copyIds ?? []).includes(id);
 
 /** An outlined icon button, matching the template's reading-pane toolbar. */
 function ToolButton({
@@ -108,6 +117,8 @@ export function MessageView({
   onMove,
   canArchive = true,
   footer,
+  responding = null,
+  aboveBody,
 }: {
   message: Message;
   bodyLoading?: boolean;
@@ -153,6 +164,17 @@ export function MessageView({
    * See the note where it is placed.
    */
   footer?: React.ReactNode;
+  /**
+   * A response to THIS message is being written, and `footer` is it. Hides
+   * the Reply row under the message (the box has replaced it) and captions
+   * the box with whose message it answers. Null: nothing is being written.
+   */
+  responding?: 'reply' | 'replyAll' | 'forward' | null;
+  /**
+   * Shown above the conversation — the TatvaOS AI summary button and panel
+   * (26 Sept 2026). The caller decides whether there is one.
+   */
+  aboveBody?: React.ReactNode;
   /**
    * The rest of this conversation, oldest first, INCLUDING the open message.
    *
@@ -248,6 +270,19 @@ export function MessageView({
           day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
         })}
       </time>
+      {/* Reply, ON the message. The toolbar's Reply is a screen away from a
+          message opened half-way down a long trail, and nothing about it said
+          which mail it would answer (client report, 28 Sept 2026). This one
+          cannot be misread: it is in the header of the mail it replies to. */}
+      <button
+        type="button"
+        onClick={() => onReply(message, 'reply')}
+        aria-label={`Reply to ${displayName(message.from)}`}
+        title="Reply to this message"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ink-muted transition hover:bg-canvas hover:text-ink"
+      >
+        <Icon name="reply" className="h-4 w-4" />
+      </button>
 
       {details && (
         <>
@@ -378,6 +413,56 @@ export function MessageView({
       </div>
     </div>
   ) : null;
+
+  // ── WHICH MAIL IS THIS A REPLY TO? ───────────────────────────────────────
+  //
+  //  A client of ShippingXpress, 28 September 2026: in Gmail every mail in
+  //  a trail has its own Reply, so you know which one you are answering;
+  //  here there was one reply box for the whole trail and no telling what it
+  //  was attached to. He was right. The box was drawn after the LAST row of
+  //  the conversation whichever message it answered, so a reply to the
+  //  second of five mails sat under the fifth.
+  //
+  //  Both halves now belong to the open message and are drawn inside it:
+  //  the row of choices, and then the box that replaces it, captioned with
+  //  whose mail it answers and when that mail was sent.
+  const pill = 'inline-flex h-9 items-center gap-1.5 rounded-full border border-line bg-surface pl-3 pr-3.5 text-[13px] font-medium text-ink transition hover:bg-canvas';
+  const respond = (
+    <>
+      {!responding && (
+        <div className="mt-6 flex flex-wrap gap-2" data-tv-reply-row>
+          <button type="button" className={pill} onClick={() => onReply(message, 'reply')}>
+            <Icon name="reply" className="h-4 w-4" />
+            Reply
+          </button>
+          <button type="button" className={pill} onClick={() => onReply(message, 'replyAll')}>
+            <Icon name="reply-all" className="h-4 w-4" />
+            Reply all
+          </button>
+          <button type="button" className={pill} onClick={() => onReply(message, 'forward')}>
+            <Icon name="forward" className="h-4 w-4" />
+            Forward
+          </button>
+        </div>
+      )}
+      {footer && (
+        <div className="mt-5" data-tv-reply-area>
+          {responding && (
+            <p className="mb-2 text-xs text-ink-muted" data-tv-reply-caption>
+              {responding === 'forward' ? 'Forwarding the message from ' : 'Replying to '}
+              <span className="font-medium text-ink">{displayName(message.from)}</span>
+              {' · '}
+              {new Date(message.sentAt).toLocaleString(undefined, {
+                day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
+              })}
+            </p>
+          )}
+          {footer}
+        </div>
+      )}
+    </>
+  );
+
   return (
     <article className="flex h-full flex-col overflow-hidden rounded-card border border-line bg-surface">
       {/* Toolbar — the open-message action row */}
@@ -513,6 +598,7 @@ export function MessageView({
           furniture. The conversation IS the content, so it gets the pane.
       ------------------------------------------------------------------ */}
       <div className="scroll-thin flex-1 overflow-y-auto">
+        {aboveBody}
         {isThread && threadTotal && threadTotal > ordered.length ? (
           <p className="border-b border-line bg-canvas/50 px-4 py-1.5 text-xs text-ink-muted">
             Showing the most recent {ordered.length} of {threadTotal} messages.
@@ -522,7 +608,10 @@ export function MessageView({
         {isThread ? (
           <ul className="list-none p-0">
             {ordered.map((t) => {
-              const isOpen = t.id === message.id;
+              // By copy as well as by id: opened from Inbox, a mail you sent
+              // yourself is the DELIVERED copy, and the row carries the Sent
+              // one. Matching on id alone drew the open message nowhere.
+              const isOpen = rowIs(t, message.id);
               if (!isOpen) {
                 return (
                   <li key={t.id} className="border-b border-line">
@@ -539,11 +628,21 @@ export function MessageView({
                       <span className="min-w-0 flex-1 truncate text-xs text-ink-faint">
                         {t.snippet}
                       </span>
-                      <span className="shrink-0 text-xs text-ink-faint">
-                        {new Date(t.sentAt).toLocaleDateString(undefined,
-                          { day: 'numeric', month: 'short' })}
+                      {/* Date AND time. Amit, 25 Sept 2026: two replies on the
+                          same day both read "Sep 23", so the strip could not say
+                          which came first or how far apart they were — the open
+                          message showed its time and the collapsed ones did not.
+                          The year appears only when it is not this year, so the
+                          row stays short for the common case. */}
+                      <time dateTime={t.sentAt} className="shrink-0 text-xs text-ink-faint">
+                        {new Date(t.sentAt).toLocaleString(undefined, {
+                          day: 'numeric', month: 'short',
+                          ...(new Date(t.sentAt).getFullYear() !== new Date().getFullYear()
+                            ? { year: 'numeric' } : {}),
+                          hour: 'numeric', minute: '2-digit',
+                        })}
                         {t.folderName ? ` · ${t.folderName}` : ''}
-                      </span>
+                      </time>
                     </button>
                   </li>
                 );
@@ -554,6 +653,7 @@ export function MessageView({
                   <div className="px-6 py-5">
                     {body}
                     {attachments}
+                    {respond}
                   </div>
                 </li>
               );
@@ -565,6 +665,7 @@ export function MessageView({
             <div className="px-6 py-5">
               {body}
               {attachments}
+              {respond}
             </div>
           </>
         )}
@@ -575,11 +676,11 @@ export function MessageView({
             column, so opening a reply squeezed the message to a sliver and
             the screen read as two panels arguing over the height.
 
-            Rendered here it is the last thing in the message's own scroll
-            container, which is where Gmail puts it and what "reply" means —
-            you scroll past what was written to write back. The message keeps
-            its height; the reply is below it. */}
-        {footer && <div className="px-6 pb-6">{footer}</div>}
+            It is the last thing in the MESSAGE now - `respond`, above - and
+            still inside this scroll container, which is what that fix needed.
+            Until 28 September it was the last thing in the CONVERSATION
+            instead, which for any message but the newest put the reply
+            under somebody else's mail. */}
       </div>
     </article>
   );
