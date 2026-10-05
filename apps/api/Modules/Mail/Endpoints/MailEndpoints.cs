@@ -1565,19 +1565,87 @@ public static class MailEndpoints
             db.Messages.AsNoTracking().Where(m => m.MailboxId == box.Id), term,
             searchCtx, hideBin: true);
 
-        var total = await query.CountAsync(ct);
+        var from = Math.Max(0, skip ?? 0);
+        var size = Math.Clamp(take ?? 50, 1, MaxPageSize);
+        // Id breaks ties, so the same search always comes back in the same
+        // order: two copies of one mail are stored within a second of each
+        // other, and a page boundary between them must not move.
+        var ordered = query.OrderByDescending(m => m.ReceivedAt).ThenBy(m => m.Id);
 
-        var rows = await query
-            .OrderByDescending(m => m.ReceivedAt)
-            .Skip(Math.Max(0, skip ?? 0))
-            .Take(Math.Clamp(take ?? 50, 1, MaxPageSize))
+        // ── ONE ROW PER MAIL. ────────────────────────────────────────────
+        //
+        //  Mail you address to yourself is stored twice - the Sent copy and
+        //  the delivered one - and search listed both, which reads as "it
+        //  was sent twice" (client report, 28 Sept 2026; the conversation
+        //  was fixed first, in ThreadAsync). Folded from the top of the
+        //  result, not inside the page: see MailThreadCopies.Page for why.
+        //
+        //  Only copies that BOTH match the search fold. "in:inbox" finds the
+        //  delivered copy alone and shows it; nothing is hidden because a
+        //  copy of it exists somewhere the search did not look.
+        //
+        //  Past FoldDepth results deep the page is served as it always was,
+        //  unfolded. Reading the top of the list grows with skip, and skip is
+        //  a number the caller chooses.
+        const int FoldDepth = 5000;
+        // Written as a subtraction: skip is the caller's, and from + size
+        // overflows to a negative number - which is "<= FoldDepth" - for a
+        // skip near the top of int.
+        var folds = from <= FoldDepth - size;
+
+        int total;
+        var pageIds = new List<Guid>();
+        var copiesOf = new Dictionary<Guid, List<Guid>>();
+        if (folds)
+        {
+            var sentIds = searchCtx.FolderIdsBySpecialUse.TryGetValue("\\Sent", out var s) ? s : [];
+            var window = await ordered
+                .Take(MailThreadCopies.Window(from, size))
+                .Select(m => new { m.Id, m.FolderId, m.MessageIdHeader })
+                .ToListAsync(ct);
+            foreach (var g in MailThreadCopies.Page(
+                window, m => m.MessageIdHeader, m => sentIds.Contains(m.FolderId), from, size))
+            {
+                pageIds.Add(g.Shown.Id);
+                copiesOf[g.Shown.Id] = g.Copies.Where(c => c.Id != g.Shown.Id).Select(c => c.Id).ToList();
+            }
+
+            // Mails, not stored rows: those with no Message-ID count once
+            // each, the rest once per Message-ID.
+            //
+            // Compared BARE, as Fold compares them. Measured on 28 Sept 2026
+            // with one copy stored as <id> and the other as id: the rows
+            // folded to one and this still said "2 results", because an
+            // exact DISTINCT sees two strings. A count that disagrees with
+            // the list under it is how "it was sent twice" started.
+            var raw = await query.CountAsync(ct);
+            if (raw <= window.Count)
+                // The window IS the whole result: count what was folded.
+                total = MailThreadCopies.Fold(
+                    window, m => m.MessageIdHeader, m => sentIds.Contains(m.FolderId)).Count;
+            else
+                total = await query.CountAsync(m => m.MessageIdHeader == null || m.MessageIdHeader == "", ct)
+                      + await query.Where(m => m.MessageIdHeader != null && m.MessageIdHeader != "")
+                                   .Select(m => m.MessageIdHeader!.Trim('<', '>'))
+                                   .Distinct().CountAsync(ct);
+        }
+        else
+        {
+            total = await query.CountAsync(ct);
+            pageIds = await ordered.Skip(from).Take(size).Select(m => m.Id).ToListAsync(ct);
+        }
+
+        var found = await db.Messages.AsNoTracking()
+            .Where(m => m.MailboxId == box.Id && pageIds.Contains(m.Id))
             .Select(m => new
             {
                 m.Id, m.FolderId, m.ThreadId, m.FromName, m.FromAddr, m.ToAddrs,
                 m.CcAddrs, m.Subject, m.Snippet, m.SentAt, m.ReceivedAt,
                 m.SizeBytes, m.IsRead, m.IsFlagged, m.HasAttachments, m.CategoryId,
             })
-            .ToListAsync(ct);
+            .ToDictionaryAsync(m => m.Id, ct);
+        // Back into the order the search put them in; `found` has none.
+        var rows = pageIds.Where(found.ContainsKey).Select(id => found[id]).ToList();
 
         // Folder names for the hits, so a result can say where it lives —
         // one query for the page rather than one per row.
@@ -1595,6 +1663,8 @@ public static class MailEndpoints
             messages = rows.Select(m => new
             {
                 id = m.Id,
+                // Other stored copies of this same mail that also matched.
+                copyIds = copiesOf.TryGetValue(m.Id, out var others) ? others : [],
                 folderId = m.FolderId,
                 folderName = folderNames.TryGetValue(m.FolderId, out var f) ? f.name : null,
                 folderSlug = folderNames.TryGetValue(m.FolderId, out var f2) ? f2.slug : null,
@@ -1664,6 +1734,7 @@ public static class MailEndpoints
                 m.Id, m.FolderId, m.ThreadId, m.FromName, m.FromAddr, m.ToAddrs,
                 m.CcAddrs, m.Subject, m.Snippet, m.SentAt, m.ReceivedAt,
                 m.SizeBytes, m.IsRead, m.IsFlagged, m.HasAttachments, m.CategoryId,
+                m.MessageIdHeader,
             })
             .ToListAsync(ct);
 
@@ -1674,31 +1745,56 @@ public static class MailEndpoints
             .Where(f => folderIds.Contains(f.Id))
             .ToDictionaryAsync(
                 f => f.Id,
-                f => new { name = f.SpecialUse == "\\Inbox" ? "Inbox" : f.Name, slug = SlugFor(f.SpecialUse) },
+                f => new
+                {
+                    name = f.SpecialUse == "\\Inbox" ? "Inbox" : f.Name,
+                    slug = SlugFor(f.SpecialUse),
+                    sent = f.SpecialUse == "\\Sent",
+                },
                 ct);
+
+        // A message addressed to yourself is in this mailbox twice - the Sent
+        // copy and the delivered one - and drawn twice it reads as "sent
+        // twice". One row per message; see MailThreadCopies for the report
+        // that found it. Folded AFTER the cap, in memory, so the count is
+        // corrected by exactly what was folded in the rows on hand.
+        var shown = MailThreadCopies.Fold(
+            rows,
+            m => m.MessageIdHeader,
+            m => folders.TryGetValue(m.FolderId, out var f0) && f0.sent);
+        total -= rows.Count - shown.Count;
 
         return Results.Ok(new
         {
             total,
-            messages = rows.Select(m => new
+            messages = shown.Select(g =>
             {
-                id = m.Id,
-                folderId = m.FolderId,
-                folderName = folders.TryGetValue(m.FolderId, out var f) ? f.name : null,
-                folderSlug = folders.TryGetValue(m.FolderId, out var f2) ? f2.slug : null,
-                threadId = m.ThreadId,
-                from = new { name = m.FromName, email = m.FromAddr ?? "" },
-                to = (m.ToAddrs ?? []).Select(a => new { name = (string?)null, email = a }).ToList(),
-                cc = (m.CcAddrs ?? []).Select(a => new { name = (string?)null, email = a }).ToList(),
-                subject = m.Subject ?? "",
-                snippet = m.Snippet ?? "",
-                sentAt = m.SentAt ?? m.ReceivedAt,
-                receivedAt = m.ReceivedAt,
-                sizeBytes = m.SizeBytes,
-                isRead = m.IsRead,
-                isFlagged = m.IsFlagged,
-                hasAttachments = m.HasAttachments,
-            categoryId = m.CategoryId,
+                var m = g.Shown;
+                return new
+                {
+                    id = m.Id,
+                    // The OTHER rows this one stands for. The reading pane may
+                    // have the delivered copy open while the strip shows the
+                    // Sent one; without these it cannot tell that they are the
+                    // same message and draws the open message nowhere at all.
+                    copyIds = g.Copies.Where(c => c.Id != m.Id).Select(c => c.Id).ToList(),
+                    folderId = m.FolderId,
+                    folderName = folders.TryGetValue(m.FolderId, out var f) ? f.name : null,
+                    folderSlug = folders.TryGetValue(m.FolderId, out var f2) ? f2.slug : null,
+                    threadId = m.ThreadId,
+                    from = new { name = m.FromName, email = m.FromAddr ?? "" },
+                    to = (m.ToAddrs ?? []).Select(a => new { name = (string?)null, email = a }).ToList(),
+                    cc = (m.CcAddrs ?? []).Select(a => new { name = (string?)null, email = a }).ToList(),
+                    subject = m.Subject ?? "",
+                    snippet = m.Snippet ?? "",
+                    sentAt = m.SentAt ?? m.ReceivedAt,
+                    receivedAt = m.ReceivedAt,
+                    sizeBytes = m.SizeBytes,
+                    isRead = m.IsRead,
+                    isFlagged = m.IsFlagged,
+                    hasAttachments = m.HasAttachments,
+                    categoryId = m.CategoryId,
+                };
             }).ToList(),
         });
     }
@@ -1857,7 +1953,7 @@ public static class MailEndpoints
     // ------------------------------------------------------------------
     private static async Task<IResult> ListThreadsAsync(
         Guid folderId, Guid? mailboxId, AppDbContext db, TenantContext tenant,
-        int? skip, int? take, CancellationToken ct)
+        int? skip, int? take, string? aiLabel, CancellationToken ct)
     {
         var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null) return Results.NotFound();
@@ -1869,14 +1965,26 @@ public static class MailEndpoints
         var scope = db.Messages.AsNoTracking()
             .Where(m => m.MailboxId == box.Id && m.FolderId == folderId);
 
-        var total = await scope.Select(m => m.ThreadId ?? m.Id).Distinct().CountAsync(ct);
+        // TatvaOS AI's inbox tabs (Mail AI step 3): only conversations holding
+        // a message with that label. The rows below still carry the WHOLE
+        // conversation, so a filtered row is the same row, just fewer of them.
+        var grouping = scope;
+        if (!string.IsNullOrEmpty(aiLabel))
+        {
+            if (!MailTriage.Labels.Contains(aiLabel))
+                return Results.BadRequest(new { error = "That is not one of the TatvaOS AI labels." });
+            var labelled = scope.Where(m => m.AiLabel == aiLabel).Select(m => m.ThreadId ?? m.Id);
+            grouping = scope.Where(m => labelled.Contains(m.ThreadId ?? m.Id));
+        }
+
+        var total = await grouping.Select(m => m.ThreadId ?? m.Id).Distinct().CountAsync(ct);
 
         // Two queries and an in-memory rollup, not one grouped-and-shaped
         // query. The aggregate below is restricted to Max on purpose: that is
         // the GroupBy shape EF translates reliably, and everything harder is
         // done in memory where it cannot fail at runtime on a production box
         // that has no staging in front of it.
-        var page = await scope
+        var page = await grouping
             .GroupBy(m => m.ThreadId ?? m.Id)
             .Select(g => new { Key = g.Key, Latest = g.Max(x => x.ReceivedAt) })
             .OrderByDescending(x => x.Latest)
@@ -1893,7 +2001,7 @@ public static class MailEndpoints
             .Select(m => new
             {
                 m.Id, m.ThreadId, m.FromName, m.FromAddr, m.Subject, m.Snippet,
-                m.SentAt, m.ReceivedAt, m.IsRead, m.IsFlagged, m.HasAttachments,
+                m.SentAt, m.ReceivedAt, m.IsRead, m.IsFlagged, m.HasAttachments, m.AiLabel,
             })
             .ToListAsync(ct);
 
@@ -1947,6 +2055,10 @@ public static class MailEndpoints
                     isRead = x.Msgs.All(m => m.IsRead),
                     isFlagged = x.Msgs.Any(m => m.IsFlagged),
                     hasAttachments = x.Msgs.Any(m => m.HasAttachments),
+                    // TatvaOS AI's label (step 3): the NEWEST labelled
+                    // message's, since that is what the conversation is
+                    // waiting on now. Null when sorting is off or not yet run.
+                    aiLabel = x.Msgs.LastOrDefault(m => m.AiLabel != null)?.AiLabel,
                 };
             })
             .ToList();

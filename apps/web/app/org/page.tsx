@@ -19,6 +19,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
+import { PlanWarningsNotice } from '@/components/admin/PlanWarningsNotice';
 import { Button, Card, Meter, Spinner, Stat } from '@/components/ui/Kit';
 import { Alert } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
@@ -109,6 +110,7 @@ export default function CoreOverview() {
       subtitle={`Signed in as ${user?.email ?? ''}`}
       actions={<Button variant="primary" href="/org/users">Add a person</Button>}
     >
+      <PlanWarningsNotice />
       {remaining.length > 0 && (
         <Card className="mb-6">
           <h6 className="mb-1 font-semibold">Finish setting up</h6>

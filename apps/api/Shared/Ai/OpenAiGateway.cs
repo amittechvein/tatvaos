@@ -63,7 +63,7 @@ public sealed class OpenAiGateway : IAiGateway
     /// of magnitude deliberately — two caps that drift apart are two
     /// behaviours to explain.
     /// </summary>
-    public const int MaxInputCharacters = 24_000;
+    public const int MaxInputCharacters = AiInput.MaxCharacters;
 
     /// <summary>
     /// A model that has not answered in this long is not going to. Mail's
@@ -86,6 +86,8 @@ public sealed class OpenAiGateway : IAiGateway
 
     public string? DataLocation { get; }
 
+    public string? Vendor { get; }
+
     /// <summary>
     /// Hosts whose country is public knowledge. The disclosure on the consent
     /// screen is built from Ai:DataLocation; this table is what stops that
@@ -93,9 +95,18 @@ public sealed class OpenAiGateway : IAiGateway
     /// keeps the old location string fails closed here, at startup, instead
     /// of on a school's consent screen.
     /// </summary>
-    private static readonly (string Host, string Country)[] KnownHosts =
+    ///
+    /// The VENDOR is guarded the same way (Mr. Singh, 30 Sept 2026: name
+    /// OpenAI in the admin page's own sentences, "with the vendor guarded like
+    /// the location"). A known host names its own vendor, so Ai:Vendor may be
+    /// left unset for it - production's .env has no such line, and requiring
+    /// one would have turned AI off on the deploy that introduced it - but a
+    /// value that contradicts the host is refused. An unknown host must state
+    /// its vendor, exactly as it must state its location.
+    /// </summary>
+    private static readonly (string Host, string Country, string Vendor)[] KnownHosts =
     [
-        ("api.openai.com", "United States"),
+        ("api.openai.com", "United States", "OpenAI"),
     ];
 
     public OpenAiGateway(
@@ -125,15 +136,39 @@ public sealed class OpenAiGateway : IAiGateway
             _apiKey = null;
         }
 
+        var vendor = config["Ai:Vendor"]?.Trim();
+        if (string.IsNullOrWhiteSpace(vendor)) vendor = null;
+
         var host = Uri.TryCreate(_baseUrl, UriKind.Absolute, out var u) ? u.Host : "";
-        foreach (var (knownHost, country) in KnownHosts)
+        var known = false;
+        foreach (var (knownHost, country, knownVendor) in KnownHosts)
         {
             if (!string.Equals(host, knownHost, StringComparison.OrdinalIgnoreCase)) continue;
-            if (location is not null && location.Contains(country, StringComparison.OrdinalIgnoreCase)) continue;
+            known = true;
+            if (location is null || !location.Contains(country, StringComparison.OrdinalIgnoreCase))
+            {
+                _log.LogError(
+                    "Ai:BaseUrl points at {Host}, which is in {Country}, but Ai:DataLocation says "
+                    + "'{Location}'. Refused: the consent screen would name the wrong place.",
+                    host, country, location ?? "(unset)");
+                _apiKey = null;
+            }
+            if (vendor is not null && !string.Equals(vendor, knownVendor, StringComparison.OrdinalIgnoreCase))
+            {
+                _log.LogError(
+                    "Ai:BaseUrl points at {Host}, which is {KnownVendor}, but Ai:Vendor says '{Vendor}'. "
+                    + "Refused: the consent screen would name the wrong company.",
+                    host, knownVendor, vendor);
+                _apiKey = null;
+            }
+            vendor ??= knownVendor;
+        }
+        if (!known && vendor is null && !string.IsNullOrWhiteSpace(_apiKey))
+        {
             _log.LogError(
-                "Ai:BaseUrl points at {Host}, which is in {Country}, but Ai:DataLocation says "
-                + "'{Location}'. Refused: the consent screen would name the wrong place.",
-                host, country, location ?? "(unset)");
+                "Ai:BaseUrl points at {Host}, which this gateway does not know, and Ai:Vendor is not set. "
+                + "Refused: AI features are unavailable until the company the data goes to is stated.",
+                host);
             _apiKey = null;
         }
 
@@ -150,6 +185,7 @@ public sealed class OpenAiGateway : IAiGateway
         }
 
         DataLocation = _apiKey is not null ? location : null;
+        Vendor = _apiKey is not null ? vendor : null;
     }
 
     public bool IsConfigured => _apiKey is not null && Model.Length > 0;
@@ -203,7 +239,7 @@ public sealed class OpenAiGateway : IAiGateway
     }
 
     public async Task<AiResult> CompleteAsync(
-        string instruction, string input, CancellationToken ct)
+        string instruction, string input, CancellationToken ct, string feature)
     {
         if (!IsConfigured)
             return AiResult.Failed("AI features are not switched on for this server.");

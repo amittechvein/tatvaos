@@ -47,6 +47,22 @@ bad()  { printf '   %s[FAIL]%s %s\n' "$R" "$X" "$1"; }
 warn() { printf '   %s[warn]%s %s\n' "$Y" "$X" "$1"; }
 note() { printf '   %s%s%s\n' "$D" "$1" "$X"; }
 
+# ONE OPTION AT MOST, AND ONLY ONE WE KNOW. Until 2 Oct 2026 an argument this
+# script did not recognise was ignored and a FULL backup ran - found when
+# --recordings-only, before it existed, made a set and thinned the bucket
+# from 120 to 22 in a test. A typo (--recordings-onyl) or an option from
+# another script must do nothing, and say so, before anything is touched.
+# (Mr. Singh: "a script that silently ignores a flag is a hazard".)
+if [ "$#" -gt 1 ]; then
+    bad "one option at most (got $#: $*) — nothing was done"
+    exit 2
+fi
+case "${1:-}" in
+    ""|--install|--recordings-only) ;;
+    *)  bad "unknown option \"$1\" — nothing was done. Options: --install, --recordings-only, or none for a full backup."
+        exit 2 ;;
+esac
+
 DEST="${BACKUP_DIR:-/srv/backups/tatvaos}"
 
 # The config file loads FIRST, before any BACKUP_* default is read — it used
@@ -94,6 +110,132 @@ STAMP=$(date -u +%Y%m%d-%H%M%S)
 OUT="${DEST}/${STAMP}"
 
 # ---------------------------------------------------------------------------
+#  Off-box copy of meeting recordings. Defined here so --recordings-only
+#  (below the lock) can run it alone; a full run calls it after the main
+#  set's upload, at the step of the same name.
+#
+#  Recordings are the one artefact the scheduled set leaves out (every two
+#  hours on production since 26 Sept 2026): at ~10 GB they would triple every
+#  upload (Mr. Singh, 24 Sept 2026). Losing the box
+#  today loses up to 30 days of them — for a school, lessons. So they are
+#  COPIED, never mirrored: `rclone copy` uploads only what is new and never
+#  deletes, so a recording removed on the server — by the age-off, a bug, a
+#  user or a mistaken command — stays recoverable in the bucket for the rest
+#  of its 31 days. A separate prune by AGE alone (`--min-age 31d`) keeps the
+#  bucket from outliving the product's own retention. (Mr. Singh, 25 Sept:
+#  "a pure mirror isn't a backup against deletion.") Cost at 10 GB: about
+#  twenty cents a month.
+#
+#  ENCRYPTED WITH THE SAME PAPER PASSPHRASE, NO NEW SECRET. rclone's crypt
+#  backend is configured here, in the environment, for these commands only:
+#  its password is BACKUP_ENC_PASSPHRASE obscured, so the passphrase that
+#  opens the sets also opens the recordings. Filenames are encrypted too (a
+#  recording's name carries a meeting id). Nothing is written to rclone.conf
+#  and nothing is printed.
+#
+#  THE RECEIPT: EVERY FILE ON THE VOLUME IS ALSO IN THE BUCKET. Counts can no
+#  longer be equal — the bucket keeps files the age-off has removed — so the
+#  check is set difference, not arithmetic: the volume's file list minus the
+#  bucket's must be empty. Extra files in the bucket are fine; one missing is
+#  the failure. `rclone copy` exiting 0 after copying nothing is the
+#  false-pass shape this project keeps finding; the listing is the receipt.
+#
+#  THIS STEP CANNOT FAIL THE MAIN SET. It runs after the set has been built
+#  and uploaded, keeps its own verdict in rec_failed, and never sets `failed`.
+#  Losing a recording is bad; losing last night's mail backup because a
+#  recording upload failed would be worse. Its failure is printed in capitals
+#  and repeated in the summary, so it is loud without being fatal.
+#
+#  Off by default until Amit's go lands in .backup-env:
+#      BACKUP_RECORDINGS_REMOTE='linode:tatvaos-recordings'
+#      BACKUP_RECORDINGS_KEEP_DAYS=31                      # optional
+# ---------------------------------------------------------------------------
+copy_recordings_offbox() {
+    rec_failed=0
+    if [ -n "${BACKUP_RECORDINGS_REMOTE:-}" ] && [ -n "${BACKUP_S3_REMOTE:-}" ] && [ -n "${BACKUP_ENC_PASSPHRASE:-}" ]; then
+        if ! command -v rclone >/dev/null 2>&1; then
+            bad "RECORDINGS: rclone is not installed — recordings were NOT copied off the box"
+            rec_failed=1
+        else
+            # A crypt remote that exists only for this process.
+            export RCLONE_CONFIG_RECCRYPT_TYPE=crypt
+            export RCLONE_CONFIG_RECCRYPT_REMOTE="$BACKUP_RECORDINGS_REMOTE"
+            export RCLONE_CONFIG_RECCRYPT_FILENAME_ENCRYPTION=standard
+            export RCLONE_CONFIG_RECCRYPT_DIRECTORY_NAME_ENCRYPTION=true
+            RCLONE_CONFIG_RECCRYPT_PASSWORD=$(rclone obscure "$BACKUP_ENC_PASSPHRASE")
+            export RCLONE_CONFIG_RECCRYPT_PASSWORD
+            RC_ENV="-e RCLONE_CONFIG_RECCRYPT_TYPE -e RCLONE_CONFIG_RECCRYPT_REMOTE -e RCLONE_CONFIG_RECCRYPT_FILENAME_ENCRYPTION -e RCLONE_CONFIG_RECCRYPT_DIRECTORY_NAME_ENCRYPTION -e RCLONE_CONFIG_RECCRYPT_PASSWORD"
+            # Pinned by DIGEST, not by tag (Mr. Singh, 2 Oct 2026, as the render
+            # image is): `1.68` is a moving tag, and the backup path must not
+            # change because someone pushed to Docker Hub. 1.68.2's multi-arch
+            # index digest, read from Docker Hub on 2 Oct 2026 (the `1.68` tag
+            # pointed at the same digest that day). To move it, look up the new
+            # tag's digest, change both halves, and re-run the proof.
+            RC_IMG="rclone/rclone:1.68.2@sha256:74c51b8817e5431bd6d7ed27cb2a50d8ee78d77f6807b72a41ef6f898845942b"
+            rc() { docker run --rm $RC_ENV -v "$HOME/.config/rclone:/config/rclone:ro" "$@"; }
+            REC_TMP=$(mktemp -d)
+            # What of rclone's output may reach the log: an ALLOW list, not a
+            # deny list. The 2 Oct 2026 proof run printed a recording's name
+            # through rclone's once-a-minute "Transferring:" block, which the
+            # first version's "drop the INFO lines" filter did not know about.
+            # So only the totals pass, plus error/notice lines with the file
+            # part replaced; anything else rclone prints, now or in a later
+            # version, is dropped.
+            rec_safe_log() {
+                grep -E '^[[:space:]]*(Transferred|Checks|Elapsed time|Errors|Deleted|Renamed):|ERROR|NOTICE' "$1" \
+                    | sed -E 's/((ERROR|NOTICE)[[:space:]]*:[[:space:]]*)[^:]+:[[:space:]]/\1<a recording>: /' \
+                    | sed 's/^/   /'
+            }
+            # The volume is read only, through a throwaway container, the same
+            # way the other volumes are read above. Bytes stream from the volume
+            # to the bucket; nothing lands on the root disk.
+            if docker run --rm -v tatvaos_connectrec:/src:ro alpine sh -c 'cd /src && find . -type f | sed "s#^\./##" | sort' > "$REC_TMP/volume" 2>/dev/null; then
+                on_volume=$(wc -l < "$REC_TMP/volume")
+                # -v names every file it copies, and a recording's name carries a
+                # meeting id: the output goes to a temp file, only the COUNT of
+                # uploads is printed, and every line except those per-file INFO
+                # lines (errors, warnings, the transfer totals) is shown as before.
+                # The count is the proof the copy is incremental: a second run
+                # straight after the first must say 0.
+                if rc -v tatvaos_connectrec:/src:ro "$RC_IMG" copy /src reccrypt: --transfers 2 -v > "$REC_TMP/copy.log" 2>&1; then
+                    uploaded=$(grep -c -E 'Copied \((new|replaced)' "$REC_TMP/copy.log")
+                    rec_safe_log "$REC_TMP/copy.log"
+                    rc "$RC_IMG" lsf -R --files-only reccrypt: 2>/dev/null | sort > "$REC_TMP/bucket"
+                    # Set difference: on the volume but not in the bucket.
+                    missing=$(comm -23 "$REC_TMP/volume" "$REC_TMP/bucket" | wc -l)
+                    in_bucket=$(wc -l < "$REC_TMP/bucket")
+                    if [ "$missing" -eq 0 ] && [ "$in_bucket" -ge "$on_volume" ]; then
+                        ok "recordings copied — every one of the ${on_volume} files on the volume is in the bucket (${in_bucket} there, encrypted); ${uploaded} uploaded this run"
+                        # Prune by age alone, never by what the volume has.
+                        rc "$RC_IMG" delete --min-age "${BACKUP_RECORDINGS_KEEP_DAYS:-31}d" reccrypt: 2>/dev/null
+                        note "bucket keeps recordings ${BACKUP_RECORDINGS_KEEP_DAYS:-31} days, whatever the volume does"
+                    else
+                        bad "RECORDINGS: ${missing} file(s) on the volume are NOT in the bucket (${in_bucket} there, ${on_volume} on the volume)"
+                        rec_failed=1
+                    fi
+                else
+                    bad "RECORDINGS: copy FAILED — the bucket may be behind the volume"
+                    rec_safe_log "$REC_TMP/copy.log" | tail -20
+                    rec_failed=1
+                fi
+            else
+                bad "RECORDINGS: could not read the recordings volume — nothing was copied"
+                rec_failed=1
+            fi
+            rm -rf "$REC_TMP"
+            unset RCLONE_CONFIG_RECCRYPT_PASSWORD
+        fi
+    else
+        note "recordings copy not configured (BACKUP_RECORDINGS_REMOTE unset) — recordings exist only on this machine"
+    fi
+    # The main set's verdict is untouched by the above. Say so if it went wrong,
+    # loudly, where the summary will be read.
+    if [ "$rec_failed" -ne 0 ]; then
+        printf '\n   %s%sRECORDINGS WERE NOT FULLY COPIED OFF THE BOX — see above. The main backup set is unaffected.%s\n\n' "$B" "$R" "$X"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 if [ "${1:-}" = "--install" ]; then
     # The log lives beside the backups, NOT in /var/log: that directory is
     # root-owned, the deploy user cannot create a file there, and cron would
@@ -139,6 +281,26 @@ if ! flock -n 9; then
     exit 1
 fi
 
+# ---------------------------------------------------------------------------
+#  --recordings-only: the recordings copy and nothing else, under the same
+#  lock as a full run. No set is made, nothing is written to this disk, and
+#  the main bucket is not touched: it reads the recordings volume and writes
+#  only to BACKUP_RECORDINGS_REMOTE. Exit 0 only if every file on the volume
+#  is in the bucket. Made for the proof run Mr. Singh asked for on 2 Oct 2026
+#  (set the remote for that one command, run it twice: the second must say
+#  "0 uploaded"), and for re-running the copy after a failure without waiting
+#  two hours or making a 4 GB set.
+# ---------------------------------------------------------------------------
+if [ "${1:-}" = "--recordings-only" ]; then
+    step "Off-box copy — meeting recordings ONLY (no set is made)"
+    if [ -z "${BACKUP_RECORDINGS_REMOTE:-}" ]; then
+        bad "BACKUP_RECORDINGS_REMOTE is not set — there is nothing to copy to"
+        exit 1
+    fi
+    copy_recordings_offbox
+    exit "$rec_failed"
+fi
+
 mkdir -p "$OUT" || { bad "cannot write $OUT"; exit 1; }
 
 failed=0
@@ -150,7 +312,16 @@ if docker ps --format '{{.Names}}' | grep -q postgres; then
     PG=$(docker ps --format '{{.Names}}' | grep postgres | head -1)
     # Compressed on the way out — a plain dump of a mail database is mostly
     # text and gzip takes roughly 90% of it away.
-    if docker exec -t "$PG" pg_dumpall -U postgres 2>/dev/null | gzip > "${OUT}/postgres.sql.gz"; then
+    #
+    # NO TTY FLAG. Until 25 Sept 2026 this was `docker exec -t`. A TTY is for
+    # people, not data streams: it turned every line ending into CR+LF (the
+    # 14:30 set that day had 148,026 lines and 148,026 carriage returns), and
+    # a TTY has ONE output, so pg_dumpall's error messages would have gone
+    # INTO the dump instead of to 2>/dev/null. Restores still worked, because
+    # COPY accepts CR+LF (production restore drill, PR 254). Do NOT "fix" it
+    # to -T: that is a `docker compose exec` flag, and plain `docker exec -T`
+    # fails with "unknown shorthand flag" — hidden here by 2>/dev/null.
+    if docker exec "$PG" pg_dumpall -U postgres 2>/dev/null | gzip > "${OUT}/postgres.sql.gz"; then
         ok "postgres.sql.gz ($(du -h "${OUT}/postgres.sql.gz" | cut -f1))"
     else
         bad "pg_dumpall failed"; failed=1
@@ -310,7 +481,7 @@ if [ -n "${BACKUP_S3_REMOTE:-}" ] && [ -n "${BACKUP_ENC_PASSPHRASE:-}" ]; then
             # upload failed thins nothing.
             if [ "$offbox_ok" = "1" ] && [ "$TIERED" = "1" ]; then
                 listing=$(rclone lsf --files-only "$BACKUP_S3_REMOTE" 2>/dev/null)
-                if ! printf '%s\n' "$listing" | grep -qxF -- "${STAMP}.tar.gz.enc"; then
+                if ! grep -qxF -- "${STAMP}.tar.gz.enc" <<< "$listing"; then
                     # The set just uploaded must be in the listing. If it is
                     # not, the listing is wrong (failed, truncated) and must
                     # not be read as "these are all the sets there are".
@@ -331,7 +502,7 @@ if [ -n "${BACKUP_S3_REMOTE:-}" ] && [ -n "${BACKUP_ENC_PASSPHRASE:-}" ]; then
                         fi
                     done <<< "$doomed"
                     left=$(rclone lsf --files-only "$BACKUP_S3_REMOTE" 2>/dev/null | grep -c '\.tar\.gz\.enc$')
-                    note "tiered: every set for a day, 6-hourly to two days, daily to a week"
+                    note "tiered: every set for a day, 6-hourly to two days, daily to eight days (never less than seven)"
                     note "deleted ${gone}, ${left} set(s) in the bucket"
                 fi
             elif [ "$offbox_ok" = "1" ]; then
@@ -349,6 +520,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+step "Off-box copy — meeting recordings (copy and age out)"
+copy_recordings_offbox
+
 step "Off-box copy — rsync (legacy hook)"
 if [ -n "$REMOTE" ]; then
     if rsync -a --delete-after "${OUT}/" "${REMOTE}/${STAMP}/" 2>&1 | sed 's/^/   /'; then
@@ -384,6 +558,11 @@ fi
 # ---------------------------------------------------------------------------
 step "Verdict"
 printf '   total %s in %s\n' "$(du -sh "$OUT" | cut -f1)" "$OUT"
+# Repeated here because this is the line people read. It does not change the
+# set's verdict or the exit code: see the recordings step.
+if [ "${rec_failed:-0}" -ne 0 ]; then
+    bad "RECORDINGS were NOT fully copied off the box this run (the set below is unaffected)"
+fi
 if [ "$failed" -eq 0 ]; then
     ok "backup complete"
 else

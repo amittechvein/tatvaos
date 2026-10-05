@@ -6,6 +6,7 @@
 const {
   orderFolders, senderLabel, whenLabel, addressList, quoted, replySubject, forwardSubject,
   typingTerm, withRecipient, signatureFor, replyAllRecipients, forwardHeader,
+  replyRecipients, otherMessages,
 } = require('../lib/mail');
 
 test('folders: Inbox first, then the known places, then the rest by name', () => {
@@ -247,6 +248,67 @@ describe('replyAllRecipients', () => {
   test('nothing crashes on a bare message', () => {
     expect(replyAllRecipients({}, 'amit@tatvaos.com')).toEqual({ to: '', cc: '' });
     expect(replyAllRecipients(null, '')).toEqual({ to: '', cc: '' });
+  });
+});
+
+// ── A REPLY TO MY OWN MESSAGE, AND ONE MAIL STORED TWICE ────────────────────
+//  Client report, 28 Sept 2026 ("two mails are going out"): one mail went
+//  out. He had replied to his OWN message, the reply was addressed to him,
+//  and the copy that came back to his Inbox showed up beside the Sent copy.
+describe('replyRecipients', () => {
+  const me = 'amit@tatvaos.com';
+  const theirs = { from: { email: 'ravi@example.com' }, to: [{ email: me }], cc: [{ email: 'priya@example.com' }] };
+  const mine = { from: { email: me }, to: [{ email: 'ravi@example.com' }, { email: 'priya@example.com' }], cc: [{ email: 'accounts@example.com' }] };
+
+  test('somebody else\'s message: the sender, as it always was', () => {
+    expect(replyRecipients(theirs, me)).toEqual({ to: 'ravi@example.com', cc: '' });
+  });
+  test('my own message: the people I wrote to, never me, and no Cc on a plain reply', () => {
+    expect(replyRecipients(mine, me)).toEqual({ to: 'ravi@example.com, priya@example.com', cc: '' });
+    expect(replyRecipients(mine, 'AMIT@TatvaOS.com').to).toBe('ravi@example.com, priya@example.com');
+  });
+  test('the old rule, for comparison: it answered ME', () => {
+    // What MailMessage.js did until 28 Sept - kept so the check above has
+    // something to differ from.
+    const before = (m) => ({ to: m.from?.email ?? '', cc: '' });
+    expect(before(mine)).toEqual({ to: me, cc: '' });
+    expect(replyRecipients(mine, me)).not.toEqual(before(mine));
+  });
+  test('a note sent only to myself is still answerable to myself', () => {
+    expect(replyRecipients({ from: { email: me }, to: [{ email: me }], cc: [{ email: 'ravi@example.com' }] }, me))
+      .toEqual({ to: me, cc: '' });
+  });
+  test('with no address of my own known, nothing is treated as mine', () => {
+    expect(replyRecipients(mine, '')).toEqual({ to: me, cc: '' });
+  });
+  test('nothing crashes on a bare message', () => {
+    expect(replyRecipients({}, me)).toEqual({ to: '', cc: '' });
+    expect(replyRecipients(null, '')).toEqual({ to: '', cc: '' });
+  });
+});
+
+describe('otherMessages', () => {
+  const rows = [
+    { id: 'a' },
+    { id: 'b-sent', copyIds: ['b-inbox'] },
+    { id: 'c', copyIds: [] },
+  ];
+  const ids = (list) => list.map((r) => r.id).join(',');
+  test('the open message is left out by id', () => {
+    expect(ids(otherMessages(rows, 'a'))).toBe('b-sent,c');
+  });
+  test('...and by copy: the row that STANDS FOR the open message is left out too', () => {
+    expect(ids(otherMessages(rows, 'b-inbox'))).toBe('a,c');
+  });
+  test('an id that is nobody\'s leaves everything in', () => {
+    expect(ids(otherMessages(rows, 'zz'))).toBe('a,b-sent,c');
+  });
+  test('an older server sends no copyIds at all, and nothing breaks', () => {
+    expect(ids(otherMessages([{ id: 'a' }, { id: 'b' }], 'a'))).toBe('b');
+  });
+  test('not a list, or holes in it: empty, not a crash', () => {
+    expect(otherMessages(null, 'a')).toEqual([]);
+    expect(ids(otherMessages([null, { id: 'b' }], 'a'))).toBe('b');
   });
 });
 

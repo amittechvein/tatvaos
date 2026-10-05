@@ -1,0 +1,45 @@
+oletools--dde-test.xlsb	refuse	external link, binary part
+oletools--embedded-simple-2007.xlsb	refuse	embedded object, binary part
+oletools--embedded-simple-2007.xlsm	refuse	embedded object
+oletools--embedded-simple-2007.xlsx	refuse	embedded object
+oletools--embedded-simple-2007.xltm	refuse	embedded object
+oletools--embedded-simple-2007.xltx	refuse	embedded object
+oletools--encrypted--autostart-encrypt-standardpassword.xlsb	refuse	an OLE container (encrypted)
+oletools--encrypted--autostart-encrypt-standardpassword.xlsm	refuse	an OLE container (encrypted)
+oletools--encrypted--dde-test-encrypt-standardpassword.xlsb	refuse	an OLE container (encrypted)
+oletools--encrypted--dde-test-encrypt-standardpassword.xlsx	refuse	an OLE container (encrypted)
+oletools--encrypted--encrypted.xlsb	refuse	an OLE container (encrypted)
+oletools--encrypted--encrypted.xlsm	refuse	an OLE container (encrypted)
+oletools--encrypted--encrypted.xlsx	refuse	an OLE container (encrypted)
+oletools--excel4_sample_macro.xlsb	refuse	Excel 4 macro sheet, binary part
+oletools--excel4_sample_macro.xltm	refuse	Excel 4 macro sheet
+oletools--sample_with_external_link_to_doc.xlsb	refuse	external link, binary part, relationship reaching outside the file
+oletools--sample_with_external_link_to_doc.xlsm	refuse	external link, relationship reaching outside the file
+oletools--sample_with_external_link_to_doc.xlsx	refuse	external link, relationship reaching outside the file
+poi--AverageTaxRates.xlsx	strict	plain workbook: printer settings (.bin)
+poi--Booleans.xlsx	permit	plain workbook
+poi--DateFormatTests.xlsx	permit	plain workbook
+poi--ExcelWithAttachments.xlsm	refuse	VBA macros, embedded object, relationship reaching outside the file
+poi--Formatting.xlsx	permit	plain workbook
+poi--FormulaEvalTestData_Copy.xlsx	strict	plain workbook: printer settings (.bin), 1 web or mail hyperlink(s) as relationships
+poi--InlineStrings.xlsx	permit	plain workbook
+poi--NewlineInFormulas.xlsx	permit	plain workbook
+poi--SampleSS.xlsx	permit	plain workbook
+poi--SimpleMacro.xlsm	refuse	VBA macros
+poi--Tables.xlsx	strict	plain workbook: printer settings (.bin)
+poi--TwoSheetsNoneHidden.xlsx	permit	plain workbook
+poi--TwoSheetsOneHidden.xlsx	permit	plain workbook
+poi--WidthsAndHeights.xlsx	permit	plain workbook
+poi--WithEmbeded.xlsx	refuse	embedded object
+poi--WithMoreVariousData.xlsx	refuse	relationship reaching outside the file
+poi--WithTable.xlsx	strict	plain workbook: printer settings (.bin)
+poi--WithVariousData.xlsx	strict	plain workbook: 1 web or mail hyperlink(s) as relationships
+poi--bug64512_embed.xlsx	refuse	embedded object
+poi--comments.xlsx	permit	plain workbook
+poi--link-external-workbook-a.xlsx	permit	plain workbook
+poi--link-external-workbook-b.xlsx	refuse	external link, relationship reaching outside the file
+poi--reordered_sheets.xlsx	permit	plain workbook
+poi--sample.xlsx	strict	plain workbook: printer settings (.bin)
+poi--sharedhyperlink.xlsx	strict	plain workbook: 2 web or mail hyperlink(s) as relationships
+poi--styles.xlsx	permit	plain workbook
+poi--xlmmacro.xlsm	refuse	Excel 4 macro sheet

@@ -232,6 +232,75 @@ else
     echo "[postfix]   outbound    -> REAL DELIVERY as ${MAIL_HOSTNAME:-?}"
 fi
 
+# ---------------------------------------------------------------------------
+#  Port 587 sender ownership (PR 380): WARN or ENFORCE, one setting for both
+#  halves - Postfix's envelope check and the From-line filter.
+#
+#  warn (the default, Amit 2 Oct 2026): nothing is refused; every message that
+#  would be is recorded in /var/log/tatvaos/sender-ownership.jsonl, which is on
+#  the maillogs volume and so survives deploys. enforce: both are refused.
+#  Anything else is a typo, and a typo here must not silently pick a mode.
+# ---------------------------------------------------------------------------
+OWNERSHIP="${TATVAOS_SENDER_OWNERSHIP:-warn}"
+case "$OWNERSHIP" in
+    warn)    postconf -e "submission_sender_login_check=warn_if_reject reject_authenticated_sender_login_mismatch" ;;
+    enforce) postconf -e "submission_sender_login_check=reject_authenticated_sender_login_mismatch" ;;
+    *)       echo "[postfix] FATAL: TATVAOS_SENDER_OWNERSHIP='$OWNERSHIP' - must be warn or enforce"; exit 1 ;;
+esac
+echo "$OWNERSHIP" > /etc/postfix/sender-ownership-mode
+# The filter writes its record here AFTER dropping to the postfix user, so
+# the directory is postfix's; the restart bookkeeping below stays root's.
+mkdir -p /var/log/tatvaos && chown postfix:postfix /var/log/tatvaos && chmod 750 /var/log/tatvaos
+echo "[postfix]   587 senders -> ownership checked, mode: $OWNERSHIP"
+[ -n "${TATVAOS_ALERT_TO:-}" ] || echo "[postfix]   WARNING: TATVAOS_ALERT_TO is not set - a crashing From-line filter would alert nobody"
+
+# The From-line filter. Restarted if it exits; while it is down Postfix lets
+# mail through (default_action=accept in main.cf) and the envelope check,
+# which is Postfix's own, still holds.
+#
+# A crash must be VISIBLE (Mr. Singh, 3 Oct): every restart is logged and
+# counted in a file on the maillogs volume (it survives the container), and
+# more than three in an hour mails TATVAOS_ALERT_TO - the disk alert's way:
+# this container's own sendmail, From alerts@tatvaos.com - at most once an
+# hour, so a crash loop is one mail, not hundreds.
+RESTARTS=/var/log/tatvaos/sender-milter-restarts
+ALERTED=/var/log/tatvaos/sender-milter-alerted
+milter_alert() {  # $1 restarts in the last hour
+    printf 'From: TatvaOS server <%s>\nTo: %s\nSubject: %s\nContent-Type: text/plain; charset=utf-8\n\n%s\n' \
+        "${TATVAOS_ALERT_FROM:-alerts@tatvaos.com}" "$TATVAOS_ALERT_TO" \
+        "[TatvaOS] sender-milter restarted $1 times in an hour on ${MAIL_HOSTNAME:-$(hostname)}" \
+        "The port 587 From-line filter (sender-milter.py, in the postfix container) has exited and been restarted $1 times in the last hour.
+
+Mail is still flowing: the filter fails open, and Postfix's own envelope check still refuses (or, in warn mode, records) senders the signed-in mailbox does not own. While it is down, From: lines are NOT checked and NOT recorded.
+
+Look: docker logs tatvaos-postfix-1 2>&1 | grep sender-milter | tail -20
+This alert is sent at most once an hour." \
+        | sendmail -t -f "${TATVAOS_ALERT_FROM:-alerts@tatvaos.com}"
+}
+( while true; do
+      python3 /usr/local/lib/tatvaos/sender-milter.py
+      rc=$?
+      now=$(date +%s)
+      echo "$now" >> "$RESTARTS"
+      tail -n 100 "$RESTARTS" > "$RESTARTS.tmp" && mv "$RESTARTS.tmp" "$RESTARTS"
+      recent=$(awk -v since=$((now - 3600)) '$1 >= since' "$RESTARTS" | wc -l)
+      echo "[sender-milter] exited ($rc) - restart ${recent} in the last hour; restarting in 2 s"
+      if [ "$recent" -gt 3 ]; then
+          last=$(cat "$ALERTED" 2>/dev/null || echo 0)
+          if [ $((now - ${last:-0})) -ge 3600 ]; then
+              if [ -z "${TATVAOS_ALERT_TO:-}" ]; then
+                  echo "[sender-milter] ALERT: ${recent} restarts in an hour - TATVAOS_ALERT_TO is not set, NOBODY WAS MAILED"
+              elif milter_alert "$recent"; then
+                  echo "$now" > "$ALERTED"
+                  echo "[sender-milter] ALERT mailed: ${recent} restarts in an hour"
+              else
+                  echo "[sender-milter] ALERT could not be handed to sendmail - ${recent} restarts in an hour"
+              fi
+          fi
+      fi
+      sleep 2
+  done ) &
+
 # If start-fg dies, show why rather than silently restarting forever
 postfix start-fg
 rc=$?

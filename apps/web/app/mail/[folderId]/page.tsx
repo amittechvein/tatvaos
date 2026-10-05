@@ -15,6 +15,10 @@ import DOMPurify from 'dompurify';
 import { MessageList, type MailListRow } from '@/components/mail/MessageList';
 import { MessageView } from '@/components/mail/MessageView';
 import { Composer, type ComposeMode } from '@/components/mail/Composer';
+import { SuggestedReplies } from '@/components/mail/SuggestedReplies';
+import { ConversationSummary } from '@/components/mail/ConversationSummary';
+import { useMailAiStatus } from '@/components/mail/HelpMeWrite';
+import { AI_LABELS } from '@/lib/mailAi';
 import { dockHasRoom, layoutDock } from '@/lib/composerDock';
 import { useMailbox } from '@/components/mail/MailboxSwitcher';
 import { SearchChips } from '@/components/mail/SearchChips';
@@ -113,6 +117,15 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   // a field that was never really there.
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [view, setView] = useState<ListView>('conversations');
+  // TatvaOS AI's inbox tab (Mail AI step 3): null = All. Filtered by the
+  // server, so the total and the paging describe the tab.
+  //
+  // ALL IS THE DEFAULT AND STAYS IT — never remembered across visits. Mr.
+  // Singh, 25 Sept 2026: there is no way yet to correct a wrong label, so a
+  // real email wrongly called Promotions must not live in a tab nobody opens.
+  // Do not persist this to localStorage until labels can be corrected.
+  const [aiTab, setAiTab] = useState<string | null>(null);
+  const aiStatus = useMailAiStatus();
   /**
    * Which open is the current one. Incremented on every row click; a fetch
    * that lands holding an older number is from a row the person has already
@@ -191,7 +204,9 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const [composers, setComposers] = useState<
     // `min` is what the PERSON chose. Windows minimised only to make room are
     // worked out at render (layoutDock), so they reopen when room comes back.
-    { key: number; replyTo: Message | null; mode: ComposeMode; min: boolean }[]
+    // `initialText` is a suggested reply the person clicked (TatvaOS AI,
+    // step 2): typed into the new reply for them to edit, never sent as is.
+    { key: number; replyTo: Message | null; mode: ComposeMode; min: boolean; initialText?: string }[]
   >([]);
   const composerKey = useRef(0);
   // The window that stays open when room runs short: the last one opened or
@@ -281,7 +296,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
           // far more mail than the message list's equivalent page.
           const take = size === 'all' ? SERVER_MAX_TAKE : size;
           const page = await mailApi.folderThreads(
-            authedFetch, folderId, { skip: skipTo, take, mailboxId },
+            authedFetch, folderId, { skip: skipTo, take, mailboxId, aiLabel: aiTab },
           );
           setThreads(page.threads);
           setMessages([]);
@@ -333,7 +348,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
         setLoadingAll(false);
       }
     },
-    [authedFetch, mailboxId, view],
+    [authedFetch, mailboxId, view, aiTab],
   );
 
   const loadMessages = useCallback(
@@ -388,6 +403,8 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   //  "click three times to open a mail" bug. Only an actual navigation to a
   //  different folder should reset the view.
   const folderId = folder?.id;
+  // A TatvaOS AI tab belongs to one inbox; another folder or mailbox starts at All.
+  useEffect(() => { setAiTab(null); }, [folderId, mailboxId]);
   useEffect(() => {
     if (!folderId) return;
     setOpen(null);
@@ -419,8 +436,10 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
         // still moved the total, so "Showing 1-3 of 7" appeared under three
         // rows and looked like paging had broken.
         if (view === 'conversations') {
+          // The tab too: a tick without it would put the whole inbox back
+          // under a "Needs reply" heading.
           const page = await mailApi.folderThreads(
-            authedFetch, folderId, { skip, take: pageSize, mailboxId },
+            authedFetch, folderId, { skip, take: pageSize, mailboxId, aiLabel: aiTab },
           );
           setThreads(page.threads);
           setTotal(page.total);
@@ -460,7 +479,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       clearInterval(t);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [folderId, skip, query, authedFetch, refreshFolders, mailboxId, pageSize, view]);
+  }, [folderId, skip, query, authedFetch, refreshFolders, mailboxId, pageSize, view, aiTab]);
 
   // ---- Search ---------------------------------------------------------
   //
@@ -514,6 +533,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       isFlagged: t.isFlagged,
       hasAttachments: t.hasAttachments,
       count: t.count,
+      aiLabel: t.aiLabel,
     })),
     [threads],
   );
@@ -577,7 +597,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     }
   }
 
-  async function handleOpen(id: string) {
+  async function handleOpen(id: string, from: 'list' | 'strip' = 'list') {
     // Three row sources, and now a fourth. While searching the row lives in
     // the search results — possibly a message in another folder that was
     // never in the loaded page. The thread strip adds siblings that live in
@@ -616,23 +636,69 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
     // The conversation loads alongside the body.
     const rowThreadId = summary?.threadId ?? conversation?.threadId ?? null;
-    if (rowThreadId && !(thread && thread.some((m) => m.id === id))) {
+    // "Already have it" counts a folded copy too (see copyIds): without that,
+    // opening the delivered copy of a mail whose Sent copy the strip carries
+    // refetched the conversation and blanked the strip on every click.
+    const have = !!thread && thread.some(
+      (m) => m.id === id || (m.copyIds ?? []).includes(id));
+    let trail: SearchHit[] | null = have ? thread : null;
+    if (rowThreadId && !have) {
       setThread(null);
-      void mailApi.thread(authedFetch, rowThreadId, mailboxId).then(
+      const loading = mailApi.thread(authedFetch, rowThreadId, mailboxId).then(
         (page) => {
-          if (openTicket.current !== ticket) return;
+          if (openTicket.current !== ticket) return null;
           setThread(page.messages);
           setThreadTotal(page.total);
+          return page.messages;
         },
-        () => { /* no strip is a fine fallback; the message still reads */ },
+        () => null /* no strip is a fine fallback; the message still reads */,
       );
+      // Only a conversation row waits for it - see below. A message opened
+      // by itself still loads its body alongside, as it always has.
+      if (conversation && from === 'list') trail = await loading;
     } else if (!rowThreadId) {
       setThread(null);
       setThreadTotal(0);
     }
 
+    // ── A TRAIL OPENS AT ITS END, WHICHEVER FOLDER IT WAS OPENED FROM. ─────
+    //
+    //  Client report, 28 September 2026: in Gmail a trail is one thing, and
+    //  wherever you open it from you land on the latest update. Here a row
+    //  in Sent opened the newest mail IN SENT, with the answer that came
+    //  after it folded into a one-line row underneath - so the same trail
+    //  opened on a different mail depending on the folder you were standing
+    //  in, and from Sent the newest news was the least visible thing in it.
+    //
+    //  Only for a conversation ROW. A single message picked out of a list, a
+    //  search result or the strip is that message, and opens as itself.
+    //  Drafts and the rest are skipped: a half-written reply is not news.
+    //
+    //  And only from the LIST. The Sent row's own id is also a row in the
+    //  strip; without `from`, picking that mail out of the strip was read as
+    //  a click on the conversation and bounced straight back to the end.
+    let openId = id;
+    if (from === 'list' && conversation && trail && openTicket.current === ticket) {
+      const quiet = ['drafts', 'scheduled', 'junk', 'trash'];
+      const last = [...trail]
+        .filter((m) => !quiet.includes(m.folderSlug ?? ''))
+        .sort((a, b) => +new Date(a.sentAt) - +new Date(b.sentAt))
+        .pop();
+      if (last && last.id !== id && !(last.copyIds ?? []).includes(id)) {
+        openId = last.id;
+        setOpen({ ...last, isRead: true });
+        if (!last.isRead) {
+          // It lives in another folder, so the row's own read-marking above
+          // never reached it, and the badge that moves is that folder's.
+          setThread((prev) => prev && prev.map((m) => (m.id === last.id ? { ...m, isRead: true } : m)));
+          bumpUnread(last.folderId, -1);
+          void mailApi.setRead(authedFetch, last.id, true, mailboxId).catch(() => {});
+        }
+      }
+    }
+
     try {
-      const full = await mailApi.message(authedFetch, id, mailboxId);
+      const full = await mailApi.message(authedFetch, openId, mailboxId);
       if (openTicket.current === ticket) setOpen({ ...full, isRead: true });
     } catch {
       /* the summary stays on screen; body shows the snippet */
@@ -837,7 +903,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     w.print();
   }
 
-  function startCompose(m: Message | null, m2: ComposeMode) {
+  function startCompose(m: Message | null, m2: ComposeMode, initialText?: string) {
     if (isShared && !canSend) {
       setListError('You have read access to this mailbox, not permission to send from it.');
       return;
@@ -886,7 +952,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       if (!inline({ mode: m2, replyTo: m })
         && !dockHasRoom(prev.filter((c) => !inline(c)).length, viewportW)) return prev;
       composerKey.current += 1;
-      return [...prev, { key: composerKey.current, replyTo: m, mode: m2, min: false }];
+      return [...prev, { key: composerKey.current, replyTo: m, mode: m2, min: false, initialText }];
     });
     // The newest window is the one kept open; a restore elsewhere moves it.
     setDockFocus(null);
@@ -1142,6 +1208,31 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
             entirely for a search that is only words. */}
         <SearchChips value={query} onChange={setQuery} />
 
+        {/* TatvaOS AI's inbox tabs (Mail AI step 3). Inbox only, conversation
+            view only (the server filters conversations), never over a search,
+            and only while the organisation has sorting on. */}
+        {aiStatus?.triage && folder?.slug === 'inbox' && inConversationView && !query && (
+          <div className="flex flex-wrap items-center gap-1 px-4 pt-1" role="tablist" aria-label="Sorted by TatvaOS AI">
+            {[{ label: null as string | null, name: 'All' }, ...AI_LABELS].map((t) => (
+              <button
+                key={t.label ?? 'all'}
+                type="button"
+                role="tab"
+                aria-selected={aiTab === t.label}
+                onClick={() => setAiTab(t.label)}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                  aiTab === t.label ? 'bg-brand-600 text-white' : 'text-ink-muted hover:bg-surface hover:text-ink'
+                }`}
+              >
+                {t.name}
+              </button>
+            ))}
+            <span className="ml-1 inline-flex items-center gap-1 text-[10px] text-ink-faint" title="These labels are TatvaOS AI's guesses">
+              <Icon name="sparkle" className="h-3 w-3" /> TatvaOS AI
+            </span>
+          </div>
+        )}
+
         {/* Sub-bar: bulk actions or paging */}
         <div className="flex items-center gap-1 px-4 py-1 text-xs text-ink-muted">
           {selectedIds.size > 0 ? (
@@ -1343,7 +1434,16 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               layout={inboxLayout}
               messages={filtered}
               selectedIds={selectedIds}
-              openId={open?.id ?? null}
+              // The row that stays lit is the CONVERSATION's, even when the
+              // mail open inside it lives in another folder (a trail opens at
+              // its end) or was picked out of the strip.
+              openId={(() => {
+                if (!open) return null;
+                if (filtered.some((r) => r.id === open.id)) return open.id;
+                const conv = open.threadId
+                  ? threads.find((t) => t.threadId === open.threadId) : undefined;
+                return conv ? conv.latestMessageId : open.id;
+              })()}
               onToggleSelect={toggleSelect}
               onOpen={(id) => void handleOpen(id)}
               onToggleFlag={handleToggleFlag}
@@ -1379,20 +1479,45 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               onSaveAttachmentToSpace={(m, a: Attachment) => saveAttachmentToSpace(m.id, a.id)}
               threadMessages={thread ?? undefined}
               threadTotal={threadTotal}
-              onOpenMessage={(id) => void handleOpen(id)}
+              onOpenMessage={(id) => void handleOpen(id, 'strip')}
               expanded={wide}
               onToggleExpand={() => setWide((v) => !v)}
               autoLoadImages={folder?.slug !== 'junk'}
+              // Summarise this conversation (TatvaOS AI, 26 Sept 2026). Not in
+              // Junk; the server refuses there too. Shows nothing unless the
+              // organisation has the summary feature on.
+              aboveBody={folder?.slug !== 'junk' && (
+                <ConversationSummary message={open} mailboxId={mailboxId} count={thread?.length} />
+              )}
               // THE REPLY, IN THE CONVERSATION — and now INSIDE the message's
               // own scroll container rather than beside it, so opening one
               // no longer squeezes the message into a sliver (Amit, 23 Sept:
               // "currently its divided in two sections"). Replies to some
               // OTHER message stay docked below; they have nothing on screen
               // to sit under.
-              footer={inlineComposers.map((c) => (
+              // No reply open yet: offer suggested replies instead (TatvaOS AI,
+              // step 2 — shows nothing unless Mail AI is on). Not in folders
+              // whose mail nobody answers; the server refuses those anyway,
+              // this only saves the request.
+              // Which mail the box answers, said out loud above it. One
+              // response box per message (startCompose), so [0] is all of them.
+              responding={inlineComposers[0]?.mode === 'reply'
+                || inlineComposers[0]?.mode === 'replyAll'
+                || inlineComposers[0]?.mode === 'forward'
+                ? inlineComposers[0].mode : null}
+              footer={inlineComposers.length === 0
+                ? (!['sent', 'drafts', 'junk', 'trash'].includes(folder?.slug ?? '') && (
+                    <SuggestedReplies
+                      message={open}
+                      mailboxId={mailboxId}
+                      onPick={(text) => startCompose(open, 'reply', text)}
+                    />
+                  ))
+                : inlineComposers.map((c) => (
                 <Composer
                   key={c.key}
                   placement="inline"
+                  initialText={c.initialText}
                   replyTo={c.replyTo}
                   mode={c.mode}
                   selfAddress={mailbox.address}
