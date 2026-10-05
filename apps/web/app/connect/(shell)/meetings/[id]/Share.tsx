@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
-import { Badge, Button, Empty } from '@/components/ui/Kit';
+import { Button, Empty } from '@/components/ui/Kit';
 import { Alert } from '@/components/ui/Page';
 import { Modal } from '@/components/ui/Modal';
+import { Input, Select, Textarea } from '@/components/ui/Form';
 import { Field } from '../../ConnectSkin';
 import {
-  SHARE_EXPOSURE, SHARE_PURPOSE, recordingApi, timeLabel,
+  SHARE_EXPOSURE, SHARE_PURPOSE, SHARE_TONE, recordingApi, timeLabel,
   type Recording, type RecordingShare, type ShareCapability, type ShareLevel,
 } from '@/lib/connect';
 
@@ -57,6 +58,24 @@ import {
  */
 const ORDER: ShareLevel[] = ['organisation', 'named', 'password', 'public'];
 
+/** The server's rule (ConnectShareEndpoints.MinSharePassword), repeated so
+ *  the Share button can say no before a round trip. The server decides. */
+const MIN_SHARE_PASSWORD = 8;
+
+/**
+ * A password nobody has to invent: 12 characters from an alphabet with no
+ * look-alikes (no 0/O, 1/l/I), so it survives being read out on a phone call —
+ * which is how a host sends it "by a different route to the link".
+ * crypto.getRandomValues, never Math.random.
+ */
+function suggestPassword(): string {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const bytes = new Uint32Array(12);
+  crypto.getRandomValues(bytes);
+  const chars = Array.from(bytes, (b) => alphabet[b % alphabet.length]);
+  return `${chars.slice(0, 4).join('')}-${chars.slice(4, 8).join('')}-${chars.slice(8).join('')}`;
+}
+
 const TITLE: Record<ShareLevel, string> = {
   organisation: 'People in my organisation',
   named: 'Only the people I list',
@@ -87,6 +106,10 @@ export function ShareDialog({
   // Which link was just copied, so the button can say so for a moment. A
   // copy that gives no feedback is a copy people do three times.
   const [copied, setCopied] = useState<string | null>(null);
+
+  // Named people who have access but could not be emailed. The share worked;
+  // this is the sentence telling the host to send the link themselves.
+  const [mailNote, setMailNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -125,8 +148,9 @@ export function ShareDialog({
     if (adding === null) return;
     setBusy(true);
     setError(null);
+    setMailNote(null);
     try {
-      await recordingApi.share(authedFetch, meetingId, recording.id, {
+      const made = await recordingApi.share(authedFetch, meetingId, recording.id, {
         level: adding,
         days: adding === 'password' || adding === 'public' ? days : undefined,
         password: adding === 'password' ? password : undefined,
@@ -138,6 +162,7 @@ export function ShareDialog({
           ? emails.split(/[,\n]/).map((s) => s.trim()).filter((s) => s.length > 0)
           : undefined,
       });
+      setMailNote(made.mailNote ?? null);
       reset();
       await load();
     } catch (e) {
@@ -173,7 +198,7 @@ export function ShareDialog({
   }
 
   const valid = adding === null ? false
-    : adding === 'password' ? password.length >= 4 && password.length <= 100
+    : adding === 'password' ? password.length >= MIN_SHARE_PASSWORD && password.length <= 100
     : adding === 'named' ? emails.trim().length > 0
     : true;
 
@@ -196,6 +221,7 @@ export function ShareDialog({
       </p>
 
       {error && <Alert tone="danger" className="py-2 text-[0.8125rem]">{error}</Alert>}
+      {mailNote && <Alert tone="warn" className="py-2 text-[0.8125rem]">{mailNote}</Alert>}
 
       {/* ── WHAT ALREADY EXISTS ────────────────────────────────────────── */}
       {shares === null ? (
@@ -226,19 +252,50 @@ export function ShareDialog({
             </p>
           ) : (
             <div className="grid gap-2">
+              {/* COLOUR-CODED BY EXPOSURE (Amit, 26 Sept: the options were
+                  white cards on a white pop-up). Blue → green → amber → red,
+                  least exposure first, the same colour the share keeps once
+                  it exists. The words still carry the meaning; the colour is
+                  there so the eye finds the red one before the finger does. */}
               {offered.filter((l) => !taken.has(l)).map((l) => (
-                <button key={l} type="button" className="cx-choice text-start"
+                <button key={l} type="button"
+                        className={`flex w-full items-start gap-3 rounded-card border border-line p-3 text-start
+                                    transition hover:shadow-card focus-visible:outline-none
+                                    focus-visible:ring-2 focus-visible:ring-brand-500/40 ${SHARE_TONE[l].card}`}
                         onClick={() => setAdding(l)}>
-                  <b>{TITLE[l]}</b>
-                  <span className="cx-note">{SHARE_PURPOSE[l]}</span>
+                  <i className={`${SHARE_TONE[l].icon} ${SHARE_TONE[l].accent} mt-0.5 text-lg leading-none`}
+                     aria-hidden="true" />
+                  <span className="grow">
+                    <span className="flex items-center gap-2">
+                      <b className="text-[0.875rem] text-ink">{TITLE[l]}</b>
+                      <LevelPill level={l} />
+                    </span>
+                    <span className="mt-0.5 block text-[0.75rem] text-ink-muted">{SHARE_PURPOSE[l]}</span>
+                  </span>
+                  <i className="ri-arrow-right-s-line mt-0.5 text-lg leading-none text-ink-faint" aria-hidden="true" />
                 </button>
               ))}
             </div>
           )}
+          {/* Said, rather than the option silently missing: a host looking for
+              "anyone with the link" should learn it is the organisation's
+              decision and who makes it, not assume the product cannot. */}
+          {!capability.levels.includes('public') && (
+            <p className="text-[0.75rem] text-ink-muted mt-3 mb-0">
+              Links that anyone can open without a password are switched off
+              for your organisation. An administrator can allow them under
+              Organisation&nbsp;→&nbsp;Sharing.
+            </p>
+          )}
         </>
       ) : (
         <>
-          <h3 className="text-[0.875rem] font-semibold mb-2">{TITLE[adding]}</h3>
+          <h3 className="mb-2 flex items-center gap-2 text-[0.875rem] font-semibold">
+            <i className={`${SHARE_TONE[adding].icon} ${SHARE_TONE[adding].accent} text-lg leading-none`}
+               aria-hidden="true" />
+            {TITLE[adding]}
+            <LevelPill level={adding} />
+          </h3>
 
           {/* THE SENTENCE THAT MATTERS, AT THE MOMENT OF THE DECISION.
               Not in a tooltip, not after the link is made. The 'public'
@@ -251,7 +308,7 @@ export function ShareDialog({
               <Field
                 label="Who"
                 htmlFor="cx-share-people"
-                hint="TatvaOS accounts, one per line. They can be in another organisation."
+                hint="TatvaOS accounts, one per line. They can be in another organisation. Each of them is emailed a link from your mailbox."
                 why={
                   <>
                     Only people who already have a TatvaOS account, for now.
@@ -261,7 +318,12 @@ export function ShareDialog({
                   </>
                 }
               >
-                <textarea id="cx-share-people" className="cx-field" rows={3}
+                {/* The kit's controls, NOT className="cx-field". cx-field is
+                    the band AROUND a form row in ConnectSkin, never an input
+                    style; used on the control it left these unstyled — a
+                    borderless box, white-on-white, and in dark mode a white
+                    slab with the text invisible inside it (Amit, 26 Sept). */}
+                <Textarea id="cx-share-people" rows={3}
                           value={emails} onChange={(e) => setEmails(e.target.value)}
                           placeholder={'priya@example.com\nrahul@example.com'} />
               </Field>
@@ -271,19 +333,27 @@ export function ShareDialog({
               <Field
                 label="Password"
                 htmlFor="cx-share-pass"
-                hint="4 to 100 characters. Send it separately from the link."
+                hint={`At least ${MIN_SHARE_PASSWORD} characters. Copy it now — it cannot be shown again. Send it separately from the link.`}
                 why={
                   <>
-                    Stored the same way a meeting password is — hashed, never
-                    readable, not even by us. That also means it cannot be
-                    shown back to you later: if you forget it, revoke the link
-                    and make a new one.
+                    Longer than a meeting password on purpose: a meeting
+                    password guards an hour, and this guards a recording for
+                    weeks. It is stored hashed, never readable, not even by us,
+                    so it cannot be shown back to you later. After ten wrong
+                    tries in an hour the link pauses for everybody, and you
+                    will see that here.
                   </>
                 }
               >
-                <input id="cx-share-pass" className="cx-field" type="text"
-                       autoComplete="off"
-                       value={password} onChange={(e) => setPassword(e.target.value)} />
+                <div className="flex gap-2">
+                  <Input id="cx-share-pass" className="grow font-mono" type="text"
+                         autoComplete="off" spellCheck={false}
+                         value={password} onChange={(e) => setPassword(e.target.value)} />
+                  <Button variant="secondary" size="sm" type="button"
+                          onClick={() => setPassword(suggestPassword())}>
+                    Suggest one
+                  </Button>
+                </div>
               </Field>
             )}
 
@@ -302,7 +372,7 @@ export function ShareDialog({
                   </>
                 }
               >
-                <select id="cx-share-days" className="cx-field" value={days}
+                <Select id="cx-share-days" value={days}
                         onChange={(e) => setDays(Number(e.target.value))}>
                   {[1, 7, 30, 90].filter((d) => d <= capability.maxDays).map((d) => (
                     <option key={d} value={d}>
@@ -315,7 +385,7 @@ export function ShareDialog({
                       {capability.maxDays} days — as long as the recording lasts
                     </option>
                   )}
-                </select>
+                </Select>
               </Field>
             )}
           </div>
@@ -378,13 +448,14 @@ function ExistingShare({ share, busy, copied, onCopy, onRevoke }: {
   const outside = share.people.filter((p) => p.external);
 
   return (
-    <div className="cx-shared">
-      <div className="flex items-start gap-2">
-        <div className="grow">
+    <div className={`mb-2.5 rounded-card border border-line p-3.5 last:mb-0 ${SHARE_TONE[share.level].card}`}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+        <div className="min-w-0 grow">
           <div className="flex items-center gap-2 flex-wrap">
-            <b className="text-[0.875rem]">{TITLE[share.level]}</b>
-            {share.level === 'public' && <Badge tone="danger">Public</Badge>}
-            {share.hasPassword && <Badge tone="neutral">Password</Badge>}
+            <i className={`${SHARE_TONE[share.level].icon} ${SHARE_TONE[share.level].accent} text-lg leading-none`}
+               aria-hidden="true" />
+            <b className="text-[0.875rem] text-ink">{TITLE[share.level]}</b>
+            <LevelPill level={share.level} />
           </div>
 
           <div className="text-[0.75rem] text-ink-muted mt-1">
@@ -399,12 +470,29 @@ function ExistingShare({ share, busy, copied, onCopy, onRevoke }: {
             <div className="text-[0.75rem] mt-1">
               {share.people.map((p) => p.name).join(', ')}
               {outside.length > 0 && (
-                <div className="text-warning-emphasis mt-1">
+                <div className="mt-1 font-medium text-warn">
                   {outside.length === 1
                     ? `${outside[0]!.name} is outside your organisation.`
                     : `${outside.length} of these people are outside your organisation.`}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Somebody guessing the password. Said beside THIS share, because
+              it is this link that has leaked or is being tried, and the host's
+              remedy — stop it and make a new one — is the button next to it. */}
+          {share.passwordPausedUntil ? (
+            <div className="mt-1 rounded-md bg-danger/10 px-2 py-1.5 text-[0.75rem] font-medium text-danger">
+              Someone has been guessing this link&rsquo;s password. Stop it and
+              share a new link to let your viewers back in — otherwise it stays
+              paused for everybody until {timeLabel(share.passwordPausedUntil)}.
+            </div>
+          ) : share.wrongPasswords24h > 0 && (
+            <div className="mt-1 text-[0.75rem] font-medium text-warn">
+              {share.wrongPasswords24h === 1
+                ? 'One wrong password was tried on this link in the last day.'
+                : `${share.wrongPasswords24h} wrong passwords were tried on this link in the last day.`}
             </div>
           )}
 
@@ -420,24 +508,40 @@ function ExistingShare({ share, busy, copied, onCopy, onRevoke }: {
           </div>
 
           {share.url !== null && (
-            <input className="cx-field cx-linkbox mt-2" readOnly value={share.url}
+            <Input className="mt-2 font-mono text-[12px]" readOnly value={share.url}
                    onFocus={(e) => e.currentTarget.select()}
                    aria-label="The share link" />
           )}
         </div>
 
-        <div className="flex flex-col gap-2">
+        {/* Two buttons that look like buttons. Both were ghost buttons —
+            grey text on the card, no edge — and the danger class lost to the
+            ghost variant's own colour, so "Stop sharing" was grey too. */}
+        <div className="flex shrink-0 gap-2 sm:flex-col">
           {share.url !== null && (
-            <Button variant="ghost" size="sm" onClick={onCopy} disabled={busy}>
+            <Button variant="secondary" size="sm" onClick={onCopy} disabled={busy}>
+              <i className={copied ? 'ri-check-line' : 'ri-file-copy-line'} aria-hidden="true" />
               {copied ? 'Copied' : 'Copy link'}
             </Button>
           )}
-          <Button variant="ghost" size="sm" className="text-danger"
+          <Button variant="secondary" size="sm"
+                  className="!border-danger/40 !text-danger hover:!bg-danger/10"
                   disabled={busy} onClick={onRevoke}>
+            <i className="ri-close-circle-line" aria-hidden="true" />
             Stop sharing
           </Button>
         </div>
       </div>
     </div>
+  );
+}
+
+/** The level's colour and a short word — on the choice, the heading of the
+ *  form, and every existing share, so the three always agree. */
+function LevelPill({ level }: { level: ShareLevel }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide ${SHARE_TONE[level].badge}`}>
+      {SHARE_TONE[level].word}
+    </span>
   );
 }

@@ -1,3 +1,4 @@
+using TatvaOS.Api.Shared.Data;
 using System.Diagnostics;
 
 namespace TatvaOS.Api.Shared.Ai;
@@ -50,7 +51,7 @@ public static class AiStatusEndpoints
     public static void MapAiStatusEndpoints(this WebApplication app)
     {
         app.MapGet("/api/admin/ai/status", async (
-            IAiGateway ai, CancellationToken ct) =>
+            IAiGateway ai, TatvaOS.Api.Shared.Data.AppDbContext db, CancellationToken ct) =>
         {
             if (!ai.IsConfigured)
                 return Results.Ok(new
@@ -61,8 +62,14 @@ public static class AiStatusEndpoints
                            + "Everything else is unaffected.",
                 });
 
+            // A fixed "ping", nothing of any organisation's: AiGate lets it
+            // through by name (NoOrganisationContent). Asked anyway, so the
+            // check that every sender asks has no exceptions to list.
+            if (!await AiGate.AllowedAsync(db, null, "platform.probe",
+                    Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, ct))
+                return Results.Ok(new { configured = true, working = false, detail = "The probe is not allowed." });
             var watch = Stopwatch.StartNew();
-            var result = await ai.CompleteAsync(ProbeInstruction, ProbeInput, ct);
+            var result = await ai.CompleteAsync(ProbeInstruction, ProbeInput, ct, feature: "platform.probe");
             watch.Stop();
 
             if (result.Error is not null)
@@ -98,7 +105,7 @@ public static class AiStatusEndpoints
                       + "rather than OK). Worth checking the model name.",
             });
         })
-        .RequireAuthorization("SuperAdmin")
+        .RequireOperator()
         .WithName("AiStatus");
     }
 }

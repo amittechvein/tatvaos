@@ -120,6 +120,12 @@ export type SearchHit = Message & {
   folderId: string;
   folderName: string | null;
   folderSlug: string | null;
+  /**
+   * Conversation rows only: other stored copies of this same message. Mail
+   * addressed to yourself is held in Sent AND Inbox; the server folds the two
+   * into one row and names the one it left out here.
+   */
+  copyIds?: string[];
 };
 
 export interface SearchPage {
@@ -157,6 +163,8 @@ export interface ThreadSummary {
   isRead: boolean;
   isFlagged: boolean;
   hasAttachments: boolean;
+  /** TatvaOS AI's sorting label (Mail AI step 3), newest labelled message's. Null when off. */
+  aiLabel?: string | null;
 }
 
 export interface ThreadPage {
@@ -429,10 +437,13 @@ export const mailApi = {
   folderThreads: (
     f: AuthedFetch,
     folderId: string,
-    opts?: { skip?: number; take?: number; mailboxId?: string },
+    opts?: { skip?: number; take?: number; mailboxId?: string; aiLabel?: string | null },
   ) => {
     const params = new URLSearchParams();
     if (opts?.skip) params.set('skip', String(opts.skip));
+    // A TatvaOS AI inbox tab (step 3). The server filters, so paging and the
+    // total are about the tab, not about whatever page happened to be loaded.
+    if (opts?.aiLabel) params.set('aiLabel', opts.aiLabel);
     if (opts?.take) params.set('take', String(opts.take));
     // Without this a shared queue silently lists YOUR inbox instead: the
     // endpoint falls back to the caller's own mailbox when it is not told

@@ -10,8 +10,8 @@
 #  not survive nested imports, which the first validate proved.
 #
 #  THE `not host` GUARD IS LOAD-BEARING: without it each door would redirect
-#  its own product to itself forever. With it, one file serves all seven
-#  doors — each passes its own paths through and redirects everyone else's.
+#  its own product to itself forever. With it, one file serves every
+#  door — each passes its own paths through and redirects everyone else's.
 # ============================================================================
 @to_mail {
     path /mail /mail/*
@@ -48,3 +48,19 @@ redir @to_calendar https://{$CALENDAR_DOMAIN}{uri}
     not host {$ACCOUNT_DOMAIN}
 }
 redir @to_account https://{$ACCOUNT_DOMAIN}{uri}
+
+# Hire owns TWO path families: /hire (staff) and /careers (the public pages,
+# decision 0010). Both go home to the Hire door so a careers link has ONE
+# address whichever host it was copied from.
+@to_hire {
+    path /hire /hire/* /careers /careers/*
+    not host {$HIRE_DOMAIN}
+}
+redir @to_hire https://{$HIRE_DOMAIN}{uri}
+
+# Docs only: Sheets (/sheets) is not switched on anywhere and has no door yet.
+@to_docs {
+    path /docs /docs/*
+    not host {$DOCS_DOMAIN}
+}
+redir @to_docs https://{$DOCS_DOMAIN}{uri}

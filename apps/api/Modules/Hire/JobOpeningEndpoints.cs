@@ -443,7 +443,7 @@ public static class JobOpeningEndpoints
     /// in India. The first customer outside it needs a tenant time zone, and
     /// this is the one place to change.
     /// </summary>
-    private static DateOnly Today() =>
+    internal static DateOnly Today() =>
         DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, Ist).DateTime);
 
     private static readonly TimeZoneInfo Ist = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
