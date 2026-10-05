@@ -198,7 +198,31 @@ jobs:
             echo "Server is now at $(git rev-parse HEAD) ($TARGET)"
             # deploy.sh takes its own pre-deploy database backup and refuses
             # to continue if that fails.
-            CI=1 ./infra/scripts/deploy.sh production
+            #
+            # ------------------------------------------------------------
+            #  A TEMPORARY EXCEPTION TO HOUSE_RULES RULE 11b. REMOVE BY
+            #  15 OCTOBER 2026.
+            #
+            #  deploy.sh refuses to run attached to a session, and this
+            #  step IS attached: it streams the deploy down the SSH
+            #  connection of this job. Mr. Singh, 29 Sept 2026: the
+            #  exception stands for now, because the runner keeps this
+            #  output as the job log and does not hang up on its own
+            #  process.
+            #
+            #  deploy.sh honours DEPLOY_ATTACHED=1 only beside
+            #  GITHUB_ACTIONS=true. BOTH are set here by hand:
+            #  GITHUB_ACTIONS exists on the runner, not on the server this
+            #  script runs on, and is not carried over SSH.
+            #
+            #  OWED: once Actions is running again (expected 1 October
+            #  2026), rewrite this step to start the deploy detached and
+            #  follow its log to the DEPLOY VERDICT line, so there is one
+            #  way to run a deploy, not two. If these two variables are
+            #  still here on 15 October 2026, that is a rule 12 failure:
+            #  a temporary carve-out that became permanent.
+            # ------------------------------------------------------------
+            CI=1 GITHUB_ACTIONS=true DEPLOY_ATTACHED=1 ./infra/scripts/deploy.sh production
             # deploy.sh already ran verify-live.sh as its final step; this
             # second, EXPLICIT call is the workflow's own signature on the
             # same contract. If deploy.sh ever loses that step, the deploy
@@ -262,4 +286,4 @@ jobs:
           echo "  cd /srv/tatvaos-production"
           echo "  git log --oneline -5"
           echo "  git reset --hard <previous-sha> && ./infra/scripts/deploy.sh production"
-          echo "  Pre-deploy backup: backups/pre-deploy-*.sql"
+          echo "  Pre-deploy backup: backups/pre-deploy-*.sql.gz.enc (encrypted; kept BACKUP_KEEP_DAYS days; restore: docs/runbooks/backup-and-restore.md)"

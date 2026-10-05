@@ -19,12 +19,32 @@ public static class SettingsEndpoints
     public static void MapSettingsEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/admin/settings")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
 
         g.MapGet("/", ListAsync);
         g.MapPut("/", SaveAsync);
         g.MapPost("/test-sms", TestSmsAsync);
+        g.MapPost("/test-ai-warning", TestAiWarningAsync);
+        g.MapGet("/secrets-status", SecretsStatusAsync);
+        g.MapPost("/seal-secrets", SealSecretsAsync);
+    }
+
+    // ------------------------------------------------------------------
+    //  Secrets at rest (Mr. Singh, 26 Sept 2026). Saving always encrypts;
+    //  values saved before that are encrypted when the operator presses the
+    //  button, once a deploy with this code has proved good — sealing at
+    //  start-up would make a rollback break SMS sign-in.
+    // ------------------------------------------------------------------
+    private static async Task<IResult> SecretsStatusAsync(AppDbContext db, CancellationToken ct) =>
+        Results.Ok(new { plainText = await SettingsCrypto.PlainCountAsync(db, ct) });
+
+    private static async Task<IResult> SealSecretsAsync(
+        AppDbContext db, SettingsCrypto crypto, AuditWriter audit, ILoggerFactory logs, CancellationToken ct)
+    {
+        var n = await crypto.SealAsync(db, logs.CreateLogger("Settings"), ct);
+        await audit.WriteAsync("settings.secrets_sealed", "settings", null, after: new { count = n }, ct: ct);
+        return Results.Ok(new { encrypted = n, plainText = await SettingsCrypto.PlainCountAsync(db, ct) });
     }
 
     // ------------------------------------------------------------------
@@ -54,7 +74,7 @@ public static class SettingsEndpoints
     // ------------------------------------------------------------------
     private static async Task<IResult> SaveAsync(
         Dictionary<string, string> body, AppDbContext db, TenantContext tenant,
-        AuditWriter audit, CancellationToken ct)
+        AuditWriter audit, SettingsCrypto crypto, CancellationToken ct)
     {
         var changed = new List<string>();
 
@@ -70,18 +90,21 @@ public static class SettingsEndpoints
             // blank password box means "unchanged", not "erase the credential".
             if (secret && value.Length == 0) continue;
 
+            // Secrets are stored encrypted (Mr. Singh, 26 Sept 2026): a
+            // database dump or a backup must not hand over the Razorpay key.
+            var stored = secret ? crypto.Seal(value) : value;
             var row = await db.PlatformSettings.FirstOrDefaultAsync(s => s.Key == key, ct);
             if (row is null)
             {
                 db.PlatformSettings.Add(new PlatformSetting
                 {
-                    Key = key, Value = value, IsSecret = secret, UpdatedBy = tenant.UserId,
+                    Key = key, Value = stored, IsSecret = secret, UpdatedBy = tenant.UserId,
                 });
                 changed.Add(key);
             }
-            else if (row.Value != value)
+            else if ((secret ? crypto.Open(row.Value) : row.Value) != value)
             {
-                row.Value = value;
+                row.Value = stored;
                 row.UpdatedAt = DateTimeOffset.UtcNow;
                 row.UpdatedBy = tenant.UserId;
                 changed.Add(key);
@@ -108,13 +131,67 @@ public static class SettingsEndpoints
     /// mismatch and out-of-credit each look identical from the outside, and
     /// naming which is the entire value of a test button.
     /// </summary>
+    /// <summary>
+    /// Sends ONE real "80% of this month's TatvaOS AI" warning — the email an
+    /// organisation's administrators receive — to an address the operator
+    /// types, subject marked [Test]. Mr. Singh on PR 280: that email goes to
+    /// a customer, so before any organisation can trigger one it is checked
+    /// the way the last three mail faults were: one real send to an outside
+    /// mailbox, opened, read. This is the button for that, so it needs no
+    /// shell and no one else's credentials.
+    ///
+    /// It sends real mail to any address typed, so it is a small relay: the
+    /// group's SuperAdmin guard is what keeps it closed, and every send is
+    /// audited WITH the address and whether the mail server took it (Mr. Singh,
+    /// 25 Sept). A refused address is not audited — nothing was sent.
+    /// </summary>
+    private static async Task<IResult> TestAiWarningAsync(
+        TestAiWarningRequest req, TatvaOS.Api.Shared.Notify.SystemMailer mailer, IConfiguration config,
+        AuditWriter audit, CancellationToken ct)
+    {
+        var to = req.To?.Trim() ?? "";
+        if (to.Length is < 3 or > 320 || !to.Contains('@') || to.Contains(' '))
+            return Results.BadRequest(new { error = "Type the email address to send the test to." });
+
+        var baseUrl = (config["Jwt:Issuer"] ?? "https://core.tatvaos.com").TrimEnd('/');
+        var sent = await mailer.SendHtmlAsync(to,
+            "[Test] " + TatvaOS.Api.Shared.Notify.AiUsageWarningEmail.Subject("Example School", 80),
+            TatvaOS.Api.Shared.Notify.AiUsageWarningEmail.Html("there", "Example School", baseUrl, 80, 80),
+            from: "no_reply@tatvaos.com", ct);
+
+        await audit.WriteAsync("settings.test_ai_warning_sent", "email", null,
+            after: new { to, sent }, ct: ct);
+
+        return Results.Ok(new
+        {
+            sent,
+            detail = sent
+                ? "Handed to the mail server. Check the inbox AND the spam folder, and open it."
+                : "The mail server did not accept it. Check the API log for the SMTP error.",
+        });
+    }
+
+    /// <summary>
+    /// Sends the OTP template with code 123456 to a number the operator types.
+    /// Operator-only through the group's SuperAdmin guard, and every send is
+    /// audited — like the AI warning test email beside it (Mr. Singh on PR
+    /// 280: a button that sends to any recipient typed is a relay unless it is
+    /// guarded AND recorded). The number is audited masked, the way recovery
+    /// number changes are (+91•••••3210): enough to match a complaint, not a
+    /// list of numbers. The provider's detail is NOT audited — providers echo
+    /// the recipient back in it.
+    /// </summary>
     private static async Task<IResult> TestSmsAsync(
-        TestSmsRequest req, ISmsSender sms, CancellationToken ct)
+        TestSmsRequest req, ISmsSender sms, AuditWriter audit, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(req.Phone))
             return Results.BadRequest(new { error = "A phone number is required." });
 
-        var result = await sms.SendOtpAsync(req.Phone.Trim(), "123456", ct);
+        var phone = req.Phone.Trim();
+        var result = await sms.SendOtpAsync(phone, "123456", ct);
+
+        await audit.WriteAsync("settings.test_sms_sent", "sms", null,
+            after: new { to = TatvaOS.Api.Shared.Mask.Phone(phone), sent = result.Sent, provider = result.Provider }, ct: ct);
 
         return Results.Ok(new
         {
@@ -128,3 +205,4 @@ public static class SettingsEndpoints
 }
 
 public sealed record TestSmsRequest(string? Phone);
+public sealed record TestAiWarningRequest(string? To);

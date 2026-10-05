@@ -70,6 +70,9 @@ trap cleanup EXIT
 
 printf "\n  SMS sender log redaction\n  tree under test: %s\n\n" "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)"
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 [ -n "$(PG "SELECT 1")" ] || { fail "psql does not answer"; exit 1; }
 # The path under test is "no provider configured". Refuse to run otherwise: with a
 # provider set this would send a real text to a seed number.
@@ -98,7 +101,7 @@ LINE=$(printf "%s\n" "$SENDER" | grep -F "SMS not configured" | head -n1)
 if [ -n "$LINE" ]; then pass "1. the sender logged that nothing was sent: $(printf '%s' "$LINE" | sed 's/^ *//')"
 else fail "1. the sender logged nothing at all - the checks below would be a false green"; fi
 
-if [ -n "$LINE" ] && ! printf "%s" "$LINE" | grep -qF "$DIGITS"; then pass "2. that line does not contain the number"
+if [ -n "$LINE" ] && ! grep -qF "$DIGITS" <<< "$LINE"; then pass "2. that line does not contain the number"
 else fail "2. THE NUMBER IS IN THE LOG: $(printf '%s' "$LINE" | sed 's/^ *//')"; fi
 
 if printf "%s" "$LINE" | grep -qF "$TAIL"; then pass "3. it keeps the last four digits, so the event can still be found"
