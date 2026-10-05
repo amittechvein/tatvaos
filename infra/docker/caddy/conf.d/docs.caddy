@@ -1,0 +1,55 @@
+# ============================================================================
+#  TatvaOS Docs — docs.tatvaos.com
+# ============================================================================
+#
+#  Modeled on space.caddy and hire.caddy: its own front door onto the same
+#  web container (Amit, 4 Oct 2026: Docs goes live on its own address). /api/*
+#  is proxied SAME-ORIGIN, so the shared session (Domain=.tatvaos.com) works
+#  and the browser never makes a cross-origin call. That includes the live
+#  editing channel, a WebSocket under /api/docs/{id}/live, which reverse_proxy
+#  upgrades as it does for every other door.
+#
+#  Only /docs comes here. Sheets (/sheets) is not switched on anywhere yet and
+#  keeps whatever host a link was opened on until it is decided where it lives.
+#
+#  {$DOCS_DOMAIN} MUST be in infra/docker/.env on the server BEFORE this file
+#  is deployed. docker-compose.base.yml lists it with `:?`, so a deploy
+#  without it stops at `docker compose`, before anything is built or
+#  restarted, instead of Caddy rejecting the ENTIRE config and taking every
+#  product down. The order is: compose list, .env on the server, this file.
+#
+#  Opening the address does not open Docs to anyone: each organisation still
+#  needs Docs switched on by the platform operator (docs.tenant_settings).
+# ============================================================================
+
+{$DOCS_DOMAIN} {
+    encode zstd gzip
+
+    # Send every other product's paths to their own door — see
+    # core/product-doors.caddy for why and for the self-redirect guard.
+    import /etc/caddy/conf.d/core/product-doors.caddy
+
+    handle /api/* {
+        reverse_proxy api:8080
+    }
+
+    # Landing on the host lands in the product: the Docs home, which sends a
+    # signed-out visitor to sign in.
+    redir / /docs
+
+    # Administration lives on Core and nowhere else. Mirrors space.caddy.
+    @consolepaths path /org /org/* /admin /admin/* /signup /signup/*
+    redir @consolepaths https://{$SITE_DOMAIN}{uri}
+
+    handle {
+        reverse_proxy web:3000
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}
