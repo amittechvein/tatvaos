@@ -57,10 +57,64 @@ public class Tenant
     /// May this organisation's content be sent to the configured AI provider?
     /// FALSE BY DEFAULT — consent is per-organisation, decided knowingly
     /// (Amit, 27 Aug 2026, on Mail's finding that the gateway was
-    /// deployment-wide). Enforced INSIDE OpenAiGateway, fail-closed, so no
+    /// deployment-wide). Enforced INSIDE the AI gateway, fail-closed, so no
     /// caller can forget the check. Column: 20260826-core-ai-per-org.sql.
     /// </summary>
     public bool AllowAi { get; set; }
+
+    /// <summary>
+    /// May Mail use TatvaOS AI for this organisation? Needs AllowAi too —
+    /// consenting to the provider for meeting notes is not consenting to it
+    /// reading mail. FALSE BY DEFAULT; enforced in the gateway on the "mail."
+    /// feature label (AiProductSwitch). Column: 20260925-mail-ai-switch.sql.
+    /// </summary>
+    public bool AllowMailAi { get; set; }
+
+    /// <summary>
+    /// TatvaOS AI sorts incoming inbox mail since this moment; null = off.
+    /// Needs AllowAi and AllowMailAi too. Only mail that ARRIVED after it is
+    /// ever sent. Enforced in the gateway on "mail.triage" (AiProductSwitch).
+    /// Column: 20260925-b-mail-ai-triage.sql.
+    /// </summary>
+    public DateTimeOffset? MailAiTriageSince { get; set; }
+
+    /// <summary>
+    /// A customer from before plan features (Amit, 26 Sept 2026: "existing
+    /// customers keep everything"). Every feature, no plan warnings. Set once
+    /// by 20260926-plan-features.sql; the operator can clear it.
+    /// </summary>
+    public bool KeepsEverything { get; set; }
+
+    /// <summary>Connect's organisation switches (20260817-connect.sql,
+    /// 20260818-a-connect-recording.sql). Mapped 26 Sept for the plan
+    /// warnings; the Connect code reads them in SQL and is unchanged.</summary>
+    public bool AllowConnectGuests { get; set; } = true;
+    public bool AllowConnectRecording { get; set; }
+
+    /// <summary>
+    /// Each Mail AI feature's own switch, inside AllowMailAi (Amit, 26 Sept
+    /// 2026: "turn on and off … so client able to save tokens"). Rewrite and
+    /// suggest default on (they were what Mail AI meant when agreed to);
+    /// summary defaults OFF (new, and it sends a whole conversation).
+    /// Column: 20260926-mail-ai-features.sql. Enforced in AiProductSwitch.
+    /// </summary>
+    public bool MailAiRewrite { get; set; } = true;
+    public bool MailAiSuggest { get; set; } = TatvaOS.Api.Shared.Ai.AiProductSwitch.DefaultSuggest;
+    public bool MailAiSummary { get; set; }
+
+    /// <summary>
+    /// The operator's exception: exactly this many AI credits a month for this
+    /// organisation, whatever its plan says. Null = follow the plan; 0 = none.
+    /// </summary>
+    public int? AiCreditsOverride { get; set; }
+
+    /// <summary>
+    /// "organisation" (every customer) or "personal_house" — the one tenant
+    /// personal accounts live in. Never compare it inline: ask PersonalHouse,
+    /// so "is this a personal account?" has one answer. Column:
+    /// 20260926-a-personal-join.sql.
+    /// </summary>
+    [MaxLength(16)] public string Kind { get; set; } = "organisation";
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? SuspendedAt { get; set; }
@@ -571,8 +625,28 @@ public class Plan
     public long? PooledStorageBytes { get; set; }
     public int? MaxDomains { get; set; }
     public string[] IncludedProducts { get; set; } = ["mail"];
+
+    /// <summary>
+    /// Feature codes (core.features). NULL = every feature of the included
+    /// products plus the platform-wide ones - what every plan meant before
+    /// 20260926-plan-features.sql. See PlanEntitlements.
+    /// </summary>
+    public string[]? IncludedFeatures { get; set; }
     public decimal? PricePerUserMonthly { get; set; }
     public decimal? PriceMonthly { get; set; }
+    /// <summary>Yearly prices (20260926-d-billing-invoices.sql). Null = 12 × the monthly price.</summary>
+    public decimal? PricePerUserYearly { get; set; }
+    public decimal? PriceYearly { get; set; }
+
+    /// <summary>
+    /// AI credits (26 Sept 2026) — the same choice as storage: 'pooled' gives
+    /// the organisation AiCreditsPooled a month; 'per_user' gives
+    /// AiCreditsPerUser × its users, shared. A null amount = no credit limit.
+    /// See AiCredits and 20260926-b-ai-credits.sql.
+    /// </summary>
+    [MaxLength(16)] public string AiCreditModel { get; set; } = "pooled";
+    public int? AiCreditsPerUser { get; set; }
+    public int? AiCreditsPooled { get; set; }
 }
 
 public class Subscription
@@ -585,6 +659,8 @@ public class Subscription
     public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? RenewsAt { get; set; }
     public DateTimeOffset? CancelledAt { get; set; }
+    /// <summary>monthly | yearly. RenewsAt is when the next period — and its invoice — starts.</summary>
+    [MaxLength(16)] public string BillingCycle { get; set; } = "monthly";
 
     public Plan? Plan { get; set; }
 }
@@ -818,6 +894,16 @@ public class Message : TatvaOS.Api.Modules.Mail.IMailSortable
     public string? BodyText { get; set; }
 
     /// <summary>
+    /// TatvaOS AI's guess at what kind of mail this is — needs_reply, fyi,
+    /// updates, promotions (MailTriage.Labels). NOT a category: categories are
+    /// made by people. Null until sorted, and cleared when sorting is off.
+    /// </summary>
+    public string? AiLabel { get; set; }
+
+    /// <summary>When the sorter claimed this message; with no label = looked at, left alone.</summary>
+    public DateTimeOffset? AiLabelledAt { get; set; }
+
+    /// <summary>
     /// Where the maildir file lives, relative to the vmail root, with the
     /// Dovecot flags suffix stripped (the base name is stable; the flags
     /// change every time someone touches the message over IMAP). Doubles as
@@ -1001,3 +1087,47 @@ public class VacationSend
     [MaxLength(320)] public required string Address { get; set; }
     public DateTimeOffset LastSentAt { get; set; } = DateTimeOffset.UtcNow;
 }
+
+// ---- Decision 0009: an administrator sets a recovery email ----------------
+// (20260927-core-recovery-email-changes.sql). core.users.recovery_email only
+// changes when a change is APPLIED; until then it keeps the old address, so the
+// credential paths go on reading the old one without knowing about holds.
+
+/// <summary>One administrator change to one person's recovery email.</summary>
+public class RecoveryEmailChange
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid UserId { get; set; }
+    public Guid SetByUserId { get; set; }
+    [MaxLength(320)] public string? OldEmail { get; set; }
+    public DateTimeOffset? OldVerifiedAt { get; set; }
+    [MaxLength(320)] public required string NewEmail { get; set; }
+    /// <summary>pending | held | applied | reverted | superseded</summary>
+    [MaxLength(16)] public string Status { get; set; } = "pending";
+    [MaxLength(64)] public string? ConfirmTokenHash { get; set; }
+    public DateTimeOffset? ConfirmSentAt { get; set; }
+    public DateTimeOffset? ConfirmedAt { get; set; }
+    public DateTimeOffset? HoldUntil { get; set; }
+    public DateTimeOffset? AppliedAt { get; set; }
+    [MaxLength(64)] public string? NotMeTokenHash { get; set; }
+    public DateTimeOffset? NotMeExpiresAt { get; set; }
+    public DateTimeOffset? RevertedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// An administrator whose change was reverted by the person ("this was not
+/// me") may not change recovery addresses until an owner clears this.
+/// </summary>
+public class RecoveryAdminSuspension
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid AdminUserId { get; set; }
+    public Guid ChangeId { get; set; }
+    public DateTimeOffset SuspendedAt { get; set; } = DateTimeOffset.UtcNow;
+    public Guid? ClearedByUserId { get; set; }
+    public DateTimeOffset? ClearedAt { get; set; }
+}
+

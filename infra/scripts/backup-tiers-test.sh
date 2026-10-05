@@ -23,8 +23,8 @@ export TZ=Asia/Kolkata
 TIERS="${TIERS:-./infra/scripts/backup-tiers.sh}"
 pass=0; fail=0
 same()  { if [ "$2" = "$3" ]; then pass=$((pass+1)); echo "  ok    $1"; else fail=$((fail+1)); echo "  FAIL  $1: expected [$3], got [$2]"; fi; }
-has()   { if printf '%s\n' "$2" | grep -qxF -- "$3"; then pass=$((pass+1)); echo "  ok    $1"; else fail=$((fail+1)); echo "  FAIL  $1: [$3] missing"; fi; }
-hasnt() { if printf '%s\n' "$2" | grep -qxF -- "$3"; then fail=$((fail+1)); echo "  FAIL  $1: [$3] present"; else pass=$((pass+1)); echo "  ok    $1"; fi; }
+has()   { if grep -qxF -- "$3" <<< "$2"; then pass=$((pass+1)); echo "  ok    $1"; else fail=$((fail+1)); echo "  FAIL  $1: [$3] missing"; fi; }
+hasnt() { if grep -qxF -- "$3" <<< "$2"; then fail=$((fail+1)); echo "  FAIL  $1: [$3] present"; else pass=$((pass+1)); echo "  ok    $1"; fi; }
 
 stamp() { date -u -d "@$1" +%Y%m%d-%H%M%S; }
 H=3600
@@ -36,7 +36,12 @@ t=$T0
 end=$((T0 + 14 * 24 * H))
 deleted_total=0
 maxcount=0; mincount=999
+# The time of every set, known as it is added, so the oldest age can be read
+# after each prune without a date call per name (this loop runs 169 times).
+declare -A epoch_of
+min_oldest=999999; max_oldest=0
 while [ "$t" -le "$end" ]; do
+    epoch_of["$(stamp "$t").tar.gz.enc"]=$t
     bucket=$(printf '%s\n%s' "$bucket" "$(stamp "$t").tar.gz.enc" | sed '/^$/d')
     doomed=$(printf '%s\n' "$bucket" | "$TIERS" "$t" 2>/dev/null)
     if [ -n "$doomed" ]; then
@@ -45,10 +50,21 @@ while [ "$t" -le "$end" ]; do
     fi
     # Every run, not only the last: the count depends on the time of day
     # the run lands, and one ending hour could hide a worse one.
-    if [ "$t" -ge $((T0 + 7 * 24 * H)) ]; then
+    # From day 8, once the bucket can hold its full history.
+    if [ "$t" -ge $((T0 + 8 * 24 * H)) ]; then
         n=$(printf '%s\n' "$bucket" | wc -l)
         [ "$n" -gt "$maxcount" ] && maxcount=$n
         [ "$n" -lt "$mincount" ] && mincount=$n
+        # HOW FAR BACK THE BACKUPS REACH, after this run's prune. This is the
+        # promise that matters — "seven days" — and the original test never
+        # read it: it checked only that nothing was TOO old.
+        oldest_epoch=$t
+        while read -r nm; do
+            [ -n "$nm" ] && [ "${epoch_of[$nm]}" -lt "$oldest_epoch" ] && oldest_epoch=${epoch_of[$nm]}
+        done <<< "$bucket"
+        reach=$(( (t - oldest_epoch) / H ))
+        [ "$reach" -lt "$min_oldest" ] && min_oldest=$reach
+        [ "$reach" -gt "$max_oldest" ] && max_oldest=$reach
     fi
     last=$t
     t=$((t + 2 * H))
@@ -63,18 +79,24 @@ ages=$(printf '%s\n' "$bucket" | while read -r n; do
 done)
 in_day1=$(printf '%s\n' "$ages" | awk '$1<24' | wc -l)
 in_day2=$(printf '%s\n' "$ages" | awk '$1>=24 && $1<48' | wc -l)
-in_week=$(printf '%s\n' "$ages" | awk '$1>=48 && $1<168' | wc -l)
+in_week=$(printf '%s\n' "$ages" | awk '$1>=48 && $1<192' | wc -l)
 oldest=$(printf '%s\n' "$ages" | sort -n | tail -1)
 
 same "last 24 hours: all 12 two-hourly sets"       "$in_day1" 12
 same "24-48 hours: one per 6-hour slot (4)"         "$in_day2" 4
-same "2-7 days: one per day (5)"                    "$in_week" 5
-same "total"                                        "$count"   21
+same "2-8 days: one per day (6)"                    "$in_week" 6
+same "total"                                        "$count"   22
 echo "  over the second week, every run: between $mincount and $maxcount sets"
-if [ "$maxcount" -le 22 ] && [ "$mincount" -ge 20 ]; then pass=$((pass+1)); echo "  ok    never more than 22 or fewer than 20"
+if [ "$maxcount" -le 23 ] && [ "$mincount" -ge 21 ]; then pass=$((pass+1)); echo "  ok    never more than 23 or fewer than 21"
 else fail=$((fail+1)); echo "  FAIL  count strayed to $mincount..$maxcount"; fi
-if [ "$oldest" -lt 168 ]; then pass=$((pass+1)); echo "  ok    nothing older than 7 days (oldest ${oldest}h)"
-else fail=$((fail+1)); echo "  FAIL  a set older than 7 days survived (${oldest}h)"; fi
+if [ "$oldest" -lt 192 ]; then pass=$((pass+1)); echo "  ok    nothing older than 8 days (oldest ${oldest}h)"
+else fail=$((fail+1)); echo "  FAIL  a set older than 8 days survived (${oldest}h)"; fi
+echo "  how far back, every run in the second week: ${min_oldest}h to ${max_oldest}h"
+# THE GUARANTEE (Amit, 26 Sept 2026): off-box backups reach back AT LEAST
+# seven days at every moment. Against the 7-day cut-off this fails — the
+# reach fell to 144 h at each daily drop.
+if [ "$min_oldest" -ge 168 ]; then pass=$((pass+1)); echo "  ok    always at least 7 days back (never under ${min_oldest}h)"
+else fail=$((fail+1)); echo "  FAIL  only ${min_oldest}h back at worst — less than the 7 days Amit decided"; fi
 # The simulation is only a test if deletions happened. A rule that deleted
 # nothing would also "keep the newest set".
 if [ "$deleted_total" -gt 100 ]; then pass=$((pass+1)); echo "  ok    the rule did delete ($deleted_total)"
