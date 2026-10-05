@@ -133,8 +133,16 @@ public static class MailAiEndpoints
     public sealed record RewriteRequest(string? Text, string? Style);
 
     private static async Task<IResult> RewriteAsync(
-        RewriteRequest req, IAiGateway ai, CancellationToken ct)
+        RewriteRequest req, IAiGateway ai, AppDbContext db, TenantContext tenant,
+        ILoggerFactory logs, CancellationToken ct)
     {
+        // Offered to this organisation at all? (AiGate.) The gateway asks
+        // again; asking here too means nothing is prepared for a feature this
+        // organisation does not have. It was the one Mail entry point that
+        // relied on the gateway alone (found by every-ai-entry-calls-gate.sh).
+        if (!await AiGate.AllowedAsync(db, tenant.HasTenant ? tenant.TenantId : null, RewriteFeature, logs.CreateLogger("MailAi"), ct))
+            return Results.Ok(new { error = AiGate.RefusalFor(RewriteFeature) });
+
         var style = (req?.Style ?? "").Trim().ToLowerInvariant();
         if (!Styles.TryGetValue(style, out var change))
             return Results.BadRequest(new { error = "That is not one of the rewrite options." });
@@ -190,6 +198,7 @@ public static class MailAiEndpoints
         // Switches first, before the cache: a remembered answer must not keep
         // showing after an administrator turned Mail AI off.
         if (!ai.IsConfigured || !await ai.EnabledForTenantAsync(ct)
+            || !await AiGate.AllowedAsync(db, tenant.HasTenant ? tenant.TenantId : null, AiProductSwitch.MailSuggestFeature, logs.CreateLogger("MailAi"), ct)
             || !await AiProductSwitch.MailAllowedAsync(db, tenant, logs.CreateLogger("MailAi"), ct,
                    AiProductSwitch.MailSuggestFeature))
             return Results.Ok(new { suggestions = Array.Empty<string>(), skipped = "off" });
@@ -255,6 +264,7 @@ public static class MailAiEndpoints
         IMemoryCache cache, ILoggerFactory logs, CancellationToken ct)
     {
         if (!ai.IsConfigured || !await ai.EnabledForTenantAsync(ct)
+            || !await AiGate.AllowedAsync(db, tenant.HasTenant ? tenant.TenantId : null, AiProductSwitch.MailSummaryFeature, logs.CreateLogger("MailAi"), ct)
             || !await AiProductSwitch.MailAllowedAsync(db, tenant, logs.CreateLogger("MailAi"), ct,
                    AiProductSwitch.MailSummaryFeature))
             return Results.Ok(new { summary = (string?)null, skipped = "off" });

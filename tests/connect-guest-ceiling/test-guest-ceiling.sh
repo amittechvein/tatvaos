@@ -72,9 +72,13 @@ same() {
     elif [ "$2" = "$3" ]; then pass "$1"
     else fail "$1 — got [$2], wanted [$3]"; fi
 }
+# A here-string, NOT printf | grep -q: under pipefail, grep -q exits at the
+# first match, printf dies of SIGPIPE writing the rest, and the pipeline is
+# "false". On a long text with an early match that made has() FAIL with the
+# line present and hasnt() PASS with it present (3 Oct 2026, PR 386).
 has() {
     if [ -z "$3" ]; then fail "$1 — nothing to look for"
-    elif printf "%s" "$2" | grep -qF "$3"; then pass "$1"
+    elif grep -qF -- "$3" <<< "$2"; then pass "$1"
     else fail "$1 — not found in: $(brief "$2")"; fi
 }
 # call METHOD PATH TOKEN [JSON]
@@ -124,6 +128,9 @@ ROWS_AFTER_200="201"
 
 step "0. The database answers ($TATVAOS_PG_HOST)"
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 [ -n "$(PG "SELECT 1")" ] || { fail "psql does not answer"; exit 1; }
 pass "psql answers"
 
