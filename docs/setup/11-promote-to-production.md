@@ -194,12 +194,15 @@ echo production > .environment
 
 ```bash
 cd /srv/tatvaos-production
-cp infra/docker/.env infra/docker/.env.staging-backup   # keep the old secrets
+# umask 077: a copy of .env is a second copy of every secret (DEPLOY_RUNBOOK,
+# "Changing the server's settings file"). A bare cp left this one readable by
+# every account on the server for 52 days.
+( umask 077; cp infra/docker/.env "infra/docker/.env.before-promotion-$(date -u +%Y%m%dT%H%M%SZ)" )
 cp infra/docker/.env.production.example infra/docker/.env
 nano infra/docker/.env
 ```
 
-Reuse the passwords from `.env.staging-backup` **only if** you are restoring
+Reuse the passwords from that copy **only if** you are restoring
 the old database — the roles inside the dump were created with those. If you
 are starting clean, generate new ones:
 

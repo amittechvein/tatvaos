@@ -16,7 +16,7 @@
     },
     "android": {
       "package": "com.techvein.tatvaos",
-      "versionCode": 3,
+      "versionCode": 4,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#FFFFFF"

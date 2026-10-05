@@ -19,8 +19,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet,
-  BackHandler, Linking, Alert,
+  View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, BackHandler, Linking, Alert, TextInput, KeyboardAvoidingView, Platform, Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -34,13 +33,21 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as SecureStore from 'expo-secure-store';
 
-import { getMessage, setRead, setFlag, deleteMessage, attachmentUrl, senderLabel, addressList } from '../lib/mail';
+import {
+  getMessage, setRead, setFlag, deleteMessage, attachmentUrl, senderLabel, addressList,
+  threadMessages, send, quoted, replySubject, forwardSubject, replyAllRecipients, forwardHeader, signatureFor, whenLabel,
+  otherMessages, replyRecipients,
+} from '../lib/mail';
+import { htmlToText } from '../lib/mailHtml';
 import { buildDocument } from '../lib/mailHtml';
 import { brand, surface, text } from '../theme';
 
 const log = (line) => console.log(`[mail] ${line}`);
 
-export default function MailMessage({ session, messageId, mailboxId = null, onBack, onReply, onChanged }) {
+export default function MailMessage({
+  session, messageId, mailboxId = null, signature = '', myAddress = '',
+  onBack, onReply, onChanged, onOpen, onSent,
+}) {
   const token = session?.accessToken;
 
   const [msg, setMsg] = useState(null);
@@ -48,6 +55,26 @@ export default function MailMessage({ session, messageId, mailboxId = null, onBa
   const [error, setError] = useState('');
   const [showImages, setShowImages] = useState(false);
   const [saving, setSaving] = useState(null);
+
+  // ── REPLY IN REPLY, 24 SEPT 2026. ─────────────────────────────────────
+  //  Amit: "reply in reply … fix all the things that fixed in web version
+  //  yesterday". The web (PRs 233, 239, 245) answers a message INSIDE it:
+  //  one response box under the message, Reply / Reply all / Forward switch
+  //  in place and what was typed survives the switch; the other messages in
+  //  the conversation sit above it and any of them can be opened and
+  //  answered. The full compose screen stays for a new email and for
+  //  attachments ("Open in editor" below hands this box's text over).
+  //
+  //  `thread` is the rest of the conversation, oldest first, from the
+  //  server's own thread route — which has existed since August and the
+  //  phone never called. Trash is left out by the server.
+  // ─────────────────────────────────────────────────────────────────────
+  const [thread, setThread] = useState([]);
+  const [mode, setMode] = useState(null);        // null | 'reply' | 'replyAll' | 'forward'
+  const [draft, setDraft] = useState('');        // what the person typed, kept across mode switches
+  const [fwdTo, setFwdTo] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
   const gone = useRef(false);
   const changed = useRef(false);
 
@@ -65,6 +92,13 @@ export default function MailMessage({ session, messageId, mailboxId = null, onBa
         const m = await getMessage(token, messageId, mailboxId);
         if (gone.current) return;
         setMsg(m);
+        if (m?.threadId) {
+          threadMessages(token, m.threadId, mailboxId)
+            .then((rows) => { if (!gone.current) setThread(otherMessages(rows, m.id)); })
+            .catch((e) => log(`thread failed: ${e?.message ?? e}`));
+        } else {
+          setThread([]);
+        }
         // Read AFTER it is on the screen, and only if it was not already read:
         // a list that marks on tap marks messages nobody saw.
         if (m?.isRead === false) {
@@ -277,6 +311,51 @@ export default function MailMessage({ session, messageId, mailboxId = null, onBa
     },
   });
 
+  // Recipients follow the mode; the typed text does not. The quote is added
+  // at send time, under what was typed, so switching modes never doubles it.
+  const recipients = !msg ? { to: '', cc: '' }
+    : mode === 'replyAll' ? replyAllRecipients(msg, myAddress)
+    : mode === 'reply' ? replyRecipients(msg, myAddress)
+    : { to: fwdTo, cc: '' };
+
+  const bodyToSend = () => {
+    const sig = signatureFor(signature, mode === 'forward' ? 'forward' : 'reply');
+    const head = `${draft.trimEnd()}\n${sig ? `\n${sig}\n` : ''}`;
+    if (mode === 'forward') {
+      return `${head}\n${forwardHeader(msg)}${msg.bodyText || htmlToText(msg.bodyHtml) || ''}`;
+    }
+    return `${head}${quoted(msg)}`;
+  };
+
+  async function sendInline() {
+    if (!msg || !mode || sending) return;
+    if (!recipients.to.trim()) { setSendError(mode === 'forward' ? 'Say who to forward this to.' : 'This message has no sender to reply to.'); return; }
+    if (!draft.trim() && mode !== 'forward') { setSendError('Write something first.'); return; }
+    Keyboard.dismiss();
+    setSendError('');
+    setSending(true);
+    try {
+      const out = await send(token, {
+        to: recipients.to, cc: recipients.cc,
+        subject: mode === 'forward' ? forwardSubject(msg.subject) : replySubject(msg.subject),
+        bodyText: bodyToSend(),
+        inReplyToId: mode === 'forward' ? undefined : msg.id,
+        mailboxId,
+      });
+      log(`${mode} sent from the message${out?.warning ? ' with a warning' : ''}`);
+      changed.current = true;
+      setMode(null); setDraft(''); setFwdTo('');
+      onSent?.(out?.warning);
+      onChanged?.();
+    } catch (e) {
+      setSendError(e?.message || 'Could not send.');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const switchMode = (next) => { setMode((cur) => (cur === next ? null : next)); setSendError(''); };
+
   return (
     <SafeAreaView style={s.screen}>
       <View style={s.bar}>
@@ -299,7 +378,11 @@ export default function MailMessage({ session, messageId, mailboxId = null, onBa
 
       {error ? <Text style={s.error}>{error}</Text> : null}
 
-      {blocked > 0 ? (
+      {/* The image banner and the conversation strip step aside while a
+          response is being written: with the keyboard up the Samsung had
+          ~1440 px left, and these two pushed the Reply / Reply all / Forward
+          bar under the keyboard (24 Sept 2026). They come back on Cancel. */}
+      {blocked > 0 && !mode ? (
         <Pressable style={s.banner} onPress={() => setShowImages(true)}
                    accessibilityLabel="Show images in this message">
           <Ionicons name="image-outline" size={16} color={text.secondary} />
@@ -308,6 +391,24 @@ export default function MailMessage({ session, messageId, mailboxId = null, onBa
           </Text>
           <Text style={s.bannerAction}>Show</Text>
         </Pressable>
+      ) : null}
+
+      {thread.length && !mode ? (
+        <View style={s.thread} accessibilityLabel={`${thread.length} other message${thread.length === 1 ? '' : 's'} in this conversation`}>
+          <Text style={s.threadTitle}>
+            {thread.length} other message{thread.length === 1 ? '' : 's'} in this conversation
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.threadRow}>
+            {thread.map((t) => (
+              <Pressable key={t.id} style={s.threadChip} onPress={() => onOpen?.(t.id)}
+                         accessibilityLabel={`Open the message from ${senderLabel(t)}, ${whenLabel(t.receivedAt || t.sentAt)}`}>
+                <Text style={s.threadWho} numberOfLines={1}>{senderLabel(t)}</Text>
+                <Text style={s.threadWhen}>{whenLabel(t.receivedAt || t.sentAt)}</Text>
+                <Text style={s.threadSnip} numberOfLines={1}>{t.snippet || t.subject || ''}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
       ) : null}
 
       {/* The one scrolling area: the message scrolls itself, in both
@@ -349,21 +450,74 @@ export default function MailMessage({ session, messageId, mailboxId = null, onBa
         </ScrollView>
       ) : null}
 
+      {mode ? (
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={s.respond}>
+            <View style={s.respondHead}>
+              <Text style={s.respondTo} numberOfLines={1}>
+                {mode === 'forward' ? 'Forward to' : 'To'}: {mode === 'forward' ? null : (recipients.to || '—')}
+              </Text>
+              <Pressable hitSlop={8} onPress={() => onReply({ kind: mode, message: msg, body: draft, to: fwdTo })}
+                         accessibilityLabel="Open in the full editor">
+                <Ionicons name="open-outline" size={18} color={brand.base} />
+              </Pressable>
+            </View>
+            {mode === 'forward' ? (
+              <TextInput style={s.respondInput} value={fwdTo} onChangeText={(v) => { setFwdTo(v); setSendError(''); }}
+                         placeholder="name@example.com, another@example.com" placeholderTextColor={text.muted}
+                         autoCapitalize="none" autoCorrect={false} keyboardType="email-address"
+                         accessibilityLabel="Forward to" />
+            ) : recipients.cc ? (
+              <Text style={s.respondCc} numberOfLines={2}>Cc: {recipients.cc}</Text>
+            ) : null}
+            <TextInput
+              style={s.respondBody}
+              value={draft}
+              onChangeText={(v) => { setDraft(v); setSendError(''); }}
+              placeholder={mode === 'forward' ? 'Add a note (optional)' : 'Write your reply'}
+              placeholderTextColor={text.muted}
+              multiline
+              autoFocus
+              // Not 'Reply': that is the button's name, and two things with one
+              // name is what a screen reader (and a check) cannot tell apart.
+              accessibilityLabel={mode === 'forward' ? 'Forward note' : 'Your reply'}
+            />
+            <Text style={s.respondHint}>
+              {mode === 'forward' ? 'The message is forwarded below your note.' : 'The message you are answering is quoted below your reply.'}
+            </Text>
+            {sendError ? <Text style={s.respondError}>{sendError}</Text> : null}
+            <View style={s.respondRow}>
+              <Pressable style={[s.sendBtn, sending && { opacity: 0.6 }]} onPress={sendInline} disabled={sending}
+                         accessibilityLabel={mode === 'forward' ? 'Send forward' : 'Send reply'}>
+                {sending ? <ActivityIndicator color={brand.onBase} /> : (
+                  <>
+                    <Ionicons name="send" size={16} color={brand.onBase} />
+                    <Text style={s.sendText}>Send</Text>
+                  </>
+                )}
+              </Pressable>
+              <Pressable hitSlop={8} onPress={() => { setMode(null); setSendError(''); }} accessibilityLabel="Close the reply box">
+                <Text style={s.cancelText}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      ) : null}
       <View style={s.actions}>
-        <Action icon="arrow-undo-outline" label="Reply"
-                onPress={() => onReply({ kind: 'reply', message: msg })} />
-        <Action icon="arrow-redo-outline" label="Forward"
-                onPress={() => onReply({ kind: 'forward', message: msg })} />
+        <Action icon="arrow-undo-outline" label="Reply" on={mode === 'reply'} onPress={() => switchMode('reply')} />
+        <Action icon="arrow-undo-outline" label="Reply all" on={mode === 'replyAll'} onPress={() => switchMode('replyAll')} />
+        <Action icon="arrow-redo-outline" label="Forward" on={mode === 'forward'} onPress={() => switchMode('forward')} />
       </View>
     </SafeAreaView>
   );
 }
 
-function Action({ icon, label, onPress }) {
+function Action({ icon, label, on, onPress }) {
   return (
-    <Pressable style={s.action} onPress={onPress} accessibilityLabel={label}>
-      <Ionicons name={icon} size={20} color={brand.base} />
-      <Text style={s.actionText}>{label}</Text>
+    <Pressable style={[s.action, on && s.actionOn]} onPress={onPress} accessibilityLabel={label}
+               accessibilityState={{ selected: !!on }}>
+      <Ionicons name={icon} size={20} color={on ? brand.onBase : brand.base} />
+      <Text style={[s.actionText, on && { color: brand.onBase }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -407,5 +561,25 @@ const s = StyleSheet.create({
     backgroundColor: surface.card,
   },
   action: { flex: 1, alignItems: 'center', gap: 2, paddingVertical: 12 },
+  actionOn: { backgroundColor: brand.base },
   actionText: { fontSize: 12, color: brand.base, fontWeight: '600' },
+  thread: { borderBottomWidth: 1, borderBottomColor: surface.border, backgroundColor: surface.card, paddingTop: 8, paddingBottom: 6 },
+  threadTitle: { fontSize: 11, fontWeight: '700', letterSpacing: 0.8, color: text.muted, paddingHorizontal: 16, marginBottom: 6 },
+  threadRow: { paddingHorizontal: 12, gap: 8 },
+  threadChip: { width: 150, padding: 8, borderRadius: 10, backgroundColor: surface.page, borderWidth: 1, borderColor: surface.border },
+  threadWho: { fontSize: 13, fontWeight: '600', color: text.primary },
+  threadWhen: { fontSize: 11, color: text.muted, marginTop: 1 },
+  threadSnip: { fontSize: 12, color: text.secondary, marginTop: 3 },
+  respond: { borderTopWidth: 1, borderTopColor: surface.border, backgroundColor: surface.card, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8 },
+  respondHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  respondTo: { flex: 1, fontSize: 13, color: text.secondary },
+  respondCc: { fontSize: 12, color: text.muted, marginTop: 2 },
+  respondInput: { height: 40, borderRadius: 10, backgroundColor: surface.page, borderWidth: 1, borderColor: surface.border, paddingHorizontal: 10, fontSize: 14, color: text.primary, marginTop: 6 },
+  respondBody: { minHeight: 72, maxHeight: 180, borderRadius: 10, backgroundColor: surface.page, borderWidth: 1, borderColor: surface.border, paddingHorizontal: 10, paddingVertical: 8, fontSize: 15, color: text.primary, marginTop: 8, textAlignVertical: 'top' },
+  respondHint: { fontSize: 11, color: text.muted, marginTop: 4 },
+  respondError: { fontSize: 13, color: '#A32D2D', marginTop: 4 },
+  respondRow: { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 8 },
+  sendBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 38, paddingHorizontal: 16, borderRadius: 19, backgroundColor: brand.base },
+  sendText: { color: brand.onBase, fontSize: 14, fontWeight: '700' },
+  cancelText: { color: text.secondary, fontSize: 14, fontWeight: '600' },
 });

@@ -287,3 +287,44 @@ production's.
 - A deploy is ever refused wrongly, or passes while a meeting was live.
 - A staging environment exists again.
 - Connect moves to its own server.
+
+## Deployment rule, added 24 September: exactly one API container
+
+**Mr. Singh's ruling on PR 273 (TatvaOS Docs), 24 September:** the constraint
+goes into this record as a deployment rule, "not a code comment. A rule that
+lives only in prose is not a rule."
+
+**The rule.** Production runs **exactly one `api` container**. Never
+`docker compose up --scale api=N` with N > 1, never `replicas:` on the `api`
+service, and never a second API process against the production database —
+including a debugging copy pointed at it from `~/tatvaos-scratch`.
+
+**Why.** Docs live editing keeps each document's room in the API's memory. Two
+API processes put two people editing one document into two rooms: they stop
+seeing each other, and their work meets only at a checkpoint, where one of
+them can lose a paragraph. Silent, data-losing, and triggered by an ordinary
+"more replicas for availability" decision. (The per-person connection cap is
+per process too, so it would also halve.)
+
+**How it is enforced, not just written.** `apps/api/Modules/Docs/DocsInstanceGuard.cs`
+takes a Postgres advisory lock for the life of the process. Only the holder
+serves live editing. Any other instance answers `503` to
+`/api/docs/{id}/live`, so no browser can join a split room, and logs at
+CRITICAL once a minute:
+
+    SECOND API INSTANCE DETECTED. Another process holds the Docs single-instance lock ...
+
+It does **not** refuse to start. A refusal would turn the normal deploy
+overlap, where the new container is up a moment before the old one exits,
+into a failed deploy, and would take Mail and Connect down for a Docs-only
+constraint. The second instance re-tries every 15 seconds, so that overlap
+resolves itself.
+
+**What would prove it works.** Two API processes against one database: the
+second logs the CRITICAL line and refuses `/live` while the first serves;
+stop the first, and the second takes over within about 15 seconds. Run
+locally for PR 273; see that PR for the result.
+
+**When this rule may change.** Only together with a cross-process broadcast
+for Docs rooms (Postgres LISTEN/NOTIFY or Redis) and a cross-process
+connection cap. Both are a design change, to be brought here first.

@@ -143,15 +143,19 @@ same() {
 }
 # has <label> <haystack> <needle> — likewise: an empty needle matches
 # everything, so it is refused rather than searched for.
+# A here-string, NOT printf | grep -q: under pipefail, grep -q exits at the
+# first match, printf dies of SIGPIPE writing the rest, and the pipeline is
+# "false". On a long text with an early match that made has() FAIL with the
+# line present and hasnt() PASS with it present (3 Oct 2026, PR 386).
 has() {
     if [ -z "$3" ]; then fail "$1 — nothing to look for"
-    elif printf '%s' "$2" | grep -qF -- "$3"; then pass "$1"
+    elif grep -qF -- "$3" <<< "$2"; then pass "$1"
     else fail "$1 — not found"; fi
 }
 # hasnt <label> <haystack> <needle> — the same guard, opposite expectation.
 hasnt() {
     if [ -z "$3" ]; then fail "$1 — nothing to look for"
-    elif printf '%s' "$2" | grep -qF -- "$3"; then fail "$1 — it is still there"
+    elif grep -qF -- "$3" <<< "$2"; then fail "$1 — it is still there"
     else pass "$1"; fi
 }
 body()   { printf '%s' "$1" | sed '$d'; }
@@ -197,7 +201,9 @@ for _ in $(seq 1 150); do curl -s -o /dev/null -w '%{http_code}' "$API/health" 2
 curl -s -o /dev/null -w '%{http_code}' "$API/health" | grep -q 200 && pass "API up" || { fail "API did not start"; tail -5 "$LOG"; exit 1; }
 
 PG "UPDATE core.users SET role='org_owner' WHERE email='amit@techvein.local' AND role='owner'" >/dev/null
-PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 PG "UPDATE core.users SET login_otp_sent_at=NULL, login_otp_attempts=0 WHERE phone='+919999900001'" >/dev/null
 code=$(curl -s -X POST "$API/api/auth/otp/request" -H 'Content-Type: application/json' -d '{"phone":"+919999900001"}' | j "d.get('devCode') or ''")
 TOKEN=$(curl -s -X POST "$API/api/auth/otp/verify" -H 'Content-Type: application/json' -d "{\"phone\":\"+919999900001\",\"code\":\"$code\"}" | j "d.get('accessToken') or ''")
@@ -210,7 +216,7 @@ KEY=$(jq_ "$(body "$r")" "d['key']"); KEY_ID=$(jq_ "$(body "$r")" "d['id']")
 [ "${KEY:0:4}" = "tvk_" ] && pass "the key has the tvk_ prefix" || fail "key prefix: ${KEY:0:4}"
 [ "$(jq_ "$(body "$r")" "d['keyPrefix']")" = "${KEY:0:12}" ] && pass "the visible prefix is the first 12 characters" || fail "keyPrefix wrong"
 r=$(curl -s "$API/api/org/keys" -H "Authorization: Bearer $TOKEN")
-printf '%s' "$r" | grep -qF -- "$KEY" && fail "the list carries the key itself" || pass "the list never carries the key"
+grep -qF -- "$KEY" <<< "$r" && fail "the list carries the key itself" || pass "the list never carries the key"
 [ "$(PG "SELECT key_hash <> '$KEY' FROM core.api_keys WHERE id='$KEY_ID'")" = "t" ] && pass "stored hashed, not in the clear" || fail "the key is stored in the clear"
 r=$(post "$API/api/org/keys" "$TOKEN" "{\"label\":\"Bad $RUN\",\"scopes\":[\"people:everything\"]}")
 [ "$(status "$r")" = "400" ] && pass "an unknown scope is refused, not ignored" || fail "unknown scope answered $(status "$r")"
@@ -280,7 +286,7 @@ n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='org.api_person_admitt
 [ "${n:-0}" -ge 1 ] && pass "the admission is recorded against the key" || fail "no audit row naming the key"
 n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='org.api_key_created' AND target_id='$KEY_ID'")
 [ "${n:-0}" -ge 1 ] && pass "so is the key's creation" || fail "no audit row for the key"
-printf '%s' "$(PG "SELECT coalesce(string_agg(after_state::text,' '),'') FROM core.audit_logs WHERE action LIKE 'org.api%'")" | grep -qF -- "$KEY" && fail "the key itself is in the audit trail" || pass "and the key itself appears nowhere in it"
+grep -qF -- "$KEY" <<< "$(PG "SELECT coalesce(string_agg(after_state::text,' '),'') FROM core.audit_logs WHERE action LIKE 'org.api%'")" && fail "the key itself is in the audit trail" || pass "and the key itself appears nowhere in it"
 
 step "9. Nothing secret in the API log"
 n=$(grep -c -F -- "$KEY" "$LOG"); [ "$n" -eq 0 ] && pass "the key appears nowhere in the API log" || fail "the key appears $n time(s) in the log"

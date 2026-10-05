@@ -25,7 +25,8 @@ import * as DocumentPicker from 'expo-document-picker';
 
 import {
   send, addressList, quoted, replySubject, forwardSubject, senderLabel,
-  suggestRecipients, typingTerm, withRecipient, signatureFor,
+  suggestRecipients, typingTerm, withRecipient, signatureFor, replyAllRecipients, forwardHeader,
+  replyRecipients,
 } from '../lib/mail';
 import { htmlToText } from '../lib/mailHtml';
 import { brand, surface, text } from '../theme';
@@ -65,7 +66,7 @@ function Suggestions({ show, hits, onPick }) {
   );
 }
 
-export default function MailCompose({ session, draft, signature, mailboxId = null, onClose, onSent }) {
+export default function MailCompose({ session, draft, signature, mailboxId = null, myAddress = '', onClose, onSent }) {
   const token = session?.accessToken;
   const original = draft?.message ?? null;
   const kind = draft?.kind ?? 'new';
@@ -76,7 +77,17 @@ export default function MailCompose({ session, draft, signature, mailboxId = nul
     const sig = signatureFor(signature, kind);
     if (kind === 'reply' && original) {
       return {
-        to: original.from?.email ?? '',
+        // Not simply the sender: a reply to my OWN message goes to the
+        // people I wrote to (see replyRecipients).
+        to: replyRecipients(original, myAddress).to,
+        subject: replySubject(original.subject),
+        body: `\n${sig ? `\n${sig}\n` : ''}${quoted(original)}`,
+      };
+    }
+    if (kind === 'replyAll' && original) {
+      const r = replyAllRecipients(original, myAddress);
+      return {
+        to: r.to, cc: r.cc,
         subject: replySubject(original.subject),
         body: `\n${sig ? `\n${sig}\n` : ''}${quoted(original)}`,
       };
@@ -85,10 +96,9 @@ export default function MailCompose({ session, draft, signature, mailboxId = nul
       return {
         to: '',
         subject: forwardSubject(original.subject),
-        body: `\n${sig ? `\n${sig}\n` : ''}\n---------- Forwarded message ----------\n`
-          + `From: ${senderLabel(original)}\n`
-          + `To: ${addressList(original.to)}\n`
-          + `Subject: ${original.subject ?? ''}\n\n`
+        // The header the web writes (PR 245): From, Date, Subject, To, Cc.
+        // Plain text throughout, so nothing the sender wrote can run.
+        body: `\n${sig ? `\n${sig}\n` : ''}\n${forwardHeader(original)}`
           + (original.bodyText || htmlToText(original.bodyHtml) || ''),
       };
     }
@@ -96,8 +106,8 @@ export default function MailCompose({ session, draft, signature, mailboxId = nul
   }, [kind, original, signature]);
 
   const [to, setTo] = useState(start.to);
-  const [cc, setCc] = useState('');
-  const [showCc, setShowCc] = useState(false);
+  const [cc, setCc] = useState(start.cc ?? '');
+  const [showCc, setShowCc] = useState(!!start.cc);
   const [subject, setSubject] = useState(start.subject);
   const [body, setBody] = useState(start.body);
   const [files, setFiles] = useState([]);
@@ -198,7 +208,8 @@ export default function MailCompose({ session, draft, signature, mailboxId = nul
         cc: cc.trim(),
         subject: subject.trim(),
         bodyText: body,
-        inReplyToId: kind === 'reply' ? original?.id : undefined,
+        // Reply and Reply all both answer the message; only a forward is new.
+        inReplyToId: (kind === 'reply' || kind === 'replyAll') ? original?.id : undefined,
         files,
         // From a shared mailbox the server sends AS that address; the reply
         // stays in the conversation the person was reading. null = my own.
