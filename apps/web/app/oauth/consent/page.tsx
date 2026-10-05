@@ -26,7 +26,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
-import { useAuth } from '@/lib/auth';
+import { useAuth, type AccountSlot } from '@/lib/auth';
 import { AuthCard } from '@/components/ui/AuthCard';
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
@@ -60,12 +60,130 @@ interface ConsentDetails {
   } | null;
 }
 
+/**
+ * "Signed in as …", and the way to be somebody else (Amit, 29 Sept 2026).
+ *
+ * A person with two accounts on this browser — their own and a shared one,
+ * or two organisations — arrived here as whichever was active, and the only
+ * way to sign in to the application as the other was to leave, switch, and
+ * start again from the application. Now:
+ *
+ *   - the other accounts on this browser are listed; one that is still
+ *     signed in is ONE click and no password (the same /auth/switch the
+ *     account menu uses: the slot's own cookie is the credential);
+ *   - "Use another account" goes to sign-in and comes back to THIS request.
+ *
+ * It sits OUTSIDE the form and below both buttons, closed until asked for:
+ * nothing on this screen competes with the decision (CTO, 17 Sept). Its
+ * buttons can therefore never submit the consent form by accident.
+ *
+ * WHAT IT DOES NOT DO: decide who may use the application. After a switch the
+ * page asks the API again, as the new person. An account from another
+ * organisation gets the API's own "cannot be used from your organisation",
+ * with this chooser still there to switch back. The decision is recorded by
+ * the API from the session cookie at the moment Continue is pressed, never
+ * from anything this page holds.
+ */
+function AccountChooser({ user, accounts, busy, problem, onSwitch, onSignIn }: {
+  user: { displayName: string; email: string };
+  accounts: AccountSlot[];
+  busy: boolean;
+  problem: string | null;
+  onSwitch: (slot: number) => void;
+  onSignIn: (email?: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const others = accounts.filter((a) => !a.active);
+
+  return (
+    <div className="mt-5 text-center text-xs text-ink-muted">
+      <p>
+        Signed in as {user.displayName} ({user.email}). You can remove this later from your account page.
+      </p>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="mt-2 rounded-lg px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
+      >
+        {open ? 'Keep this account' : 'Switch account'}
+      </button>
+
+      {open && (
+        <div className="mt-2 rounded-xl border border-line text-left">
+          {problem && <p className="border-b border-line px-4 py-2.5 text-danger" role="alert">{problem}</p>}
+          <ul className="divide-y divide-line">
+            {others.map((a) => (
+              <li key={a.slot}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => (a.signedIn ? onSwitch(a.slot) : onSignIn(a.email))}
+                  className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-canvas disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500/40"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium text-ink">{a.displayName}</span>
+                    <span className="block truncate">{a.email}{a.organisation ? ` · ${a.organisation}` : ''}</span>
+                  </span>
+                  <span className="shrink-0 font-semibold text-brand-700">
+                    {a.signedIn ? 'Use this account' : 'Sign in'}
+                  </span>
+                </button>
+              </li>
+            ))}
+            <li>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onSignIn()}
+                className="w-full px-4 py-2.5 text-left text-sm font-medium text-ink hover:bg-canvas disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500/40"
+              >
+                Use another account
+              </button>
+            </li>
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function OAuthConsentPage() {
   const router = useRouter();
-  const { user, loading, authedFetch } = useAuth();
+  const { user, loading, authedFetch, accounts, switchTo } = useAuth();
   const [params, setParams] = useState<[string, string][] | null>(null);
   const [details, setDetails] = useState<ConsentDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [switching, setSwitching] = useState(false);
+  const [switchProblem, setSwitchProblem] = useState<string | null>(null);
+
+  /** This same request, as a path the sign-in page can return to. */
+  const thisRequest = () => `/oauth/consent${window.location.search}`;
+
+  async function switchAccount(slot: number) {
+    setSwitching(true);
+    setSwitchProblem(null);
+    try {
+      // The details below belong to the person who WAS signed in. They are
+      // cleared first, so the application is never shown under one name
+      // while the session is already another's; the effect asks again.
+      setDetails(null);
+      setError(null);
+      await switchTo(slot);
+    } catch (e) {
+      // That account's session had ended. switchTo has signed this page out
+      // of it; the effect below then sends the person to sign in, and back.
+      setSwitchProblem(e instanceof Error ? e.message : 'That account needs to sign in again.');
+    } finally {
+      setSwitching(false);
+    }
+  }
+
+  function signInAs(email?: string) {
+    const to = `/login?add=1&next=${encodeURIComponent(thisRequest())}`
+      + (email ? `&email=${encodeURIComponent(email)}` : '');
+    router.push(to);
+  }
 
   // The application's request, minus any decision: a decision is made on
   // this page, by a click, and never arrives with the query.
@@ -272,12 +390,21 @@ export default function OAuthConsentPage() {
             </button>
           </div>
 
-          {user && (
-            <p className="mt-5 text-center text-xs text-ink-muted">
-              Signed in as {user.displayName} ({user.email}). You can remove this later from your account page.
-            </p>
-          )}
         </form>
+      )}
+
+      {/* Outside the form, and shown when the application could NOT be
+          loaded too: "cannot be used from your organisation" is exactly when
+          somebody needs to be a different account. */}
+      {user && (
+        <AccountChooser
+          user={user}
+          accounts={accounts}
+          busy={switching}
+          problem={switchProblem}
+          onSwitch={switchAccount}
+          onSignIn={signInAs}
+        />
       )}
     </AuthCard>
   );
