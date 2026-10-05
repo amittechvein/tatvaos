@@ -83,10 +83,16 @@ var KNOWN_GAPS = new Dictionary<string, Gap>
     ["CalendarEventException"] = new("Mail (calendar)", CAL, "RLS forced"),
     ["CalendarMember"] = new("Mail (calendar)", CAL, "RLS forced"),
     ["CalendarReminder"] = new("Mail (calendar)", CAL, "RLS forced"),
-    ["CalendarReminderSend"] = new("Mail (calendar)", ZERO,
-        "NO RLS EITHER; 0007 covers it with core.departments (Mr. Singh, 27 Sept)"),
     ["MailApiKey"] = new("Mail", CAL, "RLS forced"),
     ["MailApiSend"] = new("Mail", CAL, "RLS forced"),
+    // Added 5 Oct 2026 when this test first met main: both tables reached main
+    // (PR 373, 2 Oct; PR 311, 28 Sept) while this test was still on its branch.
+    // ADDING to this list is an exception to the rule above, so these two lines
+    // are for Mr. Singh to accept or turn into filters before PR 288 merges.
+    ["MailApiSendEnvelope"] = new("Mail", CAL, "RLS forced (20261001-mail-sender-gate-bounce.sql), as MailApiSend"),
+    ["PersonalSignup"] = new("Core (personal)", CAL,
+        "NO tenant by design - a signup exists before its account and organisation; "
+        + "CompletedUserId is set only on completion (20260926-a-personal-join.sql)"),
     ["MailAppPassword"] = new("Mail", CAL, "RLS forced"),
     ["MailboxPermission"] = new("Mail", CAL, "RLS forced"),
     ["MfaRecoveryCode"] = new("Core (auth)", ZERO,
