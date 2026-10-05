@@ -10,7 +10,14 @@ import { mailApi } from '@/lib/mail';
 import { linkApi } from '@/lib/space';
 import { fetchMyStorage } from '@/lib/myStorage';
 import { cleanPastedHtml } from '@/lib/pasteHtml';
+import { replyRecipients } from '@/lib/replyRecipients';
 import { cleanSignatureHtml } from '@/lib/signatureHtml';
+import { splitPlainDraft, textToHtml, typedRange, typedText } from '@/lib/mailAi';
+import { HelpMeWriteButton, HelpMeWritePanel, useMailAiAvailable } from './HelpMeWrite';
+import { cleanComposeHtml, formatHtmlSource } from '@/lib/composeHtml';
+import { PictureRefused, pictureTag, pictureToDataUrl } from '@/lib/composeImage';
+import { FormatBar } from './FormatBar';
+import { HtmlSourceEditor } from './HtmlSourceEditor';
 
 /** Comma- or semicolon-separated addresses → a clean list. */
 function splitAddresses(raw: string): string[] {
@@ -119,6 +126,33 @@ function linkBlockHtml(links: SpaceLink[]): string {
   return `<br><p>${esc(head)}</p><ul>${rows}</ul><p>${esc(expiryLine(links))}</p>`;
 }
 
+/**
+ * Chrome, moving text into a new block (alignment, lists, indent), copies the
+ * EDITOR'S OWN size onto every run it moves: `font-size: 0.875rem`, the
+ * Tailwind text-sm the editor is styled with. Measured 25 Sept 2026 — centring
+ * one line wrapped both of its words that way. It is not a size anybody
+ * chose, and Outlook desktop ignores rem, so in Outlook those runs fell back
+ * to a different size from the text around them. Sizes equal to the editor's
+ * base are removed. Small, Large and Huge (12, 18, 28px) never equal it; the
+ * size menu's Normal does, and removing it is right — Normal means the default.
+ * Spans are left in place, emptied — unwrapping them would move the text nodes
+ * the selection is anchored in, and the next command would apply to nothing.
+ */
+function tidyEditorFontSizes(el: HTMLElement | null) {
+  if (!el) return;
+  const base = new Set(['0.875rem', getComputedStyle(el).fontSize]);
+  el.querySelectorAll<HTMLElement>('[style]').forEach((n) => {
+    if (base.has(n.style.fontSize)) n.style.removeProperty('font-size');
+    if (!n.getAttribute('style')?.trim()) n.removeAttribute('style');
+  });
+}
+
+/** Commands applied as inline styles (styleWithCSS on). See cmd(). */
+const CSS_COMMANDS = new Set([
+  'foreColor', 'hiliteColor', 'backColor', 'fontName',
+  'indent', 'outdent', 'justifyLeft', 'justifyCenter', 'justifyRight', 'justifyFull',
+]);
+
 const EMOJI = ['😀', '😊', '👍', '🙏', '🎉', '✅', '❤️', '🔥', '😅', '🤝', '📎', '📅', '💡', '⚠️', '🚀', '👀'];
 
 /**
@@ -175,15 +209,6 @@ export interface ComposerSignature {
   enabled: boolean;
   /** Separate from `enabled` — most people don't want it on every reply. */
   includeOnReply: boolean;
-}
-
-/** Recipients of the original, minus the current mailbox, for reply-all. */
-function replyAllCc(original: Message | null | undefined, self: string): string {
-  if (!original) return '';
-  const others = [...(original.to ?? []), ...(original.cc ?? [])]
-    .map((a) => a.email)
-    .filter((e) => e && e.toLowerCase() !== self.toLowerCase() && e.toLowerCase() !== original.from.email.toLowerCase());
-  return [...new Set(others)].join(', ');
 }
 
 // ── THE QUOTED ORIGINAL ──────────────────────────────────────────────────
@@ -320,6 +345,7 @@ export function Composer({
   minimised: minimisedProp,
   onMinimisedChange,
   placement = 'docked',
+  initialText,
 }: {
   replyTo?: Message | null;
   mode?: ComposeMode;
@@ -377,16 +403,31 @@ export function Composer({
    * is a placement prop and not a second component to keep in step.
    */
   placement?: 'docked' | 'inline';
+  /**
+   * Text to start the body with — a suggested reply the person clicked
+   * (TatvaOS AI, step 2). Seeded ONCE, above the signature and the quote, as
+   * escaped text, with the caret after it. Theirs to edit; never sent as is.
+   */
+  initialText?: string;
 }) {
   const editorRef = useRef<HTMLDivElement>(null);
   const shell = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const pictureRef = useRef<HTMLInputElement>(null);
+  // Where the caret was when the picture chooser opened: the file dialog
+  // takes focus, and without this the picture lands at the top of the message.
+  const pictureRange = useRef<Range | null>(null);
+  const htmlSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seeded = useRef(false);
   /** The plain-text signature last put into the body, to swap on a mailbox switch. */
   const seededPlainSig = useRef('');
 
-  const [to, setTo] = useState(mode === 'forward' ? '' : replyTo ? replyTo.from.email : '');
-  const initialCc = mode === 'replyAll' ? replyAllCc(replyTo, selfAddress) : '';
+  // Who it goes to is decided in lib/replyRecipients, not here: answering a
+  // message you SENT used to put you in To, and the copy that came back made
+  // the conversation show one mail twice (28 Sept 2026 — see that file).
+  const initial = replyRecipients(replyTo, mode, selfAddress);
+  const [to, setTo] = useState(initial.to);
+  const initialCc = initial.cc;
   const [cc, setCc] = useState(initialCc);
   const [showCc, setShowCc] = useState(initialCc.length > 0);
 
@@ -424,6 +465,15 @@ export function Composer({
     const id = window.setTimeout(() => {
       shell.current?.scrollIntoView({ block: 'end' });
       editorRef.current?.focus({ preventScroll: true });
+      // A suggested reply is already in the body: the caret goes after it,
+      // where the person will carry on typing, not before it.
+      if (initialText && editorRef.current) {
+        const r = typedRange(editorRef.current);
+        r.collapse(false);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(r);
+      }
     }, 60);   // after the first paint, or there is nothing to scroll to
     return () => window.clearTimeout(id);
     // Mount only: switching reply → reply all must not yank the page again.
@@ -445,8 +495,9 @@ export function Composer({
     if (seenMode.current === mode) return;
     seenMode.current = mode;
 
-    setTo(mode === 'forward' ? '' : replyTo ? replyTo.from.email : '');
-    const nextCc = mode === 'replyAll' ? replyAllCc(replyTo, selfAddress) : '';
+    const next = replyRecipients(replyTo, mode, selfAddress);
+    setTo(next.to);
+    const nextCc = next.cc;
     setCc(nextCc);
     // Opened when there is something to show; left open otherwise, because
     // collapsing a row somebody has just been typing in is its own surprise.
@@ -565,6 +616,15 @@ export function Composer({
   function onEditorPaste(e: React.ClipboardEvent) {
     const html = e.clipboardData.getData('text/html');
     const text = e.clipboardData.getData('text/plain');
+    // A screenshot tool puts a picture FILE on the clipboard and no HTML. The
+    // browser's own paste would insert it at full size -- several MB from a
+    // phone or a high-DPI screen. Through the picture path it is resized.
+    const pictures = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith('image/'));
+    if (!html && pictures.length > 0) {
+      e.preventDefault();
+      void insertPictures(pictures);
+      return;
+    }
     if (!html && !text) return;
 
     e.preventDefault();
@@ -609,6 +669,15 @@ export function Composer({
   const abortRef = useRef<AbortController | null>(null);
   const [pane, setPane] = useState<PaneState>('docked');
   const [plain, setPlain] = useState(false);
+  // The HTML editor: null while editing normally; the source text while open.
+  // The rich editor stays MOUNTED (hidden) underneath, kept in step with the
+  // cleaned source, because autosave and send both read its innerHTML.
+  const [htmlSource, setHtmlSource] = useState<string | null>(null);
+  const [removedCode, setRemovedCode] = useState<string[]>([]);
+  // The formatting bar, shown unless the person hid it. Remembered per browser.
+  const [showFormat, setShowFormat] = useState(() => {
+    try { return localStorage.getItem('tatvaos.compose.formatBar') !== 'off'; } catch { return true; }
+  });
   const [spell, setSpell] = useState(true);
   const [more, setMore] = useState(false);
   const [emoji, setEmoji] = useState(false);
@@ -668,6 +737,72 @@ export function Composer({
     if (block) block.outerHTML = quoteHtml(replyTo, mode);
   }, [mode, replyTo, plain]);
 
+  // ── HELP ME WRITE (TatvaOS AI, 25 Sept 2026). ───────────────────────────
+  //
+  //  Only the person's own words go: typedRange / splitPlainDraft stop at the
+  //  signature and the quote. The rewrite goes in through execCommand, like
+  //  paste, so ctrl+Z undoes it — and execCommand fires this editor's input
+  //  event synchronously, which is why `aiReplacing` exists: without it the
+  //  replace itself would count as "typed since", and Undo would vanish the
+  //  instant it appeared.
+  const aiAvailable = useMailAiAvailable('rewrite');
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiEdited, setAiEdited] = useState(true);
+  const aiReplacing = useRef(false);
+  const aiPlainBefore = useRef<string | null>(null);
+
+  function aiReadDraft(): string {
+    if (plain) return splitPlainDraft(plainBody, [seededPlainSig.current, plainQuote.current]).typed;
+    return editorRef.current ? typedText(editorRef.current) : '';
+  }
+
+  /** Pictures in the typed part would be lost to a plain-text rewrite. */
+  function aiRefuseReason(): string | null {
+    if (plain || !editorRef.current) return null;
+    return typedRange(editorRef.current).cloneContents().querySelector('img')
+      ? 'Help me write cannot rewrite a draft with a picture in it yet — the picture would be lost. Move the picture below your signature, or rewrite the text first and add the picture after.'
+      : null;
+  }
+
+  function aiReplace(text: string) {
+    if (plain) {
+      const { tail } = splitPlainDraft(plainBody, [seededPlainSig.current, plainQuote.current]);
+      aiPlainBefore.current = plainBody;
+      setPlainBody(text + tail);
+      setAiEdited(false);
+      return;
+    }
+    const el = editorRef.current;
+    if (!el) return;
+    const range = typedRange(el);
+    el.focus({ preventScroll: true });
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    aiReplacing.current = true;
+    try {
+      // Escaped text with <br>s — see textToHtml. Never the model's markup.
+      document.execCommand('insertHTML', false, textToHtml(text));
+    } finally {
+      aiReplacing.current = false;
+    }
+    setBodyEdits((n) => n + 1);
+    setAiEdited(false);
+  }
+
+  function aiUndo() {
+    if (plain) {
+      if (aiPlainBefore.current !== null) setPlainBody(aiPlainBefore.current);
+      aiPlainBefore.current = null;
+    } else {
+      editorRef.current?.focus({ preventScroll: true });
+      aiReplacing.current = true;
+      try { document.execCommand('undo'); } finally { aiReplacing.current = false; }
+      setBodyEdits((n) => n + 1);
+    }
+    setAiEdited(true);
+  }
+
   const moreRef = useRef<HTMLDivElement>(null);
   const emojiBtnRef = useRef<HTMLSpanElement>(null);
   const emojiPopRef = useRef<HTMLDivElement>(null);
@@ -707,9 +842,165 @@ export function Composer({
   }, [more, emoji]);
 
   // Rich formatting command on the editor.
+  //
+  // styleWithCSS is per-document state, so it is set on every call. ON for
+  // colour, font, indent and alignment: inline styles, which every mail client
+  // reads -- with it off, highlight does nothing in Firefox and indent writes a
+  // <blockquote>, which this composer draws as a QUOTE. OFF for the rest, so
+  // bold stays <b> rather than a styled span.
   function cmd(command: string, value?: string) {
     editorRef.current?.focus();
+    try { document.execCommand('styleWithCSS', false, CSS_COMMANDS.has(command) ? 'true' : 'false'); } catch { /* not fatal */ }
     document.execCommand(command, false, value);
+    tidyEditorFontSizes(editorRef.current);
+  }
+
+  /**
+   * Size in px. execCommand only knows a 1-7 scale whose keyword sizes
+   * (x-large...) differ between mail clients, so it is asked for size 7 as a
+   * marker, and each <font size="7"> it writes is swapped for a span with the
+   * real size. Sizes set earlier inside the selection are cleared, or the
+   * inner one would win and the change would appear to do nothing.
+   */
+  function applyFontSize(px: number) {
+    const el = editorRef.current;
+    if (!el) return;
+    el.focus();
+    try { document.execCommand('styleWithCSS', false, 'false'); } catch { /* not fatal */ }
+    document.execCommand('fontSize', false, '7');
+    let last: HTMLElement | null = null;
+    el.querySelectorAll('font[size="7"]').forEach((f) => {
+      const span = document.createElement('span');
+      span.style.fontSize = `${px}px`;
+      while (f.firstChild) span.appendChild(f.firstChild);
+      span.querySelectorAll<HTMLElement>('[style*="font-size"]').forEach((n) => { n.style.fontSize = ''; });
+      f.replaceWith(span);
+      last = span;
+    });
+    // Keep the text selected, so a second size or a colour applies to it too.
+    if (last) {
+      const r = document.createRange();
+      r.selectNodeContents(last);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(r);
+    }
+    setBodyEdits((n) => n + 1);
+  }
+
+  function openPicturePicker() {
+    const sel = window.getSelection();
+    pictureRange.current = sel && sel.rangeCount > 0 && editorRef.current?.contains(sel.anchorNode)
+      ? sel.getRangeAt(0).cloneRange()
+      : null;
+    pictureRef.current?.click();
+  }
+
+  /** Inserts pictures at the caret (or where it was when the chooser opened). */
+  async function insertPictures(files: File[]) {
+    const el = editorRef.current;
+    if (!el || files.length === 0) return;
+    setError(null);
+    for (const file of files) {
+      try {
+        const pic = await pictureToDataUrl(file);
+        el.focus();
+        if (pictureRange.current) {
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(pictureRange.current);
+          pictureRange.current = null;
+        }
+        document.execCommand('insertHTML', false, pictureTag(pic.dataUrl, pic.width ?? undefined));
+        // Chrome's insertHTML drops inline styles that match what the PAGE
+        // already applies — and Tailwind's base styles give every img
+        // max-width:100%;height:auto. Measured 25 Sept 2026: the style was
+        // gone from the inserted picture, so it looked right here and would
+        // have overflowed a phone in the recipient's mail app. Put it back
+        // after the insert, where nothing compares it to our stylesheet.
+        el.querySelectorAll('img').forEach((img) => {
+          if (img.getAttribute('src') === pic.dataUrl && !img.style.maxWidth) {
+            img.style.maxWidth = '100%';
+            img.style.height = 'auto';
+          }
+        });
+      } catch (err) {
+        setError(err instanceof PictureRefused ? err.message : 'The picture could not be added.');
+      }
+    }
+    setBodyEdits((n) => n + 1);
+  }
+
+  function toggleFormatBar() {
+    setShowFormat((v) => {
+      try { localStorage.setItem('tatvaos.compose.formatBar', v ? 'off' : 'on'); } catch { /* per-browser nicety only */ }
+      return !v;
+    });
+  }
+
+  /**
+   * Into and out of the HTML editor.
+   *
+   * Out is where the source is CLEANED (lib/composeHtml) -- the editor's HTML
+   * is sent as it stands, so nothing reaches it uncleaned. If the clean took
+   * anything out, the view stays on the source, now showing what is left and
+   * a notice naming what went, and a second press goes back. Nobody finds
+   * out afterwards that part of what they wrote was silently dropped.
+   */
+  function toggleHtml() {
+    const el = editorRef.current;
+    if (!el) return;
+    if (htmlSource === null) {
+      setRemovedCode([]);
+      setHtmlSource(formatHtmlSource(el.innerHTML));
+      return;
+    }
+    if (htmlSyncTimer.current) clearTimeout(htmlSyncTimer.current);
+    const r = cleanComposeHtml(htmlSource);
+    el.innerHTML = r.html;
+    setBodyEdits((n) => n + 1);
+    if (r.removed.length > 0) {
+      setRemovedCode(r.removed);
+      setHtmlSource(formatHtmlSource(r.html));
+      return;
+    }
+    setRemovedCode([]);
+    setHtmlSource(null);
+  }
+
+  function onHtmlSourceChange(next: string) {
+    setHtmlSource(next);
+    // Keep the hidden editor in step, for autosave. Cleaned, and quietly:
+    // the notice belongs to the moment someone leaves the view or sends.
+    if (htmlSyncTimer.current) clearTimeout(htmlSyncTimer.current);
+    htmlSyncTimer.current = setTimeout(() => {
+      const el = editorRef.current;
+      if (el) { el.innerHTML = cleanComposeHtml(next).html; setBodyEdits((n) => n + 1); }
+    }, 400);
+  }
+
+  /** Before send: apply the source. False means "stop -- something was removed". */
+  function commitHtmlSourceForSend(): boolean {
+    const el = editorRef.current;
+    if (htmlSource === null || !el) return true;
+    if (htmlSyncTimer.current) clearTimeout(htmlSyncTimer.current);
+    const r = cleanComposeHtml(htmlSource);
+    el.innerHTML = r.html;
+    if (r.removed.length === 0) return true;
+    setRemovedCode(r.removed);
+    setHtmlSource(formatHtmlSource(r.html));
+    setError('Some code was taken out of the HTML. Check the message, then press Send again.');
+    return false;
+  }
+
+  /** Leaving the HTML view without asking -- switching to plain text. */
+  function leaveHtmlQuietly() {
+    const el = editorRef.current;
+    if (htmlSource === null || !el) return;
+    if (htmlSyncTimer.current) clearTimeout(htmlSyncTimer.current);
+    el.innerHTML = cleanComposeHtml(htmlSource).html;
+    setHtmlSource(null);
+    setRemovedCode([]);
   }
 
   function insertEmoji(e: string) {
@@ -876,6 +1167,7 @@ export function Composer({
   async function handleSend() {
     setSending(true);
     setError(null);
+    if (!commitHtmlSourceForSend()) { setSending(false); return; }
     try {
       // The link block is appended AT SEND, not inserted as you attach, so it
       // cannot be half-deleted by an editing cursor and cannot drift out of
@@ -960,11 +1252,12 @@ export function Composer({
       // carried only the signature — the message being forwarded was simply
       // not in it.
       const q = replyTo && mode !== 'new' ? quoteText(replyTo, mode) : '';
-      if (!sigText && !q) return;
+      const lead = initialText ?? '';
+      if (!sigText && !q && !lead) return;
       plainQuote.current = q;
       // Functional update so an already-typed body is never overwritten — this
       // effect re-runs on a mode change, and the body may not be empty by then.
-      setPlainBody((b) => (b.trim() === '' ? `${sigText}${q ? `\n\n${q}` : ''}` : b));
+      setPlainBody((b) => (b.trim() === '' ? `${lead}${sigText}${q ? `\n\n${q}` : ''}` : b));
       seededPlainSig.current = withSig && signature ? signature.bodyText : '';
       seeded.current = true;
       return;
@@ -997,13 +1290,17 @@ export function Composer({
     // EVERY reply and forward, not only a forward — see quoteHtml for the
     // spam verdict and the script hole this used to be.
     const quote = replyTo && mode !== 'new' ? `<br><br>${quoteHtml(replyTo, mode)}` : '';
-    if (!sig && !quote) return;
+    // A clicked suggestion goes first, ESCAPED (textToHtml) — it is model
+    // output, and a model can be talked into writing markup.
+    const lead = initialText ? textToHtml(initialText) : '';
+    if (!sig && !quote && !lead) return;
 
     // Only our own output reaches innerHTML: the signature through
-    // cleanSignatureHtml, the quote through quoteHtml's sanitiser and escapes.
-    el.innerHTML = sig + quote;
+    // cleanSignatureHtml, the quote through quoteHtml's sanitiser and escapes,
+    // a suggestion through textToHtml.
+    el.innerHTML = lead + sig + quote;
     seeded.current = true;
-  }, [mode, replyTo, plain, signature]);
+  }, [mode, replyTo, plain, signature, initialText]);
 
   /** Current contents, in the shape autosave and send both want. */
   function draftFields(): DraftFields {
@@ -1312,7 +1609,7 @@ export function Composer({
         {plain ? (
           <textarea
             value={plainBody}
-            onChange={(e) => setPlainBody(e.target.value)}
+            onChange={(e) => { setPlainBody(e.target.value); setAiEdited(true); }}
             spellCheck={spell}
             placeholder="Write your message"
             // grow shrink-0 for the same spill bug as the rich editor below —
@@ -1322,13 +1619,26 @@ export function Composer({
             className="min-h-[220px] grow shrink-0 resize-none border-0 bg-transparent px-4 py-3 font-mono text-sm text-ink outline-none placeholder:text-ink-faint"
           />
         ) : (
+          <>
+          {htmlSource !== null && (
+            <HtmlSourceEditor
+              value={htmlSource}
+              onChange={onHtmlSourceChange}
+              removed={removedCode}
+              onDismissRemoved={() => setRemovedCode([])}
+              hint={'Scripts, forms and <style> blocks are not kept, and most mail apps ignore them anyway. Style with style="…" on each element.'}
+            />
+          )}
           <div
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
             spellCheck={spell}
             data-placeholder="Write your message"
-            onInput={() => { setBodyEdits((n) => n + 1); detectMention(); }}
+            onInput={() => {
+              setBodyEdits((n) => n + 1);
+              if (!aiReplacing.current) { setAiEdited(true); detectMention(); }
+            }}
             onKeyDown={onEditorKeyDown}
             onPaste={onEditorPaste}
             // The popup is positioned at the caret; a scrolled editor moves
@@ -1350,9 +1660,10 @@ export function Composer({
             // prove it. grow with the default auto basis sizes the box to its
             // content, so the region scrolls instead of the text escaping;
             // shrink-0 stops the scroll container squashing it back.
-            className="composer-body min-h-[220px] grow shrink-0 px-4 py-3 text-sm leading-relaxed text-ink outline-none"
+            className={`composer-body min-h-[220px] grow shrink-0 px-4 py-3 text-sm leading-relaxed text-ink outline-none ${htmlSource !== null ? 'hidden' : ''}`}
             data-quote-open={showQuote ? '' : undefined}
           />
+          </>
         )}
 
         {/* Gmail's "…": the quoted history is folded under a reply, not left
@@ -1576,6 +1887,31 @@ export function Composer({
           <div className="border-t border-line bg-danger/5 px-4 py-2 text-sm text-danger">{error}</div>
         )}
 
+        {aiAvailable && htmlSource === null && (
+          <HelpMeWritePanel
+            open={aiOpen}
+            onClose={() => setAiOpen(false)}
+            readDraft={aiReadDraft}
+            replace={aiReplace}
+            undo={aiUndo}
+            editedSinceReplace={aiEdited}
+            refuseReason={aiRefuseReason}
+          />
+        )}
+
+        {/* Formatting options (FormatBar explains why a row of its own). Kept
+            on screen while the HTML view is open, because its </> button is
+            the way back out of it. */}
+        {!plain && (showFormat || htmlSource !== null) && (
+          <FormatBar
+            onCommand={cmd}
+            onSize={applyFontSize}
+            onPicture={openPicturePicker}
+            htmlMode={htmlSource !== null}
+            onToggleHtml={toggleHtml}
+          />
+        )}
+
         {/* Toolbar
             WRAPS, and it has to. Fourteen controls in a nowrap row measure
             385px; the composer on a 375px phone is 355px wide. Measured 8 Sept
@@ -1604,11 +1940,9 @@ export function Composer({
 
           {!plain && (
             <>
-              <ToolBtn label="Bold" onClick={() => cmd('bold')}><span className="text-[15px] font-bold">B</span></ToolBtn>
-              <ToolBtn label="Italic" onClick={() => cmd('italic')}><span className="text-[15px] italic">I</span></ToolBtn>
-              <ToolBtn label="Underline" onClick={() => cmd('underline')}><span className="text-[15px] underline">U</span></ToolBtn>
-              <ToolBtn label="Bullet list" onClick={() => cmd('insertUnorderedList')}><Icon name="list-ul" className="h-4 w-4" /></ToolBtn>
-              <ToolBtn label="Numbered list" onClick={() => cmd('insertOrderedList')}><Icon name="list-ol" className="h-4 w-4" /></ToolBtn>
+              <ToolBtn label={showFormat ? 'Hide formatting options' : 'Formatting options'} onClick={toggleFormatBar}>
+                <span className="text-[13px] font-semibold underline decoration-2 underline-offset-2">Aa</span>
+              </ToolBtn>
               <ToolBtn label="Insert link" onClick={addLink}><Icon name="link" className="h-4 w-4" /></ToolBtn>
             </>
           )}
@@ -1616,6 +1950,9 @@ export function Composer({
           <span ref={emojiBtnRef} className="inline-flex">
             <ToolBtn label="Emoji" onClick={() => setEmoji((v) => !v)}><Icon name="emoji" className="h-4 w-4" /></ToolBtn>
           </span>
+          {/* Not in the HTML view: there the rich editor is hidden and stale,
+              and Help me write reads the editor, not the source being edited. */}
+          {aiAvailable && htmlSource === null && <HelpMeWriteButton open={aiOpen} onToggle={() => setAiOpen((v) => !v)} />}
 
           {/* Drive, Schedule send and Confidential are not backed by a product
               yet. They sat here as three greyed icons until 21 Sept 2026, when
@@ -1627,7 +1964,7 @@ export function Composer({
             {more && (
               <div className="absolute bottom-11 right-0 z-10 w-64 rounded-xl border border-line bg-surface py-2 text-sm shadow-raised">
                 <MenuItem icon="expand" label={pane === 'full' ? 'Exit full screen' : 'Full screen'} onClick={() => { setPane(pane === 'full' ? 'docked' : 'full'); setMore(false); }} />
-                <MenuItem icon="draft" label="Plain text mode" trailing={plain ? 'on' : undefined} onClick={() => { setPlain((v) => !v); setMore(false); }} />
+                <MenuItem icon="draft" label="Plain text mode" trailing={plain ? 'on' : undefined} onClick={() => { leaveHtmlQuietly(); setPlain((v) => !v); setMore(false); }} />
                 <MenuItem icon="print" label="Print" onClick={() => { window.print(); setMore(false); }} />
                 <MenuItem icon="spellcheck" label="Spell check" trailing={spell ? 'on' : 'off'} onClick={() => { setSpell((v) => !v); setMore(false); }} />
                 <div className="my-1 border-t border-line" />
@@ -1654,6 +1991,17 @@ export function Composer({
           )}
         </div>
 
+            <input
+              ref={pictureRef}
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                void insertPictures(Array.from(e.target.files ?? []));
+                e.target.value = '';
+              }}
+            />
             <input
               ref={fileRef}
               type="file"

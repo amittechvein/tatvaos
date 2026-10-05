@@ -1,5 +1,7 @@
 'use client';
 
+import { usePhotoUrl } from '@/lib/peoplePhotos';
+
 // ============================================================================
 //  Shared surface for the room — styles, and the two wrappers that use them.
 // ============================================================================
@@ -269,6 +271,15 @@ export const CSS = `
   background:radial-gradient(circle at 50% 40%,#1c1c25,#0d0d12)}
 .cx-initial{width:76px;height:76px;border-radius:50%;display:grid;place-items:center;
   font-size:28px;font-weight:700;background:rgba(255,255,255,.08);border:1px solid var(--cx-line)}
+/* Camera off: the circle grows with the tile. A fixed 76px looked like a dot
+   in a lone full-stage tile (Amit, 26 Sept 2026: "make little bigger size
+   photo according to tiles"). 34% of the tile's shorter side, between 40px
+   (tiny filmstrip tiles, which used to overflow) and 220px. Scoped to
+   .cx-off because PreJoin reuses .cx-initial outside any tile, where cq units
+   would fall back to the viewport. Browsers without container units keep 76px. */
+.cx-off{container-type:size}
+.cx-off .cx-initial{width:clamp(40px,34cqmin,220px);height:clamp(40px,34cqmin,220px);
+  font-size:clamp(16px,13cqmin,84px)}
 .cx-name{position:absolute;left:10px;bottom:10px;display:flex;align-items:center;gap:6px;
   background:rgba(0,0,0,.55);backdrop-filter:blur(6px);padding:4px 10px;border-radius:8px;
   font-size:12px;max-width:calc(100% - 20px)}
@@ -585,6 +596,10 @@ export const CSS = `
 .cx-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.05)}
 .cx-av{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;
   background:rgba(255,255,255,.09);font-weight:700;font-size:13px}
+/* A colleague's profile photo in place of the initial (PersonMark). Clipped to
+   the same circle, so a photo and an initial take exactly the same room. */
+.cx-initial,.cx-av{overflow:hidden}
+.cx-photo{width:100%;height:100%;object-fit:cover;display:block}
 .cx-grow{flex:1 1 auto;min-width:0}
 .cx-sub{color:var(--cx-dim);font-size:11px}
 
@@ -837,4 +852,38 @@ export function Spinner() {
 
 export function initialOf(name: string): string {
   return (name.trim().charAt(0) || '?').toUpperCase();
+}
+
+/**
+ * The account behind a participant, or null for a guest. A signed-in person
+ * joins as `user:<id>` — or `user:<id>#<device>` when the same person is on
+ * two devices (ConnectCodes.IdentityForUserDevice); a guest as `guest:<id>`.
+ */
+export function userIdOfIdentity(identity: string | null | undefined): string | null {
+  const m = /^user:([0-9a-f-]{36})(?:#|$)/i.exec(identity ?? '');
+  return m ? m[1]! : null;
+}
+
+/**
+ * The circle that stands for a person in the room: their profile photo when
+ * they are a colleague who has one, their initial otherwise — a guest always
+ * gets the initial. Amit, 25 Sept 2026: "show photo in all apps like email
+ * and connect people section". The lookup (lib/peoplePhotos) is batched, so
+ * a 300-person meeting asks once per 200 people, not 300 times.
+ */
+export function PersonMark({ identity, userId, name, className, as: Tag = 'div' }: {
+  identity?: string | null;
+  /** When the caller already knows the account (the pre-join screen: you). */
+  userId?: string | null;
+  name: string;
+  className: string;
+  as?: 'div' | 'span';
+}) {
+  const photo = usePhotoUrl({ userId: userId ?? userIdOfIdentity(identity) });
+  return (
+    <Tag className={className}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      {photo ? <img className="cx-photo" src={photo} alt="" /> : initialOf(name)}
+    </Tag>
+  );
 }

@@ -40,7 +40,7 @@ import DOMPurify from 'dompurify';
  * are the same class of thing and are removed for the same reason rather
  * than waiting to be reported one at a time.
  */
-const BANNED_CSS = [
+export const BANNED_CSS = [
   'transform', 'rotate', 'scale', 'translate', 'perspective',
   'writing-mode', 'text-orientation', 'direction', 'unicode-bidi',
   'position', 'top', 'right', 'bottom', 'left', 'z-index',
@@ -51,17 +51,29 @@ const BANNED_CSS = [
 /** Attributes that carry someone else's stylesheet into our page. */
 const BANNED_ATTRS = ['class', 'id', 'srcset', 'sizes'];
 
-let hooked = false;
+// ── ITS OWN DOMPurify INSTANCE, NOT THE SHARED DEFAULT ──────────────────
+//  DOMPurify's hooks are GLOBAL to an instance. Until 25 Sept 2026 this file
+//  and lib/signatureHtml.ts both added an afterSanitizeAttributes hook to the one default
+//  instance, and each ran on EVERY sanitise in the tab after it was first
+//  used — including the other's, SafeHtml's rendering of received mail, and
+//  the mail page's own calls. Proven in a browser on the real modules: a
+//  pasted screenshot survived cleanPastedHtml until cleanSignatureHtml had
+//  run once (which inserting a signature does), and was silently deleted
+//  after. The comment that said running both hooks "is harmless" was true of
+//  styles and false of images. A separate instance per purpose makes that
+//  class of leak impossible rather than something to reason about.
+// ─────────────────────────────────────────────────────────────────────────
+let purify: ReturnType<typeof DOMPurify> | null = null;
 
 /**
- * Registers the CSS scrub once. DOMPurify keeps hooks globally, so adding
- * this on every paste would stack handlers and slow each one down.
+ * This file's DOMPurify instance, with the CSS scrub registered on it once.
+ * Built on first use because `window` exists only in the browser.
  */
-function ensureHook(): void {
-  if (hooked) return;
-  hooked = true;
+function instance(): ReturnType<typeof DOMPurify> {
+  if (purify) return purify;
+  purify = DOMPurify(window);
 
-  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  purify.addHook('afterSanitizeAttributes', (node) => {
     const el = node as Element;
     if (!el.getAttribute) return;
 
@@ -85,6 +97,8 @@ function ensureHook(): void {
     if (kept.length === 0) el.removeAttribute('style');
     else el.setAttribute('style', kept.join('; '));
   });
+
+  return purify;
 }
 
 /**
@@ -95,9 +109,7 @@ function ensureHook(): void {
  * blank.
  */
 export function cleanPastedHtml(html: string): string {
-  ensureHook();
-
-  return DOMPurify.sanitize(html, {
+  return instance().sanitize(html, {
     ALLOWED_TAGS: [
       'a', 'b', 'strong', 'i', 'em', 'u', 's', 'br', 'p', 'div', 'span',
       'ul', 'ol', 'li', 'blockquote', 'pre', 'code',

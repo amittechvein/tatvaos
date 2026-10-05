@@ -97,6 +97,9 @@ printf "  tree under test: %s\n" "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)"
 
 step "0. Start the API, make a key, schedule three classes, plant one in another organisation"
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 [ -n "$(PG "SELECT 1")" ] || { fail "psql does not answer"; exit 1; }
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long" ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
 # CALIBRATION OF CHECK 3 (Mr. Singh, 21 Sept 2026: "never falsified" is the weakest
