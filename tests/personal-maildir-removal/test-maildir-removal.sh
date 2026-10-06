@@ -64,7 +64,7 @@ mail_for() { # address, n files
 }
 queue() { # address, held?
     PG "INSERT INTO core.personal_purge_leftovers(kind, ref, address, last_error) VALUES ('maildir', '$1', '$1', 'queued') ON CONFLICT DO NOTHING" >/dev/null
-    [ "$2" = "held" ] && PG "INSERT INTO core.address_holds(address, held_until, reason) VALUES ('$1', now()+interval '90 days', 'test $RUN') ON CONFLICT DO NOTHING" >/dev/null
+    [ "$2" = "held" ] && PG "INSERT INTO core.retired_addresses(address, source, release_reason) VALUES ('$1', 'existing', NULL) ON CONFLICT DO NOTHING" >/dev/null
 }
 queued() { PG "SELECT count(*) FROM core.personal_purge_leftovers WHERE kind='maildir' AND ref='$1'"; }
 # A personal account that is alive: it has a mailbox. Its files must never go.
@@ -105,7 +105,7 @@ has  "…and the log says so" "$out" "done [$GONE]: no message files remain"
 has  "2. a live personal account (it has a mailbox): refused" "$out" "REFUSED [$LIVE_ADDR]: a mailbox with this address EXISTS"
 same "…its files untouched" "$(files "$LIVE_ADDR")" "3"
 same "…its row left" "$(queued "$LIVE_ADDR")" "1"
-has  "3. no hold: refused" "$out" "REFUSED [$UNHELD]: not held by a purge"
+has  "3. no hold: refused" "$out" "REFUSED [$UNHELD]: not held (not in core.retired_addresses)"
 same "…files untouched" "$(files "$UNHELD")" "3"
 has  "4. an organisation's domain: refused" "$out" "REFUSED [$ORGX]: not on the personal house's domain"
 same "…files untouched" "$(files "$ORGX")" "3"
@@ -140,15 +140,15 @@ never_everyone() { # $1 = the job to check
     PG "DELETE FROM core.personal_purge_leftovers WHERE kind='maildir'" >/dev/null
     for a in "" " " "sp ace.$RUN@personal.local" "-A"; do
         PG "INSERT INTO core.personal_purge_leftovers(kind, ref, address) VALUES ('maildir', \$q\$$a\$q\$, NULL)" >/dev/null
-        PG "INSERT INTO core.address_holds(address, held_until, reason) VALUES (\$q\$$a\$q\$, now()+interval '90 days', 'test $RUN') ON CONFLICT DO NOTHING" >/dev/null
+        PG "INSERT INTO core.retired_addresses(address, source, release_reason) VALUES (\$q\$$a\$q\$, 'existing', NULL) ON CONFLICT DO NOTHING" >/dev/null
     done
     : > "$MR_FAKE_LOG"
-    o=$(bash "$job" --dry-run 2>&1 | tr -d '')
+    o=$(bash "$job" --dry-run 2>&1 | tr -d '\r')
     same "dry run: all four queued (none mistaken for an empty queue)" "$(printf '%s' "$o" | grep -c 'address(es) queued')|$(printf '%s' "$o" | grep -o '[0-9]* address(es)')" "1|4 address(es)"
-    same "dry run: empty, blank, spaced and '-A' are all REFUSED" "$(printf '%s' "$o" | grep -c 'not one plain address')" "4"
+    same "dry run: empty, blank, spaced and '-A' are all REFUSED" "$(printf '%s' "$o" | grep -c '(row [0-9]*): not one plain address')" "4"
     same "dry run: no command offered for any of them" "$(printf '%s' "$o" | grep -c 'would run:')" "0"
-    o=$(bash "$job" 2>&1 | tr -d '')
-    same "real run: all four REFUSED" "$(printf '%s' "$o" | grep -c 'not one plain address')" "4"
+    o=$(bash "$job" 2>&1 | tr -d '\r')
+    same "real run: all four REFUSED" "$(printf '%s' "$o" | grep -c '(row [0-9]*): not one plain address')" "4"
     same "…and doveadm was never called" "$(wc -l < "$MR_FAKE_LOG" | tr -d ' ')" "0"
     PG "DELETE FROM core.personal_purge_leftovers WHERE kind='maildir'" >/dev/null
 }
@@ -166,10 +166,10 @@ rm -f "infra/scripts/.mr-old-$RUN.sh" ".tmp/mr-old-$RUN.out"
 
 # The last guard, inside run_expunge, with every earlier check cut out.
 sed -e 's/if ! one_address "\$addr"; then/if false; then/' -e 's/if \[ "\$why" != "ok" \]; then/if false; then/'     "$JOB" > "infra/scripts/.mr-cut-$RUN.sh"
-same "(the copy has the loop's shape check and database checks cut)" "$(grep -c 'if false; then' "infra/scripts/.mr-cut-$RUN.sh")" "2"
+same "(the copy has the loops' shape checks and the database checks cut)" "$(grep -c 'if false; then' "infra/scripts/.mr-cut-$RUN.sh")" "3"
 PG "INSERT INTO core.personal_purge_leftovers(kind, ref) VALUES ('maildir', '')" >/dev/null
 : > "$MR_FAKE_LOG"
-o=$(bash "infra/scripts/.mr-cut-$RUN.sh" 2>&1 | tr -d '')
+o=$(bash "infra/scripts/.mr-cut-$RUN.sh" 2>&1 | tr -d '\r')
 has  "an empty address reaching run_expunge: refused there" "$o" "REFUSED at doveadm: [] is not one address"
 same "…doveadm never called" "$(wc -l < "$MR_FAKE_LOG" | tr -d ' ')" "0"
 # The guard also accepts an organisation's address since --domain (29 Sept);
@@ -186,7 +186,7 @@ step "An empty queue"
 PG "DELETE FROM core.personal_purge_leftovers WHERE kind='maildir'" >/dev/null
 has "nothing queued" "$(bash "$JOB" 2>&1 | tr -d '\r')" "nothing queued"
 
-PG "DELETE FROM core.address_holds WHERE reason='test $RUN'" >/dev/null
+PG "DELETE FROM core.retired_addresses WHERE retired_at > now() - interval '1 hour' AND source='existing' AND released_at IS NULL AND (address::text LIKE '%$RUN%' OR address = '$LIVE_ADDR' OR address IN ('', ' ', '-A'))" >/dev/null
 rm -rf "$VMAIL"
 printf '\n%s passed, %s failed\n' "$PASSED" "$FAILED"
 [ "$FAILED" = "0" ]
