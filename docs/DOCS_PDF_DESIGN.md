@@ -142,3 +142,32 @@ The record Amit asked for. A script is switched on in `CHECKED_SCRIPTS` (`apps/r
 |---|---|---|---|---|
 | Latin | English | (always on) | | |
 | Devanagari | Hindi, Marathi | *pending: the gate's sample goes to a reader* | | |
+
+## 10. Before switch-on: the render pool is shared with Docs saves
+
+**Mr. Singh, 6 Oct 2026.** No live risk today. But it's invisible until switch-on day, so it's a switch-on item for **both** Sheets and PDF.
+
+**The facts** (`apps/render/src/server.mjs`):
+- **Two workers by default** (`RENDER_WORKERS ?? 2`, capped at 4).
+- **One FIFO queue**, with no priority.
+- **A 10 s limit per job**, in a container capped at **512 MB and one CPU**.
+- **The API waits 12 s for any render** (`DocsRenderClient.Timeout`).
+
+Today the pool does one job, Docs saves for Techvein. After the Sheets build (PRs 390-391) and the PDF engine (PR 370) it does three: document saves, spreadsheet builds and PDFs. All three share the same workers.
+
+**The failure it allows:** two PDF builds arriving together hold both workers for up to 10 s each. A Techvein document save queues behind them until the API's 12 s wait runs out, and the person is told their document couldn't be saved. Nothing is broken; the queue doesn't know which of its three customers is the live one.
+
+**Before Sheets or PDF is switched on:**
+1. **Measured, not reasoned:** what happens to a Docs save when both workers are busy.
+   - In the hardened container (`tests/docs-render/container-test.sh`'s compose), with its real limits.
+   - The longest jobs each kind can produce are held in both workers: a PDF of the largest gate document, a 20,000-cell sheet.
+   - Then a document save is sent, and its time to answer is recorded.
+   - Repeated at `RENDER_WORKERS` 2, 3 and 4, with the container's memory peak each time (512 MB is part of the same question).
+2. **Then one of:**
+   - a larger pool;
+   - a separate pool, or priority, for document saves;
+   - or a number showing the pool is big enough for real use.
+
+   Ruled by Mr. Singh. Amit if it needs more capacity (cost).
+
+It sits on the switch-on checklist beside the AI-lists line and the personal-table audit.
