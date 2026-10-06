@@ -76,6 +76,8 @@ const PATHS = {
   doc:       'M14 3H6v18h12V7l-4-4zM14 3v4h4M9 11h6M9 14h6M9 17h4',
   star:      'M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3z',
   clock:     'M12 21a9 9 0 100-18 9 9 0 000 18zM12 7v5l3 2',
+  // Sheets: a page with a grid — its own string, so Docs' mark can change alone.
+  sheet:     'M14 3H6v18h12V7l-4-4zM14 3v4h4M8.5 11h7v7h-7zM8.5 14.5h7M12 11v7',
 };
 
 // ============================================================================
@@ -122,6 +124,9 @@ export const RAIL_PRODUCTS: RailProduct[] = [
   // list is the same for everyone — a tile here would lead every customer to
   // a "not switched on" page. The tile comes back, blue (#1a73e8, not
   // Calendar's #4285f4), in the commit that turns Docs on for everyone.
+  // Sheets, likewise: no tile. It has its own per-organisation switch
+  // (SheetsSwitch), off by default; the tile (green, #188038) comes back in
+  // the commit that turns Sheets on for everyone.
   // Being built. It stays in the grid because it is genuinely next and the
   // tile sets the expectation; products nobody has STARTED were removed —
   // a wall of greyed tiles reads as a suite that does not exist.
@@ -169,6 +174,19 @@ export function platformNav(): NavSection[] {
         // domain verification defensible.
         { href: '/admin/drafts', label: 'Signups in progress', icon: <Icon d={PATHS.inbox} /> },
         { href: '/admin/plans', label: 'Plans', icon: <Icon d={PATHS.card} /> },
+        // Personal accounts (build plan §9): the list and its actions, and
+        // the names nobody may sign up for.
+        {
+          href: '/admin/personal',
+          label: 'Personal accounts',
+          icon: <Icon d={PATHS.users} />,
+          children: [
+            { href: '/admin/personal', label: 'All personal accounts' },
+            { href: '/admin/reserved-names', label: 'Reserved names' },
+            // Every retired address, organisation and personal; the only place one is released.
+            { href: '/admin/retired-addresses', label: 'Retired addresses' },
+          ],
+        },
         { href: '/admin/storage', label: 'Storage', icon: <Icon d={PATHS.database} /> },
         { href: '/admin/settings', label: 'Settings', icon: <Icon d={PATHS.gear} /> },
       ],
@@ -391,6 +409,24 @@ export function docsNav(): NavSection[] {
         { href: '/docs/shared', label: 'Shared with me', icon: <Icon d={PATHS.sent} colour="#6C3CE9" /> },
         { href: '/docs/starred', label: 'Starred', icon: <Icon d={PATHS.star} colour="#f5a623" /> },
         { href: '/docs/trash', label: 'Trash', icon: <Icon d={PATHS.trash} colour="#98a2b8" /> },
+      ],
+    },
+  ];
+}
+
+// ============================================================================
+//  Sheets — the home page's views, as Docs'.
+// ============================================================================
+export function sheetsNav(): NavSection[] {
+  return [
+    {
+      heading: 'Sheets',
+      items: [
+        { href: '/sheets', label: 'Recent', icon: <Icon d={PATHS.clock} colour="#188038" /> },
+        { href: '/sheets/owned', label: 'Owned by me', icon: <Icon d={PATHS.sheet} colour="#0fbcf9" /> },
+        { href: '/sheets/shared', label: 'Shared with me', icon: <Icon d={PATHS.sent} colour="#6C3CE9" /> },
+        { href: '/sheets/starred', label: 'Starred', icon: <Icon d={PATHS.star} colour="#f5a623" /> },
+        { href: '/sheets/trash', label: 'Trash', icon: <Icon d={PATHS.trash} colour="#98a2b8" /> },
       ],
     },
   ];

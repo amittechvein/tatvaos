@@ -121,6 +121,12 @@ builder.Services.AddScoped<TatvaOS.Api.Modules.Hire.HireAccess>();
 // and the keyed phone fingerprint (Personal:PhoneHashKey; unset = /join closed).
 builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalHouse>();
 builder.Services.AddSingleton<TatvaOS.Api.Modules.Personal.PersonalPhone>();
+// The one "what may this person have?" answer (build plan §2.5).
+builder.Services.AddScoped<TatvaOS.Api.Shared.Plans.EffectiveSettings>();
+builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalAiService>();
+// A personal account's life after signup: deletion, inactivity, suspension (§8).
+builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalLifecycle>();
+builder.Services.AddSingleton<TatvaOS.Api.Modules.Personal.PersonalExportLink>();
 // Signup's prune, hourly: an abandoned signup's plain phone number lives a
 // day at most even while /join is shut and nobody starts one (PR 311).
 builder.Services.AddHostedService<TatvaOS.Api.Modules.Personal.PersonalSignupPruneWorker>();
@@ -384,6 +390,10 @@ builder.Services.AddSingleton<DocsLiveHub>();
 // Makes "exactly one API container" loud: only the lock holder serves live
 // editing (DocsInstanceGuard's header; decision 0008's deployment rule).
 builder.Services.AddSingleton<DocsInstanceGuard>();
+// Docs' file is built by the render service (apps/render), never taken from a
+// browser (decision 0011 condition 1). Its own 10 s limit, plus the network.
+builder.Services.AddHttpClient<TatvaOS.Api.Modules.Docs.DocsRenderClient>(c =>
+    c.Timeout = TatvaOS.Api.Modules.Docs.DocsRenderClient.Timeout + TimeSpan.FromSeconds(3));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DocsInstanceGuard>());
 
 // Scoped: it writes through the request's AppDbContext and reads its
@@ -426,6 +436,10 @@ builder.Services.AddHostedService<StorageReconcileWorker>();
 // #3 — both invisible failures on the filesystem Mail also writes to.
 builder.Services.AddHostedService<SpaceBlobSweepWorker>();
 
+// Domain claims unverified for thirty days are abandoned (Mr. Singh, 24 Sept
+// 2026). Daily, never touching a verified or superseded row.
+builder.Services.AddHostedService<DomainClaimSweepWorker>();
+
 // Answers Postfix's quota question at RCPT time — the last moment a refusal
 // still leaves the message with the sender. Starts in observe-only mode and
 // refuses nothing until Mail:QuotaEnforcement is set to "enforce".
@@ -457,6 +471,10 @@ builder.Services.AddHostedService<VacationReplyWorker>();
 // Calendar reminders. Polls every minute and records every send, rather than
 // scheduling in-memory timers that a deploy would silently swallow.
 builder.Services.AddHostedService<CalendarReminderWorker>();
+// Decision 0009: ends the 48-hour hold on administrator-set recovery emails.
+// Crosses organisations through a SECURITY DEFINER function (the 0007 worker
+// rule); tests/recovery-admin/test-admin-recovery-email.sh runs it with a hold due.
+builder.Services.AddHostedService<RecoveryHoldWorker>();
 
 // TatvaOS AI sorts new inbox mail (Mail AI step 3). Does nothing unless an
 // organisation has switched sorting on; see the worker's header for its limits.
@@ -482,6 +500,11 @@ builder.Services.AddScoped<TatvaOS.Api.Modules.Calendar.ICalendarImipSink,
 // finished telling us about is asked about directly, so a lost webhook costs
 // a delay rather than a recording that never appears.
 builder.Services.AddHostedService<ConnectNotesWorker>();
+// Personal accounts (build plan §4.5, §5): a personal host's meeting ends at
+// their plan's time; the AI trial's day-12 reminder and end note.
+builder.Services.AddHostedService<PersonalMeetingLimitWorker>();
+builder.Services.AddHostedService<PersonalTrialWorker>();
+builder.Services.AddHostedService<PersonalLifecycleWorker>();
 
 // The public-link resolve is the one anonymous, internet-reachable route
 // on the platform. Per-IP fixed window. Behind Caddy the peer address is
@@ -829,8 +852,8 @@ else
 //  above read that header themselves and take its LAST entry, which is the
 //  one Caddy appended; this middleware would consume that entry and leave any
 //  client-supplied ones in front of it for the limiters to trust. Audit rows
-//  keep recording Caddy's address as they do today; a real-client-IP change
-//  is its own decision, not a side effect of the provider.
+//  read the same last entry themselves (AuditWriter, through ClientIp) since
+//  29 Sept 2026; before that they recorded Caddy's address.
 //
 //  No known-proxy list, on purpose: the API publishes no port, so the only
 //  thing that can reach it is Caddy on the compose network, whose container
@@ -860,6 +883,10 @@ app.UseAuthentication();
 // BEFORE the endpoints — they hit the database and need the context set.
 app.UseMiddleware<TenantMiddleware>();
 app.UseAuthorization();
+// Strangers must not see each other (personal accounts, build plan §6): the
+// organisation-wide routes a personal-house account may never call. After
+// authorization, so an anonymous caller still gets 401, not this.
+app.UseMiddleware<PersonalGuard>();
 app.UseRateLimiter();
 
 // Docs' live channel (/api/docs/{id}/live) is the one WebSocket the API
@@ -878,12 +905,16 @@ app.MapDevOperatorSignIn();
 app.MapMfaEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
+app.MapRecoveryEmailAdminEndpoints();   // decision 0009
 app.MapOidcApplicationEndpoints();
 app.MapOidcEndpoints();
 app.MapDomainEndpoints();
 app.MapSignupEndpoints();
 app.MapJoinEndpoints();
 app.MapReservedUsernameEndpoints();
+app.MapRetiredAddressEndpoints();
+app.MapPersonalPlanEndpoints();
+app.MapPersonalLifecycleEndpoints();
 app.MapSettingsEndpoints();
 app.MapDepartmentEndpoints();
 // Locations and designations: Phase 0 of Hire & People (24 Sept 2026).
@@ -914,6 +945,8 @@ app.MapMyStorageEndpoints();
 app.MapOrgAiEndpoints();
 // The operator's read of an organisation's AI use (the limits are settings).
 app.MapOrgAiUsageEndpoints();
+// Offering Mail AI to one organisation, and resetting its own Mail AI with it.
+app.MapOrgMailAiOfferEndpoints();
 app.MapOrganisationDetailEndpoints();
 // Deleting an organisation for good: suspended first, name typed, never one
 // that was invoiced. The rules are in 20260929-organisation-deletions.sql.
@@ -939,6 +972,11 @@ app.MapSpaceThumbnailEndpoints();
 // Docs: collaborative documents, each one a Space file.
 app.MapDocsEndpoints();
 app.MapDocsAdminEndpoints();
+// Sheets' own per-organisation switch, beside Docs' (SheetsSwitch.cs).
+app.MapSheetsAdminEndpoints();
+// Sheets: spreadsheets are Docs files too (DocsFormat.SpreadsheetMimeType);
+// only their AI actions need endpoints of their own.
+app.MapSheetsAiEndpoints();
 
 // Connect. Meetings live in this monolith; only the MEDIA is a separate
 // container. The guest group and the LiveKit webhook are anonymous and
@@ -982,6 +1020,8 @@ app.MapAiStatusEndpoints();
 //  the variables after the first start.
 // ---------------------------------------------------------------------------
 await BootstrapAdmin.EnsureAsync(app.Services, app.Logger);
+// Development-only test switch for the Mail AI offer button (ignored elsewhere, loudly).
+TatvaOS.Api.Shared.Ai.MailAiPrivacyText.ConfigureForTests(app.Environment, app.Configuration, app.Logger);
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }))
    .AllowAnonymous()
@@ -993,6 +1033,17 @@ app.MapGet("/health/db", async (AppDbContext db, CancellationToken ct) =>
     return canConnect ? Results.Ok(new { database = "ok" })
                       : Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
 }).AllowAnonymous().WithTags("Operations");
+
+// Fails the boot if PersonalGuard names a route that is not mapped: a rename
+// would otherwise leave its replacement open to every personal account.
+PersonalGuard.Verify(((IEndpointRouteBuilder)app).DataSources);
+
+// Every operator write route must carry its transaction (OperatorWriteTransaction).
+// Logged once the routes exist: a CRITICAL line names any that do not.
+app.Lifetime.ApplicationStarted.Register(() =>
+    TatvaOS.Api.Shared.Data.OperatorWriteTransaction.Report(
+        ((IEndpointRouteBuilder)app).DataSources,
+        app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("OperatorWriteTransaction")));
 
 app.Run();
 

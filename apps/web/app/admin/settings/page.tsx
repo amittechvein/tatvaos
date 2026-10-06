@@ -8,6 +8,7 @@ import { Badge, Button, Card, Spinner } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
 import { Input, Select } from '@/components/ui/Form';
 import { Alert } from '@/components/ui/Page';
+import { Modal } from '@/components/ui/Modal';
 
 // ============================================================================
 //  Platform settings — YZEN Bootstrap, no MUI
@@ -105,7 +106,20 @@ export default function SettingsPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  async function save() {
+  // Setting the Mail AI list to "all" is a customer-facing change: every
+  // organisation's administrator can then switch Mail AI on. Mr. Singh, 1 Oct
+  // 2026: the console says so, in words, before it is saved.
+  const [confirmMailAll, setConfirmMailAll] = useState(false);
+  const mailListBecomesAll = () => {
+    const next = edits['ai.mail.organisations'];
+    if (next === undefined || next.trim().toLowerCase() !== 'all') return false;
+    const now = items.find((i) => i.key === 'ai.mail.organisations')?.value ?? '';
+    return now.trim().toLowerCase() !== 'all';
+  };
+
+  async function save(confirmed = false) {
+    if (!confirmed && mailListBecomesAll()) { setConfirmMailAll(true); return; }
+    setConfirmMailAll(false);
     setBusy(true); setNotice(null);
     try {
       const res = await authedFetch('/admin/settings', { method: 'PUT', body: JSON.stringify(edits) });
@@ -171,7 +185,7 @@ export default function SettingsPage() {
       title="Settings"
       subtitle="Providers and platform-wide switches"
       actions={
-        <Button variant="primary" onClick={save} disabled={busy || !dirty}>
+        <Button variant="primary" onClick={() => void save()} disabled={busy || !dirty}>
           {busy ? 'Saving…' : dirty ? 'Save changes' : 'Saved'}
         </Button>
       }
@@ -183,6 +197,33 @@ export default function SettingsPage() {
       )}
 
       <SealSecretsNotice />
+
+      {confirmMailAll && (
+        <Modal
+          onClose={() => !busy && setConfirmMailAll(false)}
+          title="Offer TatvaOS AI in Mail to every organisation?"
+          busy={busy}
+        >
+          <p>
+            Every organisation&apos;s administrator will be able to switch Mail AI on, on their
+            TatvaOS AI page. <strong>Nothing switches on by itself:</strong> Mail AI stays off for
+            each organisation until its administrator turns it on and agrees to the text shown there.
+            Sorting is still not offered to hospitals and clinics.
+          </p>
+          <p className="text-ink-muted">
+            An organisation whose Mail AI was switched on before it was held back keeps that switch.
+            Reset it first with &ldquo;Offer Mail AI&rdquo; on its page under Organisations; once the
+            list says all, that button no longer applies. This change is recorded in the audit trail
+            under your name.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirmMailAll(false)}>Cancel</Button>
+            <Button variant="primary" disabled={busy} onClick={() => void save(true)}>
+              {busy ? 'Saving…' : 'Offer Mail AI to every organisation'}
+            </Button>
+          </div>
+        </Modal>
+      )}
 
       {showOtpOn && (
         <Alert tone="warn">

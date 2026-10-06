@@ -315,10 +315,11 @@ public static partial class DocsHtml
     }
 
     /// <summary>
-    /// A link may go to http, https or mailto. A picture may come from http,
-    /// https, or Docs' own picture route. Everything else — javascript:,
-    /// data:, vbscript:, file:, a path to some other part of this API, a
-    /// "//host" that borrows the page's scheme — is refused.
+    /// A link may go to http, https or mailto. A picture may come from
+    /// Docs' own picture route, or from the web OVER HTTPS (see WebPicture).
+    /// Everything else — javascript:, data:, vbscript:, file:, a path to
+    /// some other part of this API, a "//host" that borrows the page's
+    /// scheme — is refused.
     /// </summary>
     private static string? Url(string raw, bool picture)
     {
@@ -329,10 +330,66 @@ public static partial class DocsHtml
         if (v.Length is 0 or > MaxUrlChars) return null;
         if (v.Contains('\\')) return null; // a browser reads "\" as "/": "/\host" leaves the site
 
+        if (picture)
+            return v.StartsWith("/api/docs/", StringComparison.Ordinal)
+                ? (!v.Contains("..") ? v : null)
+                : WebPicture(v);
         if (v.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
             || v.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return v;
-        if (picture) return v.StartsWith("/api/docs/", StringComparison.Ordinal) && !v.Contains("..") ? v : null;
         return v.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase) ? v : null;
+    }
+
+    /// <summary>
+    /// PICTURES FROM THE WEB STAY IN THE STORED FILE, ALWAYS OVER HTTPS
+    /// (Mr. Singh, 28 Sept 2026, through Amit — replacing an earlier ruling
+    /// that removed them). A school's document with a pasted picture is
+    /// common, and opening the file telling the picture's host it was opened
+    /// is a small leak. So: https is kept as written; http is rewritten to
+    /// https; a picture whose address cannot honestly be made https is
+    /// refused. "Cannot" means: it does not parse as an address with a host;
+    /// it names a person or password (user@host — never sent from a page);
+    /// or it named a port for http other than 80 — http://host:8080 says
+    /// nothing about https on that port, and guessing would leave a picture
+    /// that silently never loads. An explicit :80 is dropped with the scheme.
+    ///
+    /// FOR NOW. Once the file is rendered on the server (0011 condition 1),
+    /// the render can fetch each picture once and store our own copy, which
+    /// removes the leak entirely; revisit this then (his words: "not worth
+    /// building twice").
+    ///
+    /// Only the scheme (and a :80) is changed; the rest of the address is
+    /// kept character for character, not re-written from a parsed Uri,
+    /// because normalising an address can change which picture it names.
+    /// </summary>
+    private static string? WebPicture(string v)
+    {
+        bool http;
+        if (v.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) http = false;
+        else if (v.StartsWith("http://", StringComparison.OrdinalIgnoreCase)) http = true;
+        else return null;
+
+        var rest = v[(http ? 7 : 8)..];
+        var authorityEnd = rest.IndexOfAny(['/', '?', '#']);
+        var authority = authorityEnd < 0 ? rest : rest[..authorityEnd];
+        var path = authorityEnd < 0 ? "" : rest[authorityEnd..];
+        if (authority.Length == 0 || authority.Contains('@')) return null;
+
+        // A port is ":digits" after the host; an IPv6 host is in [brackets].
+        var portAt = authority.LastIndexOf(':');
+        if (portAt > authority.LastIndexOf(']'))
+        {
+            var port = authority[(portAt + 1)..];
+            if (http)
+            {
+                if (port != "80") return null;
+                authority = authority[..portAt];
+            }
+        }
+
+        var https = "https://" + authority + path;
+        if (!Uri.TryCreate(https, UriKind.Absolute, out var u)
+            || u.Scheme != Uri.UriSchemeHttps || u.Host.Length == 0 || u.UserInfo.Length > 0) return null;
+        return http ? https : v;
     }
 
     private static readonly char[] TrimFromUrl = [.. Enumerable.Range(0, 33).Select(c => (char)c)];

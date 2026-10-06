@@ -119,7 +119,8 @@ public static class ConnectEndpoints
     /// carry exactly what the meeting page shows.</summary>
     internal static string JoinUrlOf(ConnectMeeting m) => $"{PublicBase}/connect/room/{m.Code}";
 
-    private static object Shape(ConnectMeeting m, string? myRole) => new
+    private static object Shape(ConnectMeeting m, string? myRole, bool forStranger = false,
+        TatvaOS.Api.Shared.Plans.EffectiveSettings.Answer? hostPlan = null) => new
     {
         m.Id,
         m.Code,
@@ -142,8 +143,21 @@ public static class ConnectEndpoints
         m.ChatPolicy,
         m.MinutesLive,
         m.Mode,
-        m.CreatedByUserId,
+        // A stranger in the personal house does not learn the host's user id.
+        CreatedByUserId = forStranger ? (Guid?)null : m.CreatedByUserId,
         myRole,
+        // A personal host's limits (build plan §4.5), so the room can warn at
+        // 50 and 55 minutes and show the Record button honestly. The server
+        // enforces both regardless (PersonalMeetingLimitWorker, StartAsync).
+        // Null for an organisation's meeting.
+        planLimits = hostPlan is null ? null : new
+        {
+            maxMinutes = hostPlan.Limit("connect.max_minutes"),
+            maxPeople = hostPlan.Limit("connect.max_participants"),
+            recording = hostPlan.Has("connect.recording"),
+            aiMinutes = hostPlan.Has("connect.ai_minutes"),
+            plan = hostPlan.PlanName,
+        },
         m.CreatedAt,
         m.UpdatedAt,
     };
@@ -256,14 +270,20 @@ public static class ConnectEndpoints
     }
 
     private static async Task<IResult> GetMeetingAsync(
-        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, AppDbContext db, TenantContext tenant,
+        TatvaOS.Api.Modules.Personal.PersonalHouse houses,
+        TatvaOS.Api.Shared.Plans.EffectiveSettings plans, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
         var meeting = await FindAsync(db, id, ct);
         if (meeting is null) return NotFound();
+        // By id, a stranger's meeting does not exist for them (§6). They come
+        // in by CODE, through the guest rules, like anyone outside.
+        if (await IsStrangerAsync(db, houses, meeting, uid, ct)) return NotFound();
 
         var role = await RoleOfAsync(db, meeting.Id, uid, ct);
-        return Results.Ok(Shape(meeting, role));
+        var hostPlan = await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.HostPlanAsync(db, plans, meeting, ct);
+        return Results.Ok(Shape(meeting, role, hostPlan: hostPlan));
     }
 
     /// <summary>
@@ -283,7 +303,9 @@ public static class ConnectEndpoints
     /// the org kill-switch, tenant status) that this deliberately does not.
     /// </summary>
     private static async Task<IResult> GetByCodeAsync(
-        string code, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        string code, AppDbContext db, TenantContext tenant,
+        TatvaOS.Api.Modules.Personal.PersonalHouse houses,
+        TatvaOS.Api.Shared.Plans.EffectiveSettings plans, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
 
@@ -296,42 +318,37 @@ public static class ConnectEndpoints
             .FirstOrDefaultAsync(ct);
         if (meeting is null) return NotFound();
 
+        // The personal house (§6): the code of a stranger's meeting works
+        // exactly as it would for a guest - only if the meeting (and the
+        // house) admit people from outside - and says nothing about who made
+        // it. Otherwise the same 404 as a code that never existed.
+        var hostPlan = await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.HostPlanAsync(db, plans, meeting, ct);
+        if (await IsStrangerAsync(db, houses, meeting, uid, ct))
+        {
+            if (!await GuestsWelcomeAsync(db, meeting, ct)) return NotFound();
+            return Results.Ok(Shape(meeting, null, forStranger: true, hostPlan: hostPlan));
+        }
+
         var role = await RoleOfAsync(db, meeting.Id, uid, ct);
-        return Results.Ok(Shape(meeting, role));
+        return Results.Ok(Shape(meeting, role, hostPlan: hostPlan));
     }
 
     private static async Task<IResult> ListParticipantsAsync(
-        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, AppDbContext db, TenantContext tenant,
+        TatvaOS.Api.Modules.Personal.PersonalHouse houses, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
-        if (await FindAsync(db, id, ct) is null) return NotFound();
+        var found = await FindAsync(db, id, ct);
+        if (found is null) return NotFound();
+        // Who is in a stranger's meeting is not a stranger's business (§6).
+        if (await IsStrangerAsync(db, houses, found, uid, ct)) return NotFound();
 
         var people = await db.ConnectParticipants.AsNoTracking()
             .Where(p => p.MeetingId == id)
             .OrderBy(p => p.DisplayName)
             .ToListAsync(ct);
 
-        // "Connected" is DERIVED, never stored: the last event for this
-        // identity decides. A running flag would be wrong the moment a webhook
-        // is missed, and could not answer "how many times did she rejoin".
-        var events = await db.ConnectMeetingEvents.AsNoTracking()
-            .Where(e => e.MeetingId == id && e.Identity != null)
-            .OrderBy(e => e.OccurredAt)
-            .ToListAsync(ct);
-
-        // Per PERSON, counted over devices: somebody on a phone and a laptop
-        // who closes the laptop is still here. Events carry the device
-        // identity; a row carries the person (ConnectCodes.PersonOf).
-        var devicesIn = new Dictionary<string, HashSet<string>>();
-        foreach (var e in events)
-        {
-            if (e.Identity is null) continue;
-            var person = ConnectCodes.PersonOf(e.Identity);
-            if (!devicesIn.TryGetValue(person, out var devices))
-                devicesIn[person] = devices = [];
-            if (e.Kind == "participant_joined") devices.Add(e.Identity);
-            else if (e.Kind == "participant_left") devices.Remove(e.Identity);
-        }
+        var devicesIn = await DevicesInAsync(db, id, ct);
 
         return Results.Ok(new
         {
@@ -347,6 +364,40 @@ public static class ConnectEndpoints
             }).ToList(),
         });
     }
+
+    /// <summary>
+    /// "Connected" is DERIVED, never stored: the last event for this identity
+    /// decides. A running flag would be wrong the moment a webhook is missed,
+    /// and could not answer "how many times did she rejoin".
+    ///
+    /// Per PERSON, counted over devices: somebody on a phone and a laptop who
+    /// closes the laptop is still here. Events carry the device identity; a
+    /// row carries the person (ConnectCodes.PersonOf). One definition, used by
+    /// the participants list and by the personal meeting-size limit.
+    /// </summary>
+    private static async Task<Dictionary<string, HashSet<string>>> DevicesInAsync(
+        AppDbContext db, Guid meetingId, CancellationToken ct)
+    {
+        var events = await db.ConnectMeetingEvents.AsNoTracking()
+            .Where(e => e.MeetingId == meetingId && e.Identity != null)
+            .OrderBy(e => e.OccurredAt)
+            .ToListAsync(ct);
+        var devicesIn = new Dictionary<string, HashSet<string>>();
+        foreach (var e in events)
+        {
+            if (e.Identity is null) continue;
+            var person = ConnectCodes.PersonOf(e.Identity);
+            if (!devicesIn.TryGetValue(person, out var devices))
+                devicesIn[person] = devices = [];
+            if (e.Kind == "participant_joined") devices.Add(e.Identity);
+            else if (e.Kind == "participant_left") devices.Remove(e.Identity);
+        }
+        return devicesIn;
+    }
+
+    /// <summary>The PEOPLE (not devices) in the room right now.</summary>
+    internal static async Task<HashSet<string>> ConnectedPeopleAsync(AppDbContext db, Guid meetingId, CancellationToken ct) =>
+        (await DevicesInAsync(db, meetingId, ct)).Where(kv => kv.Value.Count > 0).Select(kv => kv.Key).ToHashSet();
 
     // ==================================================================
     //  Creating and changing
@@ -875,6 +926,8 @@ public static class ConnectEndpoints
     private static async Task<IResult> JoinAsync(
         Guid id, JoinRequest? req, AppDbContext db, TenantContext tenant,
         IPasswordHasher hasher, LiveKitTokenService tokens, ConnectRoomKey roomKeys,
+        TatvaOS.Api.Modules.Personal.PersonalHouse houses,
+        TatvaOS.Api.Shared.Plans.EffectiveSettings plans,
         CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
@@ -888,6 +941,18 @@ public static class ConnectEndpoints
 
         var role = await RoleOfAsync(db, id, uid, ct);
         var isHost = role is "host" or "cohost";
+
+        // The personal house (build plan §6): another personal account is a
+        // STRANGER, not a colleague. Same-organisation used to mean "skip the
+        // guest rules"; there it means nothing. A stranger comes in only where
+        // a guest could, and always through the waiting room unless the host
+        // switched it off - the host decides who is in their meeting.
+        var stranger = await IsStrangerAsync(db, houses, meeting, uid, ct);
+        if (stranger && !await GuestsWelcomeAsync(db, meeting, ct))
+            return Results.Json(new
+            {
+                error = "This meeting only admits people the host has invited.",
+            }, statusCode: 403);
 
         // Removed means removed. Checked before the lock and the password so a
         // blocked person learns nothing about either. 403 with a plain
@@ -941,11 +1006,25 @@ public static class ConnectEndpoints
         }
 
         // waiting_room = 'everyone' parks colleagues too — except the people
-        // who would have to admit them.
-        if (meeting.WaitingRoom == "everyone" && !isHost)
+        // who would have to admit them. A stranger in the personal house is
+        // parked under 'guests' as well, as a guest would be.
+        if (!isHost && (meeting.WaitingRoom == "everyone" || (stranger && meeting.WaitingRoom != "off")))
         {
             var (waitToken, _) = await ParkAsync(db, id, uid, participant.DisplayName, ct);
             return Results.Ok(new { status = "waiting", waitToken });
+        }
+
+        // A personal host's plan decides how many people fit (build plan §4.5,
+        // D2). The host is never refused from their own meeting.
+        if (!isHost)
+        {
+            var hostPlan = await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.HostPlanAsync(db, plans, meeting, ct);
+            if (await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.FullAtAsync(db, hostPlan, id, identity, ct) is long allowed)
+            {
+                await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.RecordRefusalAsync(db, meeting, allowed, ct);
+                return Results.Json(new { error = TatvaOS.Api.Modules.Personal.PersonalMeetingRules.Full, full = true },
+                    statusCode: 409);
+            }
         }
 
         return Results.Ok(new
@@ -980,6 +1059,16 @@ public static class ConnectEndpoints
         if (await FindAsync(db, id, ct) is null) return NotFound();
         if (await RoleOfAsync(db, id, uid, ct) is not ("host" or "cohost")) return Forbidden();
 
+        // Someone turned away because a personal host's meeting was full
+        // (build plan §4.5): the host polls this list anyway, so the notice
+        // rides along. The last ten minutes, newest limit.
+        var recently = DateTimeOffset.UtcNow.AddMinutes(-10);
+        var refused = await db.ConnectCapacityRefusals.AsNoTracking()
+            .Where(r => r.MeetingId == id && r.RefusedAt > recently)
+            .OrderByDescending(r => r.RefusedAt)
+            .Select(r => new { r.Allowed, r.RefusedAt })
+            .ToListAsync(ct);
+
         var cutoff = DateTimeOffset.UtcNow.AddMinutes(-30);
         var waiting = await db.ConnectLobbyRequests.AsNoTracking()
             .Where(r => r.MeetingId == id && r.Status == "waiting" && r.CreatedAt > cutoff)
@@ -995,25 +1084,33 @@ public static class ConnectEndpoints
                 isGuest = r.UserId is null,
                 requestedAt = r.CreatedAt,
             }).ToList(),
+            capacity = refused.Count == 0 ? null : new
+            {
+                turnedAway = refused.Count,
+                lastAt = refused[0].RefusedAt,
+                allowed = refused[0].Allowed,
+                notice = TatvaOS.Api.Modules.Personal.PersonalMeetingRules.HostNotice(refused[0].Allowed),
+            },
         });
     }
 
     private static Task<IResult> AdmitAsync(
         Guid id, Guid requestId, AppDbContext db, TenantContext tenant,
-        AuditWriter audit, CancellationToken ct)
-        => DecideAsync(id, requestId, "admitted", db, tenant, audit, ct);
+        AuditWriter audit, TatvaOS.Api.Shared.Plans.EffectiveSettings plans, CancellationToken ct)
+        => DecideAsync(id, requestId, "admitted", db, tenant, audit, plans, ct);
 
     private static Task<IResult> DenyAsync(
         Guid id, Guid requestId, AppDbContext db, TenantContext tenant,
-        AuditWriter audit, CancellationToken ct)
-        => DecideAsync(id, requestId, "denied", db, tenant, audit, ct);
+        AuditWriter audit, TatvaOS.Api.Shared.Plans.EffectiveSettings plans, CancellationToken ct)
+        => DecideAsync(id, requestId, "denied", db, tenant, audit, plans, ct);
 
     private static async Task<IResult> DecideAsync(
         Guid id, Guid requestId, string decision, AppDbContext db, TenantContext tenant,
-        AuditWriter audit, CancellationToken ct)
+        AuditWriter audit, TatvaOS.Api.Shared.Plans.EffectiveSettings plans, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
-        if (await FindAsync(db, id, ct) is null) return NotFound();
+        var meetingRow = await FindAsync(db, id, ct);
+        if (meetingRow is null) return NotFound();
         if (await RoleOfAsync(db, id, uid, ct) is not ("host" or "cohost")) return Forbidden();
 
         var request = await db.ConnectLobbyRequests
@@ -1037,6 +1134,20 @@ public static class ConnectEndpoints
                 return Results.Json(new
                 {
                     error = "That person was removed from this meeting and cannot rejoin.",
+                }, statusCode: 409);
+        }
+
+        // Full, on a personal host's plan (§4.5): Admit says so rather than
+        // letting the person through to a refusal they cannot explain.
+        if (decision == "admitted")
+        {
+            var hostPlan = await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.HostPlanAsync(db, plans, meetingRow, ct);
+            var joining = request.UserId is Guid ju ? ConnectCodes.IdentityForUser(ju) : null;
+            if (await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.FullAtAsync(db, hostPlan, id, joining, ct) is long allowed)
+                return Results.Json(new
+                {
+                    error = $"The meeting is full: your plan allows {allowed} {(allowed == 1 ? "person" : "people")}.",
+                    full = true,
                 }, statusCode: 409);
         }
 
@@ -1457,6 +1568,46 @@ public static class ConnectEndpoints
 
     private static Task<ConnectMeeting?> FindAsync(AppDbContext db, Guid id, CancellationToken ct)
         => db.ConnectMeetings.Where(m => m.Id == id).FirstOrDefaultAsync(ct);
+
+    /// <summary>
+    /// Asked to join and never let in: they have waiting-room requests for
+    /// this meeting and NONE of them was admitted. False when they never
+    /// knocked (the meeting had no waiting room for them).
+    ///
+    /// "Any admitted", not "the latest": a person who presses Join twice
+    /// leaves two requests, the host admits one, and the other stays
+    /// 'waiting'. Reading only the newest locked an admitted person out of
+    /// the chat (found by tests/personal-isolation, 26 Sept 2026).
+    /// </summary>
+    internal static async Task<bool> StillKnockingAsync(AppDbContext db, Guid meetingId, Guid userId, CancellationToken ct)
+    {
+        var mine = db.ConnectLobbyRequests.AsNoTracking()
+            .Where(r => r.MeetingId == meetingId && r.UserId == userId);
+        if (!await mine.AnyAsync(ct)) return false;
+        return !await mine.AnyAsync(r => r.Status == "admitted" || r.Status == "claimed", ct);
+    }
+
+    /// <summary>
+    /// In the personal house, is this caller a STRANGER to this meeting -
+    /// neither its creator, nor someone already in it (a row, and not still
+    /// knocking)? Always false outside the house, where same-organisation
+    /// means colleague (build plan §6).
+    /// </summary>
+    private static async Task<bool> IsStrangerAsync(
+        AppDbContext db, TatvaOS.Api.Modules.Personal.PersonalHouse houses,
+        ConnectMeeting m, Guid uid, CancellationToken ct)
+    {
+        if (m.CreatedByUserId == uid) return false;
+        if (!await houses.IsPersonalHouseAsync(m.TenantId, ct)) return false;
+        var hasRow = await db.ConnectParticipants.AsNoTracking()
+            .AnyAsync(p => p.MeetingId == m.Id && p.UserId == uid, ct);
+        return !hasRow || await StillKnockingAsync(db, m.Id, uid, ct);
+    }
+
+    /// <summary>A stranger may come through the door only where a guest could.</summary>
+    private static async Task<bool> GuestsWelcomeAsync(AppDbContext db, ConnectMeeting m, CancellationToken ct) =>
+        m.AllowGuests && await db.Tenants.AsNoTracking()
+            .AnyAsync(t => t.Id == m.TenantId && t.AllowConnectGuests, ct);
 
     private static async Task<string?> RoleOfAsync(AppDbContext db, Guid meetingId, Guid userId, CancellationToken ct)
     {

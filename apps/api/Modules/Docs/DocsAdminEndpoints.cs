@@ -20,6 +20,28 @@ public static class DocsSwitch
     /// <summary>403 with reason "docs_off", which the web client shows as a sentence.</summary>
     public static IResult Off() =>
         Results.Json(new { error = OffMessage, reason = "docs_off" }, statusCode: StatusCodes.Status403Forbidden);
+
+    /// <summary>
+    /// FALSE UNTIL THE FILE IS BUILT ON THE SERVER (decision 0011 condition 1;
+    /// design docs/DOCS_SERVER_RENDER_DESIGN.md). Amit, 29 Sept 2026: Docs
+    /// stays off for EVERY organisation, Techvein included, until then — so
+    /// production never holds a file a browser wrote. While false, the
+    /// operator's switch refuses to turn Docs on (DocsAdminEndpoints). The
+    /// render's own pull request sets it true, and nothing else should.
+    ///
+    /// SET TRUE 1 Oct 2026, in its own pull request, after the render (PR 367,
+    /// main 9701b1e) was deployed and checked ON PRODUCTION: render container
+    /// healthy, the API reaches it, the internet refused from inside it (Mr.
+    /// Singh: merge only once those pass). Docs is still off for every
+    /// organisation until the operator switches it on; the browser-written-
+    /// files guard below still applies. Proven by
+    /// tests/docs/docs-switch-production.test.mjs (red on 9701b1e: 409).
+    /// </summary>
+    public const bool ServerRenderLanded = true;
+
+    public const string BeforeRenderMessage =
+        "Docs cannot be switched on yet. Documents must first be built on the server "
+        + "(decision 0011, condition 1); until then Docs stays off for every organisation.";
 }
 
 /// <summary>
@@ -35,7 +57,7 @@ public static class DocsAdminEndpoints
     public static void MapDocsAdminEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/admin/organisations/{id:guid}/docs")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
 
         g.MapGet("/", GetAsync);
@@ -54,9 +76,47 @@ public static class DocsAdminEndpoints
 
     private static async Task<IResult> PutAsync(
         Guid id, SwitchRequest req, AppDbContext db, TenantContext tenant, AuditWriter audit,
-        HttpContext http, CancellationToken ct)
+        HttpContext http, IHostEnvironment env, IConfiguration config, ILoggerFactory loggers, CancellationToken ct)
     {
         if (!await db.Tenants.AsNoTracking().AnyAsync(t => t.Id == id, ct)) return Results.NotFound();
+
+        // Switching ON is refused until the render lands (DocsSwitch.
+        // ServerRenderLanded). Switching OFF is never refused. Refused before
+        // anything is written or scoped, and logged — a refused attempt is
+        // somebody working against Amit's decision, or not knowing it.
+        if (req.Enabled && RefuseSwitchOn(env, config))
+        {
+            loggers.CreateLogger("TatvaOS.Docs.Switch").LogWarning(
+                "Docs switch-on REFUSED before the server render (Amit, 29 Sept 2026): organisation {OrganisationId}, operator {OperatorId}",
+                id, Actor(http));
+            return Results.Json(new { error = DocsSwitch.BeforeRenderMessage, reason = "docs_before_render" },
+                statusCode: StatusCodes.Status409Conflict);
+        }
+
+        // No file a BROWSER wrote may go live (Mr. Singh, 30 Sept 2026, in
+        // place of a backfill): refused while any of this organisation's
+        // documents was saved before the server built the files. Counted by a
+        // definer function, because documents are visible only to people who
+        // can see their Space file, and the operator is not one of them — a
+        // plain count here would read 0 and pass (20260930-b-...sql).
+        if (req.Enabled)
+        {
+            var browserWritten = await db.Database
+                .SqlQuery<long>($"SELECT docs.browser_written_count({id}) AS \"Value\"")
+                .SingleAsync(ct);
+            if (browserWritten > 0)
+            {
+                loggers.CreateLogger("TatvaOS.Docs.Switch").LogWarning(
+                    "Docs switch-on REFUSED: organisation {OrganisationId} has {Count} document(s) a browser wrote before the server built the files; operator {OperatorId}",
+                    id, browserWritten, Actor(http));
+                return Results.Json(new
+                {
+                    error = $"Docs cannot be switched on for this organisation: {browserWritten} of its documents were saved by a browser before TatvaOS built document files on the server.",
+                    reason = "browser_files",
+                    count = browserWritten,
+                }, statusCode: StatusCodes.Status409Conflict);
+            }
+        }
 
         // Platform scope sets the tenant for this one operation; it does not
         // switch row-level security off (see OrganisationEndpoints).
@@ -84,6 +144,17 @@ public static class DocsAdminEndpoints
         return Results.Ok(new { enabled = row.Enabled, updatedAt = row.UpdatedAt });
     }
 
+    /// <summary>
+    /// Refused everywhere but a developer's machine, where tests/docs must
+    /// switch Docs on to test it. Docs:RefuseSwitchOnInDevelopment can only
+    /// ADD the refusal (tests/docs/docs-switch-production.test.mjs runs
+    /// with it) — no setting takes it away in production; only the render's
+    /// pull request, by setting ServerRenderLanded.
+    /// </summary>
+    private static bool RefuseSwitchOn(IHostEnvironment env, IConfiguration config) =>
+        !DocsSwitch.ServerRenderLanded
+        && (!env.IsDevelopment() || config.GetValue<bool>("Docs:RefuseSwitchOnInDevelopment"));
+
     private static Guid Actor(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 }

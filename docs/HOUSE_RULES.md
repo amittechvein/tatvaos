@@ -213,6 +213,88 @@ Claude Code session that found the defect, not by Mr. Singh. He asked for the
 correction to be recorded; he has not checked this wording. If it misstates
 him, the error is the transcriber's.*
 
+**A pipeline reports every stage — Mr. Singh, 25 Sept 2026.**
+
+> A pipeline whose failures matter reports every stage's exit code. One that
+> sends its own errors to `/dev/null` can pass while broken and can't be
+> diagnosed when it fails.
+
+*The cost.* The restore drill (#286) ran five commands in a pipe — fetch,
+decrypt, untar, gunzip, psql — with every stage's stderr discarded. Its
+calibration failed twice and neither failure could be explained: the output was
+a bare "success" or "failure" with nothing behind it. Reading `PIPESTATUS` per
+stage made both visible in one run, and both turned out to be defects in the
+calibration rather than the pipeline — a "truncated" object that still
+contained the whole member, and state leaking between cases.
+
+`set -o pipefail` tells you the pipeline failed. It does not tell you which
+stage, and on a five-stage pipe that is most of the answer. Capture
+`PIPESTATUS` into an array **before any other command, including an
+assignment**, and print it when something goes wrong.
+
+Note also what the discarded stderr cost: the one line that explained the
+second failure — `ERROR: relation "drill_probe" already exists` — was being
+produced the whole time and thrown away.
+
+*Everything in this entry except the indented quotation is written by the
+Claude Code session that hit it, not by Mr. Singh. He asked for the rule to be
+recorded; he has not checked this wording. If it misstates him, the error is
+the transcriber's.*
+
+**Two nothings agreeing is not a match — Mr. Singh, 25 Sept 2026.**
+
+> A comparison must first prove both sides are non-empty. Two nothings agreeing
+> is not a match.
+
+*The cost.* Two sessions hit this on the same script on the same day, and found
+it independently. On the #254 restore drill, a schema query errored on **both**
+sides with a `text || "char"` cast, the two empty answers compared equal, and
+the run printed ok; a count query failed on a trailing space and counted 0
+tables, and also printed ok. Two whole drill runs were invalid. On #286's
+calibration, the same shape twice: a comparison that would have passed on two
+blanks, and a "truncated" object that wasn't truncated.
+
+The cure is cheap and belongs in the comparison itself, not in a reviewer's
+attention: demand a real answer before allowing a pass — a 32-character hash, a
+count that is a number and greater than zero, a non-empty string on both sides.
+The drill now refuses to compare unless both sides return a number; the #254
+drill now demands more than 0 tables and rows before any equality can count.
+
+This is the oldest failure in `docs/` — `testing-false-greens` — and it keeps
+coming back because it is invisible: the check does not error, it agrees.
+
+*Everything in this entry except the indented quotation is written by the
+Claude Code session that hit it, not by Mr. Singh. He asked for the rule to be
+recorded; he has not checked this wording. If it misstates him, the error is
+the transcriber's.*
+
+**A precondition is not the operation — Mr. Singh, 26 Sept 2026.**
+
+> The PR measured that `deploy` can read `.backup-env`. It did not measure
+> that `conf_value` — new code, a subshell sourcing that file and extracting
+> one variable — produces the passphrase from that file's actual contents.
+> Those are different claims. I read "readable by deploy" and treated it as
+> "the new function works on production," which it does not establish.
+
+*The cost.* PR 254 makes `deploy.sh` stop rather than write an unencrypted copy
+of production, so an empty passphrase is fatal by design. The evidence offered
+was that the deploy user can read the file holding it. That is a precondition
+of the parse, not the parse: the new `conf_value` sources the file in a
+subshell, and a file can be perfectly readable and still yield nothing through
+that path. The gap was closed by running the actual mechanism on the server —
+which printed `passphrase resolves via conf_value: yes` and cost one command.
+Had it printed NO, the first deploy after the merge would have stopped dead,
+with the cause three functions from the message.
+
+So: when a check stands in for an operation, say which one you ran. "The file
+is readable", "the endpoint is reachable", "the credential exists" are all
+preconditions. None of them is "it works".
+
+*Everything in this entry except the indented quotation is written by the
+Claude Code session that found the gap, not by Mr. Singh. He asked for the
+pattern to be recorded; he has not checked this wording. If it misstates him,
+the error is the transcriber's.*
+
 ## 6b. A result is about a version. Say which one.
 
 Rule 6 asks whether a check *can* fail. This asks whether its result still
@@ -298,6 +380,22 @@ would have thrown `23505` on every replacement password — deterministically, f
 every customer, on the second password a person generates, which is the one they
 generate because the first stopped working. The model knew nothing of the index,
 so the ORM was free to order the insert before the revoke.*
+
+**7a. A setting that promises a restriction is a customer-facing promise.** It
+ships only with its enforcement and the proof that the enforcement works,
+never ahead of it. (Mr. Singh's ruling, 1 Oct 2026.) Until the enforcement
+exists, the screen that offers the setting says plainly that it does not yet
+restrict anything.
+
+*Cost: the department setting "Can email outside the organisation" was saved,
+shown with an "internal only" badge, and described to administrators as "Off
+means they can only email colleagues" - and no sending path read it: not
+webmail, the phone app, the send API, or the mail edge. Every school that
+signed up was given a default "Students" department set to internal-only, so
+the product itself made the promise. Found on 30 Sept 2026 while removing an
+unused database grant (PR 363), seven weeks after the first such department
+was created. Production, 1 Oct: 2 such departments, in 2 organisations that
+were not live, with no active people in them - nobody had yet relied on it.*
 
 ## 8. Documented is not built
 
@@ -630,6 +728,46 @@ So, in a deploy step:
 post-deploy checklist asked for the document by hand; a rollback line wrong
 twice; and one day of reconstruction from `docker inspect` for an answer the
 log had already printed and thrown away.*
+
+---
+
+## 13. Every test run gets its own database
+
+Mr. Singh's ruling, 29 Sept 2026, to every developer session.
+
+1. **Each test run creates its own database, applies every file in
+   `local/postgres/init/` from nothing, runs, and drops it at the end, pass or
+   fail.** Applying the files twice is free, and it is the migration re-run
+   check: every file re-runs on every deploy.
+2. **Nobody edits the shared local database to make a test pass.** If a test
+   needs a particular state, it creates that state in its own database.
+3. **The shared database (`tatvaos_mail`) is for trying things in a browser,
+   never for proof.** A PR's evidence names the throwaway database it ran
+   against.
+
+`tests/lib/throwaway-db.sh` does 1 for a suite that sources it and calls
+`tdb_create <label>`. It prints the database's name, applies every migration
+twice with `ON_ERROR_STOP`, and drops the database in an `EXIT` trap. It stops
+the run, naming the reason, if a migration fails or changes a **server-wide
+role**, because roles are the one thing every database on a Postgres server
+shares. `tests/mfa/test-recovery-codes.sh` is the example. Each lane moves its
+own suites onto it as it touches them.
+
+**The incident.** On 29 Sept the PR 329 test (calendar reminders) failed in the
+shared database for a reason that had nothing to do with PR 329. PR 330, still
+a draft, had left its row-security rule on `calendar.reminder_sends` there,
+from an earlier run of its own tests, and 329's code could not satisfy it:
+every reminder send was refused. The session found it, set the table back to
+`main`'s shape for its runs, and restored 330's settings. That worked, but only
+because the restorer knew exactly what the table had been. A shared test
+database means:
+
+- one session's unmerged change can make another's test fail, or **pass for
+  the wrong reason**, which is worse, because nobody looks;
+- two sessions resetting the same tables at the same moment corrupt each
+  other's results, with nobody noticing;
+- "restored exactly as it was" depends on the restorer knowing what "was"
+  meant.
 
 ---
 

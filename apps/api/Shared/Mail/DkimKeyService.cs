@@ -104,6 +104,57 @@ public sealed class DkimKeyService(
     }
 
     /// <summary>
+    /// Stop signing for a domain: take its key files off the signing volume.
+    ///
+    /// ── WHY THIS DID NOT EXIST, AND WHAT THAT COST ──────────────────────
+    ///
+    ///  Until 24 September 2026 this service could only CREATE keys.
+    ///  RemoveAsync deleted the domain row and left the file behind — and
+    ///  OpenDKIM builds its tables by scanning this directory, so the signer
+    ///  went on signing for a domain the platform no longer knew about, and
+    ///  would keep doing so across every restart and deploy, for ever.
+    ///
+    ///  Found on 24 September while asking why our signing table listed
+    ///  abc.com: a domain Techvein added on 11 September, never verified,
+    ///  never activated, whose real mail goes to Microsoft. Amit asked
+    ///  whether one organisation could capture another's mail that way. It
+    ///  cannot — Postfix only treats a domain as ours when it is active AND
+    ///  MX-verified, and abc.com is neither — but the stale key is real.
+    ///
+    ///  Deleting the row is the caller's job; this removes what the signer
+    ///  reads. Best-effort, like MaterialiseAsync: a file that cannot be
+    ///  removed must not fail the customer's request, but it is logged as an
+    ///  error, because until it goes we are signing for someone else's
+    ///  domain.
+    /// </summary>
+    public void ForgetKeys(string fqdn)
+    {
+        try
+        {
+            if (!Directory.Exists(KeyDirectory)) return;
+
+            // Every selector, not just the current one: a rotated domain has
+            // more than one file, and the point is that NONE of them remain.
+            var removed = 0;
+            foreach (var path in Directory.EnumerateFiles(KeyDirectory, $"{fqdn}.*.key"))
+            {
+                File.Delete(path);
+                removed++;
+            }
+
+            if (removed > 0)
+                log.LogInformation("Removed {Count} DKIM key file(s) for {Fqdn}; the signer will "
+                                   + "stop signing for it on its next rescan", removed, fqdn);
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "Could not remove the DKIM key file(s) for {Fqdn}. The signer will "
+                             + "KEEP SIGNING for this domain until they are deleted by hand from {Dir}",
+                         fqdn, KeyDirectory);
+        }
+    }
+
+    /// <summary>
     /// The TXT record the customer publishes. Built here rather than in the
     /// UI so the console, the API response and any future email to the
     /// customer cannot disagree about it.

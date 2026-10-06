@@ -434,6 +434,25 @@ public sealed class ConnectNotesWorker(
                 continue;
             }
 
+            // The recording's AUDIO is about to leave. Two questions this path
+            // never asked before 30 Sept 2026: is transcription offered to
+            // this organisation (AiGate, ai.connect.organisations), and has
+            // the organisation switched TatvaOS AI on (allow_ai)? The privacy
+            // page's own note said that gap must be closed before an outside
+            // transcription service is ever configured. Refused is final
+            // ('unavailable'): a recording made without consent is not sent
+            // later because consent arrived afterwards.
+            var consented = await db.Tenants.AsNoTracking()
+                .Where(t => t.Id == tenantId).Select(t => t.AllowAi).FirstOrDefaultAsync(ct);
+            if (!consented || !await TatvaOS.Api.Shared.Ai.AiGate.AllowedAsync(db, tenantId, TatvaOS.Api.Shared.Ai.AiGate.ConnectTranscription, log, ct))
+            {
+                row.Status = "unavailable";
+                row.Error = "TatvaOS AI is not on for this organisation, so the recording was not sent for transcription.";
+                row.UpdatedAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync(ct);
+                continue;
+            }
+
             row.Status = "running";
             row.Attempts += 1;
             row.UpdatedAt = DateTimeOffset.UtcNow;
@@ -531,6 +550,21 @@ public sealed class ConnectNotesWorker(
             var meeting = await db.ConnectMeetings.AsNoTracking()
                 .Where(m => m.Id == meetingId).FirstOrDefaultAsync(ct);
             if (meeting is null) continue;
+
+            // The personal house (build plan D2, D3): there is no organisation
+            // whose consent covers this meeting. The HOST's own AI switch and
+            // the HOST's plan decide, so the work is done on the host's
+            // behalf — the AI gateway reads both from this scope, and the
+            // usage row names the host. An organisation's meetings are
+            // unchanged (anonymous "system" scope, the organisation's consent).
+            // (No host on record = nobody to act for: the scope stays
+            // anonymous, and the gateway refuses, fail-closed.)
+            if (meeting.CreatedByUserId is Guid host
+                && await TatvaOS.Api.Modules.Personal.PersonalHouse.IsHouseTenantAsync(db, tenantId, ct))
+            {
+                tenant.Set(tenantId, host, "system");
+                await db.SyncTenantAsync(ct);
+            }
 
             var transcripts = await db.ConnectTranscripts.AsNoTracking()
                 .Where(t => t.MeetingId == meetingId && t.Status == "ready")

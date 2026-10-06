@@ -69,17 +69,21 @@ same() {
     elif [ "$2" = "$3" ]; then pass "$1"
     else fail "$1 — got [$2], wanted [$3]"; fi
 }
+# A here-string, NOT printf | grep -q: under pipefail, grep -q exits at the
+# first match, printf dies of SIGPIPE writing the rest, and the pipeline is
+# "false". On a long text with an early match that made has() FAIL with the
+# line present and hasnt() PASS with it present (3 Oct 2026, PR 386).
 has() {
     if [ -z "$3" ]; then fail "$1 — nothing to look for"
     elif [ -z "$2" ]; then fail "$1 — nothing to look in"
-    elif printf "%s" "$2" | grep -qF -- "$3"; then pass "$1"
+    elif grep -qF -- "$3" <<< "$2"; then pass "$1"
     else fail "$1 — not found in: $(brief "$2")"; fi
 }
 # hasnt refuses an empty haystack: "not found in nothing" is the false green.
 hasnt() {
     if [ -z "$3" ]; then fail "$1 — nothing to look for"
     elif [ -z "$2" ]; then fail "$1 — nothing to look in"
-    elif printf "%s" "$2" | grep -qF -- "$3"; then fail "$1 — FOUND in: $(brief "$2")"
+    elif grep -qF -- "$3" <<< "$2"; then fail "$1 — FOUND in: $(brief "$2")"
     else pass "$1"; fi
 }
 call() { curl -s -w "\n%{http_code}" -X GET "$API$1" -H "Authorization: Bearer $2"; }
@@ -92,7 +96,9 @@ signin() {
 
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long"
 export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+# House rule 13: a run through tests/lib/throwaway-db.sh supplies its own
+# database as TDB_CONN; the shared tatvaos_mail is only the fallback.
+export ConnectionStrings__Postgres="${TDB_CONN:-Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true}"
 export Smtp__Host=localhost Smtp__Port=5870
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 # call METHOD PATH TOKEN [JSON]
@@ -171,6 +177,9 @@ API_PID=$!
 for _ in $(seq 1 150); do curl -s -o /dev/null -w "%{http_code}" "$API/health" 2>/dev/null | grep -q 200 && break; sleep 1; done
 curl -s -o /dev/null -w "%{http_code}" "$API/health" | grep -q 200 && pass "API up" || { fail "API did not start"; exit 1; }
 PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
+# A fresh database (rule 13) has the seeded people without phone numbers.
+PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
+PG "UPDATE core.users SET phone='+919999900003' WHERE email='principal@abcschool.local' AND phone IS NULL" >/dev/null
 OWNER=$(signin "+919999900001")
 PRINCIPAL_WAS=$(PG "SELECT role FROM core.users WHERE email='principal@abcschool.local'")
 PG "UPDATE core.users SET role='super_admin' WHERE email='principal@abcschool.local'" >/dev/null

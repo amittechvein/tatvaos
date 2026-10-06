@@ -111,6 +111,18 @@ services:
       # mail reaches real people, which cannot be undone.
       RELAY_TO_MAILPIT: ${RELAY_TO_MAILPIT:-true}
       RELAY_HOST: ${RELAY_HOST:-}
+      # Port 587 sender ownership (PR 380): warn records would-be refusals in
+      # /var/log/tatvaos/sender-ownership.jsonl; enforce refuses them. WARN
+      # until a week of that record has been read (Amit, 2 Oct 2026). The
+      # switch to enforce is this one line in .env, then a deploy. Anything but
+      # warn/enforce stops Postfix starting, on purpose.
+      TATVAOS_SENDER_OWNERSHIP: ${SENDER_OWNERSHIP:-warn}
+      # Where the From-line filter mails "restarted more than three times in an
+      # hour" (Mr. Singh, 3 Oct: a crash must be visible, the way the disk alert
+      # is). The disk alert's own address lives only in the deploy user's crontab,
+      # which a container cannot read, so it is repeated in .env as ALERT_TO.
+      # Unset: Postfix starts, logs a WARNING, and an alert would reach nobody.
+      TATVAOS_ALERT_TO: ${ALERT_TO:-}
     volumes:
       # ONE source of truth, shared with the local stack and CI.
       #
@@ -204,6 +216,8 @@ services:
       - connectrec:/var/lib/connect/recordings
     environment:
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-tatvaos_mail};Username=tatvaos_app;Password=${APP_DB_PASSWORD:?APP_DB_PASSWORD must be set};Pooling=true"
+      # Docs' file is built by the render service (below), on rendernet.
+      Docs__RenderUrl: http://render:8080
       Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set}
       # Fingerprints phone numbers for personal accounts: one account and one
       # AI trial per number. Generated ONCE; must NEVER change (a new key lets
@@ -303,6 +317,9 @@ services:
       # AI features report themselves unavailable. Deliberately `:-` and not
       # `:?` — a missing value must not stop mail and calendar; it stops AI.
       Ai__DataLocation: ${AI_DATA_LOCATION:-}
+      # Optional for api.openai.com (it names its own vendor, OpenAI); required
+      # for any other host. See OpenAiGateway.KnownHosts.
+      Ai__Vendor: ${AI_VENDOR:-}
       # Over-quota mailboxes: anything but "enforce" only LOGS would-defer
       # lines. Flip to enforce only after reading those logs shows no
       # innocent mailbox would be hit — a 4xx defer makes senders queue and
@@ -409,7 +426,9 @@ services:
     # traffic fine. See the reasoning in apps/api/Dockerfile; liveness is
     # covered by restart:unless-stopped and the deploy workflow's external
     # smoke test against /health.
-    networks: [mailnet]
+    # rendernet: the ONLY way to the render service (below) — the API is its
+    # one client.
+    networks: [mailnet, rendernet]
 
   web:
     build:
@@ -473,6 +492,7 @@ services:
       PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:?PLATFORM_DOMAIN must be set}
       WEBSITE_DOMAIN: ${WEBSITE_DOMAIN:?WEBSITE_DOMAIN must be set}
       HIRE_DOMAIN: ${HIRE_DOMAIN:?HIRE_DOMAIN must be set}
+      DOCS_DOMAIN: ${DOCS_DOMAIN:?DOCS_DOMAIN must be set}
     ports:
       - "80:80"
       - "443:443"
@@ -667,10 +687,53 @@ services:
     # repair pass, which asks LiveKit directly about anything stuck.
     networks: [mailnet]
 
+  # ---------------------------------------------------------------------------
+  #  render — builds a Docs file from what the server stored
+  # ---------------------------------------------------------------------------
+  #  Decision 0011 condition 1; apps/render. It receives a document's stored
+  #  bytes from the API and returns the file, the text and the merged state.
+  #  It needs nothing else, so it is given nothing else (Mr. Singh, 29-30
+  #  Sept 2026), and each of these is PROVEN, red first, by
+  #  tests/docs-render/container-test.sh:
+  #    - rendernet only, and rendernet is internal: no internet, and nothing
+  #      but the API can reach it (not the database, not Caddy, not the web)
+  #    - no secrets in its environment, no volumes, no Docker socket
+  #    - non-root, read-only root filesystem, a small /tmp, no capabilities,
+  #      no privilege escalation, a process cap, 512 MB and one CPU
+  #    - its own 10 s limit per render (apps/render/src/server.mjs); a failed
+  #      render fails the save, visibly (the API) — never a fallback
+  render:
+    build:
+      context: ../..
+      dockerfile: apps/render/Dockerfile
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 512m
+    cpus: 1.0
+    environment:
+      PORT: "8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks: [rendernet]
 
 networks:
   mailnet:
     driver: bridge
+  # The render service's only network. internal: no route out of it at all —
+  # not "no published port", no egress (Mr. Singh, 29 Sept 2026).
+  rendernet:
+    driver: bridge
+    internal: true
 
 volumes:
   # TLS material for the mail edge (SMTP submission + IMAPS). Populated by

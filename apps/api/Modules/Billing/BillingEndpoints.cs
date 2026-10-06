@@ -28,7 +28,7 @@ public static class BillingEndpoints
     public static void MapBillingEndpoints(this IEndpointRouteBuilder app)
     {
         var op = app.MapGroup("/api/admin/organisations/{id:guid}")
-            .RequireAuthorization("SuperAdmin").WithTags("Platform administration");
+            .RequireOperator().WithTags("Platform administration");
         op.MapGet("/billing", OperatorBillingAsync);
         op.MapPut("/billing/profile", OperatorProfileAsync);
         op.MapPut("/billing/cycle", CycleAsync);
@@ -39,7 +39,7 @@ public static class BillingEndpoints
         op.MapPost("/invoices/{invoiceId:guid}/void", VoidAsync);
 
         app.MapGet("/api/admin/invoices", AllInvoicesAsync)
-            .RequireAuthorization("SuperAdmin").WithTags("Platform administration");
+            .RequireOperator().WithTags("Platform administration");
 
         var org = app.MapGroup("/api/org/billing")
             .RequireAuthorization("OrgAdmin").WithTags("Organisation administration");
@@ -55,7 +55,7 @@ public static class BillingEndpoints
     {
         var profile = await db.BillingProfiles.AsNoTracking().FirstOrDefaultAsync(p => p.TenantId == tenantId, ct);
         var sub = await db.Subscriptions.AsNoTracking()
-            .Where(s => s.TenantId == tenantId && s.Status != "cancelled")
+            .Where(s => s.TenantId == tenantId && s.UserId == null && s.Status != "cancelled")
             .OrderByDescending(s => s.StartedAt)
             .Select(s => new
             {
@@ -228,7 +228,7 @@ public static class BillingEndpoints
     {
         if (r.Cycle is not ("monthly" or "yearly")) return Results.BadRequest(new { error = "Monthly or yearly." });
         if (!await Scope(db, tenant, id, http, ct)) return Results.NotFound();
-        var sub = await db.Subscriptions.Where(s => s.TenantId == id && s.Status != "cancelled")
+        var sub = await db.Subscriptions.Where(s => s.TenantId == id && s.UserId == null && s.Status != "cancelled")
             .OrderByDescending(s => s.StartedAt).FirstOrDefaultAsync(ct);
         if (sub is null) return Results.BadRequest(new { error = "Choose a plan first." });
         var before = sub.BillingCycle;
@@ -365,5 +365,5 @@ public static class BillingEndpoints
     }
 
     private static Guid CurrentUserId(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 }

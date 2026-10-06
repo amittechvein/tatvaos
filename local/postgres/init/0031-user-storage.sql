@@ -93,6 +93,9 @@ GRANT EXECUTE ON FUNCTION core.user_storage_usage(uuid) TO tatvaos_app;
 --  resolves inheritance and decides. It does not guess a default here, because
 --  a wrong default silently refuses mail.
 -- ----------------------------------------------------------------------------
+-- NOTE (26 Sept 2026): 20260926-zzz-personal-limits.sql REDEFINES this function
+-- after this file on every deploy, so personal accounts get their plan's
+-- allowance. Change the definition THERE; this one is the fallback.
 CREATE OR REPLACE FUNCTION core.user_storage(p_user uuid)
 RETURNS TABLE (quota_bytes bigint, used_bytes bigint)
 LANGUAGE sql

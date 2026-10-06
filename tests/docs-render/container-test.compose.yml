@@ -1,0 +1,19 @@
+# Stand-ins around the REAL render service (infra/docker/docker-compose.base.yml)
+# for tests/docs-render/container-test.sh. Never used in production.
+#
+#   apistub   on rendernet AND mailnet, as the API is: the render service's one client
+#   outsider  on mailnet only: everything that is not the API (Caddy, web, mail)
+#   dbstub    on mailnet only, listening on 5432: where the database lives
+services:
+  apistub:
+    image: node:24-alpine
+    command: ["sleep", "infinity"]
+    networks: [rendernet, mailnet]
+  outsider:
+    image: node:24-alpine
+    command: ["sleep", "infinity"]
+    networks: [mailnet]
+  dbstub:
+    image: node:24-alpine
+    command: ["node", "-e", "require('net').createServer((s) => s.end()).listen(5432)"]
+    networks: [mailnet]

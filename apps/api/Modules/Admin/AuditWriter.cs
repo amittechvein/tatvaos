@@ -1,4 +1,5 @@
 using System.Text.Json;
+using TatvaOS.Api.Shared;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
 
@@ -37,12 +38,21 @@ public sealed class AuditWriter(AppDbContext db, TenantContext tenant, IHttpCont
         CancellationToken ct = default,
         string? productCode = null)
     {
+        // An operator's action must name the operator: see AuditActorGuard.
+        var signedIn = http.HttpContext?.User.Identity?.IsAuthenticated == true;
+        if (AuditActorGuard.Refusal(tenant.IsPlatformScope, signedIn, tenant.UserId, action) is { } refusal)
+            throw new InvalidOperationException(refusal);
+
         db.AuditLogs.Add(new AuditLog
         {
             TenantId = tenant.TenantId,
             ProductCode = productCode,
             ActorUserId = tenant.UserId,
-            ActorIp = http.HttpContext?.Connection.RemoteIpAddress?.ToString(),
+            // The person's address, not the proxy's. Behind Caddy the
+            // connection's peer is Caddy's container for everyone; the last
+            // X-Forwarded-For entry is the one Caddy wrote and the one the
+            // rate limiters trust (Mr. Singh, 29 Sept 2026).
+            ActorIp = http.HttpContext is { } ctx ? ClientIp.From(ctx) : null,
             Action = tenant.IsPlatformScope ? $"platform:{action}" : action,
             TargetType = targetType,
             TargetId = targetId,

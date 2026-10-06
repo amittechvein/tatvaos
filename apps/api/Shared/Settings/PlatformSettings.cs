@@ -60,16 +60,21 @@ public static class SettingKeys
     public const string AiOrgMonthlyTokens = "ai.limit.org_monthly_tokens";
     // Which organisations may use TatvaOS AI in Mail at all (AiProductSwitch).
     public const string AiMailOrganisations = "ai.mail.organisations";
+    // …and for each other AI product (AiGate, 30 Sept 2026). Same rule:
+    // empty = nobody, "all" = everyone, ids = only those.
+    public const string AiConnectOrganisations = "ai.connect.organisations";
+    public const string AiDocsOrganisations = "ai.docs.organisations";
+    public const string AiSheetsOrganisations = "ai.sheets.organisations";
 
+    // Amit, 26 Sept 2026: at a plan limit, warn first. The operator always
+    // sees the warnings; this decides whether the organisation's own
+    // administrators see them too. OFF until the wording is approved.
+    public const string PlansWarnClients = "plans.warn_clients";
     // Personal accounts (/join) — build plan personal-plans-build-plan.md §1
     // and §3.4. Closed by default: the switch-on waits for the five launch
     // gates, and a deploy must never open it.
     public const string PersonalSignupOpen = "personal.signup_open";
     public const string PersonalCodesPerHour = "personal.signup_codes_per_hour";
-    // Amit, 26 Sept 2026: at a plan limit, warn first. The operator always
-    // sees the warnings; this decides whether the organisation's own
-    // administrators see them too. OFF until the wording is approved.
-    public const string PlansWarnClients = "plans.warn_clients";
 
     public sealed record Def(string Key, string Section, string Label, bool Secret, string Help);
 
@@ -145,9 +150,25 @@ public static class SettingKeys
         new(AiMailOrganisations, "ai", "Organisations that may use TatvaOS AI in Mail", false,
             "Organisation ids, separated by commas. Only these can switch Mail AI on (Help me write, "
             + "suggested replies, sorting); every other organisation is told it is not available yet. "
-            + "EMPTY means every organisation may. Set to Techvein alone on 25 Sept 2026 until the "
-            + "privacy policy describes Mail AI (Mr. Singh) — empty it once that text is live."),
+            + "EMPTY means NO organisation may (Mr. Singh, 29 Sept 2026). Type all to let every "
+            + "organisation. Set to Techvein alone on 25 Sept 2026 until the privacy policy describes "
+            + "Mail AI (Mr. Singh) — change it to all once that text is live."),
+        new(AiConnectOrganisations, "ai", "Organisations that may use TatvaOS AI in Connect", false,
+            "Meeting minutes, and transcription of recordings if a transcription service is ever set up. "
+            + "Same rule as Mail: organisation ids separated by commas, all for everyone, EMPTY means NO "
+            + "organisation. Started as all on 30 Sept 2026 (Mr. Singh): minutes' disclosure is live, and "
+            + "each organisation's own TatvaOS AI switch remains its consent."),
+        new(AiDocsOrganisations, "ai", "Organisations that may use TatvaOS AI in Docs", false,
+            "Same rule as Mail. Started EMPTY on 30 Sept 2026 (no organisation): Docs is off for everyone "
+            + "and its AI has no privacy text yet."),
+        new(AiSheetsOrganisations, "ai", "Organisations that may use TatvaOS AI in Sheets", false,
+            "Same rule as Mail. Started EMPTY on 2 Oct 2026 (no organisation): Sheets is off for everyone "
+            + "and its AI has no privacy text yet."),
 
+        new(PlansWarnClients, "plans", "Show plan warnings to organisation administrators", false,
+            "true shows each organisation's administrators a notice when they use something their plan "
+            + "does not include, or pass a plan limit. Nothing is ever stopped. You always see the "
+            + "warnings on the organisation's page, whatever this says."),
         new(PersonalSignupOpen, "personal", "Personal signup open (/join)", false,
             "OFF until launch. ON lets anyone create a free personal address at /join. Needs a personal "
             + "house organisation with a verified domain and the phone-hash key as well, or /join stays "
@@ -155,10 +176,6 @@ public static class SettingKeys
         new(PersonalCodesPerHour, "personal", "Signup SMS codes per hour (whole platform)", false,
             "A ceiling on SMS codes sent by /join across everyone, so the form cannot run up an SMS bill. "
             + "Empty means 200. Per number (3 an hour) and per address (10 an hour) are fixed in code."),
-        new(PlansWarnClients, "plans", "Show plan warnings to organisation administrators", false,
-            "true shows each organisation's administrators a notice when they use something their plan "
-            + "does not include, or pass a plan limit. Nothing is ever stopped. You always see the "
-            + "warnings on the organisation's page, whatever this says."),
     ];
 
     public static bool IsKnown(string key) => All.Any(d => d.Key == key);

@@ -273,6 +273,9 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
         const res = await guestApi.wait(token);
         if (!alive) return;
         if (res.status === 'denied') { setPhase({ kind: 'denied' }); return; }
+        // Admitted, but the room filled while they waited (a personal host's
+        // plan limit): the server's own sentence, not "the link is broken".
+        if (res.status === 'full') { setPhase({ kind: 'gone', message: res.error }); return; }
         if (res.status === 'waiting') return;
         // Admitted. Still choosing: keep the seat for when Join is pressed.
         // Already pressed Join: straight into the meeting with those choices.

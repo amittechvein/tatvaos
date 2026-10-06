@@ -422,6 +422,22 @@ if [ "$ENV" = "production" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Every AI entry point asks AiGate before sending, and every AI feature label
+# has an organisation list (Mr. Singh, 30 Sept 2026: a customer used Mail AI
+# on 25 Sept before its privacy text existed). CI runs the same check; it runs
+# here too because a hand deploy is the path that has skipped CI before.
+# Source scan only - no database, no containers - so it costs nothing and
+# refuses before anything is built or stopped.
+step "Every AI entry point asks its organisation list"
+if ai_gate_out=$(python3 tests/ai/every_ai_entry_calls_gate.py apps/api 2>&1); then
+    printf '%s\n' "$ai_gate_out" | sed 's/^/   /'
+else
+    printf '%s\n' "$ai_gate_out" | sed 's/^/      /'
+    bad "an AI entry point does not ask AiGate, or a feature has no list - stopping"
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 step "Pulling and building"
 $COMPOSE pull 2>&1 | grep -Ei 'error|warn' | sed 's/^/   /' || true
 
@@ -610,12 +626,31 @@ for f in local/postgres/init/*.sql; do
     if out=$($COMPOSE exec -T postgres psql -U postgres -d tatvaos_mail \
              -v ON_ERROR_STOP=1 < "$f" 2>&1); then
         ok "$(basename "$f")"
+        # A migration that did something unusual says so with RAISE WARNING,
+        # and it is shown here, under its [ ok ] - WARNING lines only, never
+        # NOTICE, or a hundred files of chatter would bury it (Mr. Singh,
+        # 30 Sept 2026; rule 12). Until then a successful migration's output
+        # went nowhere, so PR 330's count of deleted orphan rows could not be
+        # seen on a deploy. A failed one already shows its last 20 lines,
+        # warnings included. tests/deploy/migration-warnings.sh runs this loop.
+        printf '%s\n' "$out" | grep -E '^(psql:[^ ]+ )?WARNING:' | sed 's/^/      /' || true
     else
         bad "$(basename "$f")"
         printf '%s\n' "$out" | tail -20 | sed 's/^/      /'
         schema_failed=1
     fi
 done
+
+# Which organisations each AI feature is offered to, AS THIS DEPLOY STARTS
+# (Mr. Singh, 30 Sept 2026: every AI deploy note states it). Printed here,
+# after the schema, so the deploy log carries it whoever writes the note.
+# Organisation ids only; "(no row)" and "" both mean nobody (PR 360).
+ai_lists=$($COMPOSE exec -T postgres psql -U postgres -d tatvaos_mail -At -c "
+    SELECT k || ' = ' || COALESCE((SELECT CASE WHEN value = '' THEN '(empty - nobody)' ELSE value END
+                                   FROM core.platform_settings s WHERE s.key = k), '(no row - nobody)')
+      FROM unnest(ARRAY['ai.mail.organisations','ai.connect.organisations','ai.docs.organisations','ai.sheets.organisations']) AS k" 2>&1) \
+    && { note "AI offered to (organisation lists):"; printf '%s\n' "$ai_lists" | sed 's/^/      /'; } \
+    || note "could not read the AI organisation lists: $ai_lists"
 
 # A half-applied schema is worse than a failed deploy: the containers come up,
 # the health check may even pass, and the breakage surfaces later as missing
@@ -965,6 +1000,15 @@ if [ "$(free_gb)" -lt 15 ]; then
     note "WARNING: under 15 GB free on /. The NEXT deploy may fail. Clear build cache"
     note "         (docker builder prune -af) — never volumes: they hold Postgres,"
     note "         the maildirs and Caddy's certificates."
+fi
+
+# The bug tracker (apps/bugs, bug.tatvaos.com) is its own compose project, but
+# its uploads — screenshots and recordings — sit on this same disk. Mr. Singh,
+# PR 301 condition 2: say how much, every deploy. Report only: an absent or
+# stopped tracker prints nothing and never affects this deploy's verdict.
+bugs_mb=$(docker exec tatvaos-bugs du -sm /data 2>/dev/null | cut -f1)
+if [ -n "$bugs_mb" ]; then
+    note "bug tracker data (volume tatvaos-bugs_bugsdata): ${bugs_mb} MB — uploads capped by BUGS_STORAGE_LIMIT_MB (default 2048)"
 fi
 
 # ---------------------------------------------------------------------------

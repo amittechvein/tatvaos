@@ -111,6 +111,10 @@ public sealed class MailTriageWorker(
         tenant.EnterAnonymousScope(tenantId, "system");
         await db.SyncTenantAsync(ct);
 
+        // Offered to this organisation at all (AiGate)? Asked here, in the
+        // method that sends, as well as when organisations are picked.
+        if (!await AiGate.AllowedAsync(db, tenantId, MailTriage.Feature, log, ct)) return;
+
         var now = DateTimeOffset.UtcNow;
         var cutoff = since > now - MaxAge ? since : now - MaxAge;
 
