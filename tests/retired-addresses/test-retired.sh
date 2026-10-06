@@ -68,7 +68,7 @@ release() { req POST "/api/admin/retired-addresses/$1/release" "$2" "{\"reason\"
 box_id() { PG "SELECT id FROM mail.mailboxes WHERE address='$1'"; }
 count_job() {
     TATVAOS_VMAIL="$VMAIL" MR_BATCH=500 \
-    MR_PSQL="wsl -e env PGPASSWORD=devpass psql -h localhost -U postgres -d tatvaos_personal -Atq -v ON_ERROR_STOP=1" \
+    MR_PSQL="wsl -e env PGPASSWORD=devpass psql -h localhost -U postgres -d "${TDB_NAME:-tatvaos_personal}" -Atq -v ON_ERROR_STOP=1" \
     MR_EXPUNGE="bash tests/personal-maildir-removal/fake-doveadm.sh expunge" \
     MR_COUNT="bash tests/personal-maildir-removal/fake-doveadm.sh count" \
     bash infra/scripts/maildir-removals.sh 2>&1 | tr -d '\r'

@@ -286,7 +286,7 @@ step "7. Organisations untouched"
 same "the operator's routes: an organisation person is 'not a personal account'" \
      "$(status "$(req POST "/api/admin/personal-accounts/$TECHVEIN_OWNER/suspend" "$OP" '{"reason":"x"}')")" "404"
 APW=$(grep -o "Username=tatvaos_app;Password=[^;']*" .tmp/run-api.sh | sed 's/.*Password=//')
-r=$(wsl -e env PGPASSWORD="$APW" psql -h localhost -U tatvaos_app -d tatvaos_personal -Atc "SELECT * FROM core.purge_personal_account('$TECHVEIN_OWNER')" 2>&1 | tr -d '\r')
+r=$(wsl -e env PGPASSWORD="$APW" psql -h localhost -U tatvaos_app -d "${TDB_NAME:-tatvaos_personal}" -Atc "SELECT * FROM core.purge_personal_account('$TECHVEIN_OWNER')" 2>&1 | tr -d '\r')
 has "the purge function refuses an organisation's person" "$r" "is not a personal account"
 same "…who is still there" "$(PG "SELECT count(*) FROM core.users WHERE id='$TECHVEIN_OWNER'")" "1"
 

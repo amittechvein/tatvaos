@@ -26,7 +26,7 @@ public static class RetiredAddressEndpoints
     public static void MapRetiredAddressEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/admin/retired-addresses")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         g.MapGet("/", ListAsync);
         g.MapPost("/{id:long}/release", ReleaseAsync);
