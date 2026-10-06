@@ -109,7 +109,13 @@ public static class SpaceEndpoints
     public sealed record CreateFolderRequest(string? Name, Guid? ParentFolderId, string? Scope);
     public sealed record PatchRequest(string? Name, Guid? FolderId, Guid? ParentFolderId, string? Scope);
     public sealed record OwnershipRequest(string? OwnershipType);
-    public sealed record ShareRequest(Guid? UserId, bool OrgWide, string? Permission);
+    /// <param name="Email">
+    /// Share by address instead of by user id (build plan §4.6: personal
+    /// accounts share "only with a specific address" — they have no people
+    /// picker, because the directory is every stranger). Resolved to a user
+    /// in the caller's tenant; exactly one of UserId, Email, OrgWide.
+    /// </param>
+    public sealed record ShareRequest(Guid? UserId, bool OrgWide, string? Permission, string? Email = null);
     public sealed record ActivityDto(string Action, DateTimeOffset OccurredAt);
 
     private static IResult Error(int status, string message, string? reason = null) =>
@@ -273,6 +279,11 @@ public static class SpaceEndpoints
             return Error(400, "Provide either folderId or scope, not both or neither.");
         if (scopeGiven && scope is not ("personal" or "organisational"))
             return Error(400, "scope must be personal or organisational.");
+        // Personal accounts (build plan §4.6, §6): no Organisation folder —
+        // in the personal house it would be every stranger's shared drive.
+        if (scope == "organisational"
+            && await TatvaOS.Api.Modules.Personal.PersonalHouse.IsHouseTenantAsync(db, tenant.TenantId, ct))
+            return Error(403, TatvaOS.Api.Modules.Personal.PersonalGuard.Sentence);
 
         if (page < 1) page = 1;
         pageSize = Math.Clamp(pageSize, 1, 500);
@@ -601,7 +612,7 @@ public static class SpaceEndpoints
     /// caller's level there.
     /// </summary>
     internal static async Task<(IResult? Error, Guid? FolderId, string OwnershipType, Guid? OwnerUserId)>
-        ResolveDestinationAsync(AppDbContext db, Guid uid, Guid? folderId, string? scope, CancellationToken ct)
+        ResolveDestinationAsync(AppDbContext db, Guid tenantId, Guid uid, Guid? folderId, string? scope, CancellationToken ct)
     {
         if (folderId is Guid fid)
         {
@@ -621,6 +632,13 @@ public static class SpaceEndpoints
 
         if (scope is not ("personal" or "organisational"))
             return (Error(400, "scope must be personal or organisational when targeting a root."), null, "", null);
+
+        // The Organisation root, in the personal house: refused (§6). The
+        // database refuses it too (20260926-zz-personal-isolation.sql), so a
+        // path that skips this check fails loudly instead of publishing.
+        if (scope == "organisational"
+            && await TatvaOS.Api.Modules.Personal.PersonalHouse.IsHouseTenantAsync(db, tenantId, ct))
+            return (Error(403, TatvaOS.Api.Modules.Personal.PersonalGuard.Sentence), null, "", null);
 
         return (null, null, scope, scope == "personal" ? uid : null);
     }
@@ -850,7 +868,7 @@ public static class SpaceEndpoints
         return await ReadUploadAsync(request, db, tenant, allocator, blobs, config, uid,
             gate: async (folderId, scope, declared, token) =>
             {
-                var (err, fid, ownership, owner) = await ResolveDestinationAsync(db, uid, folderId, scope, token);
+                var (err, fid, ownership, owner) = await ResolveDestinationAsync(db, tenant.TenantId, uid, folderId, scope, token);
                 if (err is not null) return (err, 0);
                 dest = (ownership, owner, fid);
 
@@ -1003,7 +1021,7 @@ public static class SpaceEndpoints
         var moveToRoot = req.FolderId is null && req.Scope is not null;
         if (moveToFolder || moveToRoot)
         {
-            var (err, fid, _, _) = await ResolveDestinationAsync(db, uid, req.FolderId, req.Scope, ct);
+            var (err, fid, _, _) = await ResolveDestinationAsync(db, tenant.TenantId, uid, req.FolderId, req.Scope, ct);
             if (err is not null) return err;
             // Moving does NOT change ownership — that is PUT /ownership, an
             // explicit act, never a side effect of dragging.
@@ -1028,6 +1046,9 @@ public static class SpaceEndpoints
         if (!TryCaller(tenant, out var uid)) return Results.Unauthorized();
         if (req.OwnershipType is not ("personal" or "organisational"))
             return Error(400, "ownershipType must be personal or organisational.");
+        if (req.OwnershipType == "organisational"
+            && await TatvaOS.Api.Modules.Personal.PersonalHouse.IsHouseTenantAsync(db, tenant.TenantId, ct))
+            return Error(403, TatvaOS.Api.Modules.Personal.PersonalGuard.Sentence);
 
         var file = await db.SpaceFiles.FirstOrDefaultAsync(f => f.Id == id, ct);
         if (file is null) return Error(404, "No such file.");
@@ -1177,7 +1198,7 @@ public static class SpaceEndpoints
         }
 
         var (err, fid, ownershipType, ownerUserId) =
-            await ResolveDestinationAsync(db, uid, req.ParentFolderId, req.Scope, ct);
+            await ResolveDestinationAsync(db, tenant.TenantId, uid, req.ParentFolderId, req.Scope, ct);
         if (err is not null) return err;
 
         var folder = new SpaceFolder
@@ -1229,7 +1250,7 @@ public static class SpaceEndpoints
 
         if (moveToFolder || moveToRoot)
         {
-            var (err, destId, _, _) = await ResolveDestinationAsync(db, uid, destFolderId, req.Scope, ct);
+            var (err, destId, _, _) = await ResolveDestinationAsync(db, tenant.TenantId, uid, destFolderId, req.Scope, ct);
             if (err is not null) return err;
 
             if (destId is Guid target)
@@ -1524,14 +1545,32 @@ public static class SpaceEndpoints
     {
         if (!TryCaller(tenant, out var uid)) return Results.Unauthorized();
 
-        var named = req.UserId is not null;
-        if (named == req.OrgWide)
+        var named = req.UserId is not null || !string.IsNullOrWhiteSpace(req.Email);
+        if (named == req.OrgWide || (req.UserId is not null && !string.IsNullOrWhiteSpace(req.Email)))
             return Error(400, "Share with either a person or the whole organisation, not both or neither.");
+        if (req.OrgWide
+            && await TatvaOS.Api.Modules.Personal.PersonalHouse.IsHouseTenantAsync(db, tenant.TenantId, ct))
+            return Error(403, TatvaOS.Api.Modules.Personal.PersonalGuard.Sentence);
         if (req.Permission is not ("view" or "comment" or "edit"))
             return Error(400, "permission must be view, comment or edit.");
 
         var (err, _, owner) = await ShareGateAsync(id, isFile, db, uid, ct);
         if (err is not null) return err;
+
+        if (!string.IsNullOrWhiteSpace(req.Email))
+        {
+            // The sign-in address or the mailbox address — whichever the
+            // sharer knows them by. Same sentence as an unknown id.
+            var email = req.Email.Trim().ToLowerInvariant();
+            var byEmail = await db.Users.AsNoTracking()
+                .Where(u => u.Email == email && u.Status != "deleted")
+                .Select(u => (Guid?)u.Id).FirstOrDefaultAsync(ct)
+                ?? await db.Mailboxes.AsNoTracking()
+                    .Where(m => m.Address == email && m.UserId != null && m.Type == "user")
+                    .Select(m => m.UserId).FirstOrDefaultAsync(ct);
+            if (byEmail is null) return Error(404, "No such user.");
+            req = req with { UserId = byEmail, Email = null };
+        }
 
         if (req.UserId is Guid target)
         {

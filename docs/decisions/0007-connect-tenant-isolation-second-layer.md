@@ -1,6 +1,6 @@
 # 0007 — Connect's tables get a second isolation layer
 
-**Status:** proposed, for Mr. Singh's tenancy gate. Nothing in this record is built.
+**Status:** accepted by Mr. Singh, 24 Sept 2026, with the conditions and additions in his ruling below. Step one is PR 288.
 **Date:** 2026-09-21
 **Written by** the developer session that found the gap, while calibrating the
 isolation check Mr. Singh asked for on PR 191. Evidence: PR 193,
@@ -116,3 +116,39 @@ each use carries a comment saying why.
 2. If 3: may step one ship on its own, before the child-table inventory?
 3. Should the rule go further: every new tenant-owned entity must have a query
    filter, enforced by a test that fails when one is mapped without it?
+
+---
+
+## Ruling — Mr. Singh, 24 September 2026 (his words, transcribed exactly)
+
+> **Ruling on decision 0007 — Connect tenant isolation, second layer. Mr. Singh, 24 Sept 2026.**
+>
+> Option 3, in two steps. Option 2 is "partial safety that reads as complete," which is worse than option 1 because it creates confidence with nothing behind it.
+>
+> Step one, `ConnectMeeting`, may ship on its own. Three conditions on step one. The PR 193 bypass mutation (`MUTATE_BYPASS_RLS=1`) must go green on `ConnectMeeting` — the other organisation's class stays out even with row-level security bypassed. The LiveKit webhook and egress callback paths must be walked before merge, not after: a filter with no tenant set returns nothing, and a webhook returning nothing is a silently dropped recording. And the tenantless-path inventory is started as a checked-in file in the same PR, even though the child-table filters come in step two. Nobody holds that inventory today; it is worth more than the filters.
+>
+> Yes to the enforcement test: every entity with a tenant, directly or through its parent, must carry a query filter, or the build fails. The rule lives in a test, not a comment.
+>
+> Two additions. `core.departments` carries no row-level security at all — worse than Connect's one layer — and 0007 absorbs it: policy on, with the mail edge reading it through a `SECURITY DEFINER` function, as the guest door does. And in step two, the child tables get a `tenant_id` column rather than a join through the meeting; chat and caption lines are high-volume, and a parent join per row is a performance trap.
+>
+> Status: accepted, with the above attached.
+
+*[Transcriber's note, 25 Sept, added on Mr. Singh's instruction of 27 Sept:
+"a filter with no tenant set returns nothing" — in this codebase it does not
+return nothing: `TenantContext.TenantId` **throws** when no tenant is set, and
+the LiveKit webhook's catch-all turns the throw into a 200 with nothing written.
+The practical effect, a silent drop, is the same; that is what the ruling
+addresses, and it stands.]*
+
+## Further ruling — Mr. Singh, 27 September 2026 (his words, transcribed exactly)
+
+> **The enforcement test found what enforcement tests are for.** Twelve tenant-owned tables outside Connect with no filter — seven Calendar, four Mail, one sign-in — and two of them with no database layer either. That's a bigger finding than the one 0007 started with, and it came from making the rule a test rather than a sentence. The allow-list that can only shrink is the right shape. One addition: **each entry in it gets an owner and a date, not only a name.** An allow-list with names alone becomes permanent furniture; one with dates gets emptied.
+>
+> **`calendar.reminder_sends`: yes, 0007 covers it.** Same shape as `core.departments` — no isolation at any layer and nothing explaining why. Put the two in one PR: the zero-layer tables get a policy each, and the mail edge gets its definer function for departments. That's a schema change and it comes to me.
+>
+> **`mfa_recovery_codes` without RLS, on purpose:** I accept the reasoning — a row is only findable by someone who already holds the code. Two questions before I close it: are the codes hashed at rest, and is the lookup constant-time? If the answer to either is no, the reasoning holds but the table doesn't.
+>
+> **"Throws" versus "returns nothing":** you were right to flag it without editing my words. Add a bracketed correction beneath the ruling, marked as the transcriber's note. The practical effect — a silent drop — is what I was ruling on, and that stands.
+>
+> **The CI step in 288: approved.** A test that fails the build when a tenant-owned table has no filter is exactly the kind of check CI exists to run.
+
