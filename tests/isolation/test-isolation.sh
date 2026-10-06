@@ -187,6 +187,63 @@ run_as postgres "
     DELETE FROM connect.meetings
      WHERE title IN ('iso-techvein','iso-school','forged-by-isolation-test');" >/dev/null 2>&1
 
+hdr "Connect's child tables carry their own tenant_id (decision 0007, step two)"
+
+# Nine tables that were isolated only by a policy joining to connect.meetings
+# for every row now carry tenant_id, set by a trigger FROM THE MEETING. Fixture
+# as postgres: a School meeting with one row in each table the trigger feeds.
+SM=$(scalar_as postgres "WITH x AS (INSERT INTO connect.meetings (tenant_id, code, title, kind, status)
+        VALUES ('$SCHOOL', 'iso-s2-$$', 'iso-s2-school', 'instant', 'active') RETURNING id) SELECT id FROM x")
+run_as postgres "
+    INSERT INTO connect.participants (meeting_id, identity, display_name, role, is_guest)
+        VALUES ('$SM', 'iso-s2-p', 'iso-s2', 'participant', true);
+    INSERT INTO connect.meeting_events (meeting_id, kind, occurred_at) VALUES ('$SM', 'room_started', now());
+    INSERT INTO connect.meeting_chat (meeting_id, client_id, identity, display_name, body) VALUES ('$SM', gen_random_uuid(), 'iso-s2-p', 'iso', 'iso-s2');
+    INSERT INTO connect.recordings (meeting_id, egress_id, mode, status, file_name) VALUES ('$SM', 'EG_iso_s2_$$', 'audio', 'ready', 'iso-s2.ogg');" >/dev/null 2>&1
+
+for t in participants lobby_requests meeting_events meeting_chat caption_lines meeting_blocks meeting_notes recordings transcripts; do
+    n=$(no_context "SELECT count(*) FROM connect.$t")
+    [ "${n:-1}" -eq 0 ] && pass "connect.$t: no tenant context returns zero rows"                         || fail "DANGEROUS: connect.$t shows ${n} row(s) with no tenant set"
+    empty=$(scalar_as tatvaos_app "SET app.tenant_id = ''; SELECT count(*) FROM connect.$t")
+    [ "${empty:-x}" = "0" ] && pass "connect.$t: empty tenant string returns zero"                             || fail "connect.$t: empty app.tenant_id returned '${empty}'"
+    there=$(scalar_as postgres "SELECT count(*) FROM connect.$t WHERE tenant_id = '$SCHOOL'")
+    leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM connect.$t WHERE tenant_id = '$SCHOOL'")
+    if [ "${there:-0}" -eq 0 ]; then
+        pass "connect.$t: (no School rows exist to leak - covered by the no-context checks)"
+    elif [ "${leak:-1}" -eq 0 ]; then
+        pass "connect.$t: Techvein sees none of ABC School's ${there} row(s)"
+    else
+        fail "LEAK: connect.$t shows ${leak} ABC School row(s) to Techvein"
+    fi
+done
+
+# The fixture really exists, row by row: it is ONE psql batch, one bad insert
+# rolls back all four (a ready recording without a file did, on the first
+# run), and then "no School rows to leak" would be every answer above.
+for t in participants meeting_events meeting_chat recordings; do
+    same_n=$(scalar_as postgres "SELECT count(*) FROM connect.$t WHERE meeting_id = '$SM' AND tenant_id = '$SCHOOL'")
+    [ "${same_n:-0}" -eq 1 ] && pass "connect.$t: the trigger gave the School fixture row the School's tenant_id"                              || fail "connect.$t: the School fixture row is missing or has the wrong tenant_id (got '${same_n}')"
+done
+
+# A writer cannot choose tenant_id: the trigger takes it from the meeting.
+run_as postgres "INSERT INTO connect.meeting_events (meeting_id, kind, occurred_at, tenant_id)
+    VALUES ('$SM', 'participant_joined', now(), '$TECHVEIN');" >/dev/null 2>&1
+forged=$(scalar_as postgres "SELECT count(*) FROM connect.meeting_events WHERE meeting_id = '$SM' AND tenant_id = '$TECHVEIN'")
+[ "${forged:-1}" -eq 0 ] && pass "a supplied tenant_id is overwritten from the meeting (even as postgres)"                          || fail "LEAK: a child row kept a tenant_id that is not its meeting's"
+
+# Techvein cannot hang a row off ABC School's meeting: the trigger cannot see
+# the meeting under Techvein's RLS, tenant_id stays NULL, NOT NULL refuses it.
+out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    INSERT INTO connect.meeting_chat (meeting_id, client_id, identity, display_name, body) VALUES ('$SM', gen_random_uuid(), 'x', 'x', 'iso-s2-forged');" 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qiE 'null value|row-level security'; then
+    pass "Techvein cannot write a chat row into ABC School's meeting"
+else
+    fail "LEAK: Techvein wrote into ABC School's meeting ($(printf '%s' "$out" | head -c 120))"
+fi
+
+run_as postgres "DELETE FROM connect.meetings WHERE id = '$SM';" >/dev/null 2>&1
+
 hdr "Locations and designations are isolated (Hire & People, Phase 0)"
 
 # Fixture as postgres (bypasses RLS), asserted as tatvaos_app, removed at the
@@ -502,6 +559,53 @@ path=$(scalar_as postgres "SELECT array_to_string(proconfig, ';') FROM pg_proc W
 [ "$path" = "search_path=pg_catalog,hire,core,pg_temp" ] \
     && pass "the public careers resolver searches pg_catalog first and pg_temp last" \
     || fail "the careers resolver's path is '$path'"
+
+hdr "Connect's definer functions: pinned, not PUBLIC, and the attendee lists stay in their organisation (0007 review)"
+
+# The 28 Sept review (docs/decisions/0007-tenantless-paths.md section 3).
+# 20260928-d-connect-definer-review.sql pins every connect definer to
+# pg_catalog first and pg_temp last and revokes PUBLIC; asserted here for
+# EVERY connect definer, so a new one that skips the pattern fails this suite.
+total=$(scalar_as postgres "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                             WHERE n.nspname = 'connect' AND p.prosecdef")
+bad=$(scalar_as postgres "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                           WHERE n.nspname = 'connect' AND p.prosecdef
+                             AND NOT coalesce(array_to_string(p.proconfig, ';'), '') ~ '^search_path=pg_catalog,.*pg_temp$'")
+[ "${total:-0}" -ge 20 ] && [ "${bad:-1}" -eq 0 ]     && pass "all ${total} connect definers search pg_catalog first and pg_temp last"     || fail "${bad:-?} of ${total:-?} connect definer(s) do not search pg_catalog first and pg_temp last"
+pub=$(scalar_as postgres "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                           WHERE n.nspname = 'connect' AND p.prosecdef AND has_function_privilege('public', p.oid, 'EXECUTE')")
+[ "${pub:-1}" -eq 0 ] && pass "no connect definer is executable by PUBLIC"                       || fail "DANGEROUS: ${pub} connect definer(s) are executable by PUBLIC"
+
+# The four definers nothing called were dropped (20260928-e); a file that
+# brings one back without a caller fails here.
+gone=$(scalar_as postgres "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                            WHERE n.nspname = 'connect'
+                              AND p.proname IN ('meeting_chat_lines','meetings_with_captions','recording_bytes','share_for_user')")
+[ "${gone:-1}" -eq 0 ] && pass "the four uncalled definers are gone (meeting_chat_lines, meetings_with_captions, recording_bytes, share_for_user)"                        || fail "${gone} of the four uncalled connect definers exist again - see 20260928-e-connect-drop-unused-definers.sql"
+
+# The attendee list (emails and names) for a School meeting, asked for from
+# Techvein, must be empty; asked for from the School, it must not be - or the
+# empty answer proves nothing.
+MM=$(scalar_as postgres "WITH x AS (INSERT INTO connect.meetings (tenant_id, code, title, kind, status)
+        VALUES ('$SCHOOL', 'iso-min-$$', 'iso-min', 'instant', 'ended') RETURNING id) SELECT id FROM x")
+run_as postgres "INSERT INTO connect.participants (meeting_id, user_id, identity, display_name, role, is_guest, first_joined_at)
+    SELECT '$MM', u.id, 'iso-min-p', 'iso-min', 'participant', false, now()
+      FROM core.users u WHERE u.tenant_id = '$SCHOOL' AND u.email <> '' AND u.status = 'active' LIMIT 1;" >/dev/null 2>&1
+# And one guest - unreachable by email - so the School's unreachable count is 1
+# and Techvein's 0 means something (without it both are 0 whatever the guard).
+run_as postgres "INSERT INTO connect.participants (meeting_id, identity, display_name, role, is_guest, first_joined_at)
+    VALUES ('$MM', 'iso-min-g', 'iso-min-guest', 'participant', true, now());" >/dev/null 2>&1
+own=$(as_tenant "$SCHOOL" "SELECT count(*) FROM connect.minutes_recipients('$MM')")
+[ "${own:-0}" -ge 1 ] && pass "minutes_recipients: the School sees its own meeting's attendee"                       || fail "minutes_recipients returned '${own}' to the School for its own meeting - fixture or function broken"
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM connect.minutes_recipients('$MM')")
+[ "${leak:-1}" -eq 0 ] && pass "minutes_recipients: Techvein gets none of a School meeting's attendees"                        || fail "LEAK: minutes_recipients gave Techvein ${leak} School attendee(s)"
+n=$(no_context "SELECT count(*) FROM connect.minutes_recipients('$MM')")
+[ "${n:-1}" -eq 0 ] && pass "minutes_recipients: no tenant context returns none"                     || fail "DANGEROUS: minutes_recipients returned ${n} attendee(s) with no tenant set"
+ocnt=$(as_tenant "$SCHOOL" "SELECT connect.minutes_unreachable('$MM')")
+[ "${ocnt:-0}" = "1" ] && pass "minutes_unreachable: the School counts its own guest (1)"                        || fail "minutes_unreachable gave the School '${ocnt}' for its own meeting - fixture or function broken"
+cnt=$(as_tenant "$TECHVEIN" "SELECT connect.minutes_unreachable('$MM')")
+[ "${cnt:-1}" = "0" ] && pass "minutes_unreachable: Techvein's count for a School meeting is 0"                       || fail "LEAK: minutes_unreachable gave Techvein '${cnt}' for a School meeting"
+run_as postgres "DELETE FROM connect.meetings WHERE id = '$MM';" >/dev/null 2>&1
 
 hdr "Sign-in handoff codes are isolated, and the redeem reaches no further than one row"
 
