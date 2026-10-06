@@ -47,7 +47,7 @@ public static class PlanEntitlements
             .Where(t => t.Id == tenantId).Select(t => t.KeepsEverything).FirstOrDefaultAsync(ct);
 
         var sub = await db.Subscriptions.AsNoTracking()
-            .Where(s => s.TenantId == tenantId)
+            .Where(s => s.TenantId == tenantId && s.UserId == null)
             .OrderByDescending(s => s.StartedAt)
             .Select(s => new { s.PlanId })
             .FirstOrDefaultAsync(ct);

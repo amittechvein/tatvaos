@@ -213,6 +213,88 @@ Claude Code session that found the defect, not by Mr. Singh. He asked for the
 correction to be recorded; he has not checked this wording. If it misstates
 him, the error is the transcriber's.*
 
+**A pipeline reports every stage — Mr. Singh, 25 Sept 2026.**
+
+> A pipeline whose failures matter reports every stage's exit code. One that
+> sends its own errors to `/dev/null` can pass while broken and can't be
+> diagnosed when it fails.
+
+*The cost.* The restore drill (#286) ran five commands in a pipe — fetch,
+decrypt, untar, gunzip, psql — with every stage's stderr discarded. Its
+calibration failed twice and neither failure could be explained: the output was
+a bare "success" or "failure" with nothing behind it. Reading `PIPESTATUS` per
+stage made both visible in one run, and both turned out to be defects in the
+calibration rather than the pipeline — a "truncated" object that still
+contained the whole member, and state leaking between cases.
+
+`set -o pipefail` tells you the pipeline failed. It does not tell you which
+stage, and on a five-stage pipe that is most of the answer. Capture
+`PIPESTATUS` into an array **before any other command, including an
+assignment**, and print it when something goes wrong.
+
+Note also what the discarded stderr cost: the one line that explained the
+second failure — `ERROR: relation "drill_probe" already exists` — was being
+produced the whole time and thrown away.
+
+*Everything in this entry except the indented quotation is written by the
+Claude Code session that hit it, not by Mr. Singh. He asked for the rule to be
+recorded; he has not checked this wording. If it misstates him, the error is
+the transcriber's.*
+
+**Two nothings agreeing is not a match — Mr. Singh, 25 Sept 2026.**
+
+> A comparison must first prove both sides are non-empty. Two nothings agreeing
+> is not a match.
+
+*The cost.* Two sessions hit this on the same script on the same day, and found
+it independently. On the #254 restore drill, a schema query errored on **both**
+sides with a `text || "char"` cast, the two empty answers compared equal, and
+the run printed ok; a count query failed on a trailing space and counted 0
+tables, and also printed ok. Two whole drill runs were invalid. On #286's
+calibration, the same shape twice: a comparison that would have passed on two
+blanks, and a "truncated" object that wasn't truncated.
+
+The cure is cheap and belongs in the comparison itself, not in a reviewer's
+attention: demand a real answer before allowing a pass — a 32-character hash, a
+count that is a number and greater than zero, a non-empty string on both sides.
+The drill now refuses to compare unless both sides return a number; the #254
+drill now demands more than 0 tables and rows before any equality can count.
+
+This is the oldest failure in `docs/` — `testing-false-greens` — and it keeps
+coming back because it is invisible: the check does not error, it agrees.
+
+*Everything in this entry except the indented quotation is written by the
+Claude Code session that hit it, not by Mr. Singh. He asked for the rule to be
+recorded; he has not checked this wording. If it misstates him, the error is
+the transcriber's.*
+
+**A precondition is not the operation — Mr. Singh, 26 Sept 2026.**
+
+> The PR measured that `deploy` can read `.backup-env`. It did not measure
+> that `conf_value` — new code, a subshell sourcing that file and extracting
+> one variable — produces the passphrase from that file's actual contents.
+> Those are different claims. I read "readable by deploy" and treated it as
+> "the new function works on production," which it does not establish.
+
+*The cost.* PR 254 makes `deploy.sh` stop rather than write an unencrypted copy
+of production, so an empty passphrase is fatal by design. The evidence offered
+was that the deploy user can read the file holding it. That is a precondition
+of the parse, not the parse: the new `conf_value` sources the file in a
+subshell, and a file can be perfectly readable and still yield nothing through
+that path. The gap was closed by running the actual mechanism on the server —
+which printed `passphrase resolves via conf_value: yes` and cost one command.
+Had it printed NO, the first deploy after the merge would have stopped dead,
+with the cause three functions from the message.
+
+So: when a check stands in for an operation, say which one you ran. "The file
+is readable", "the endpoint is reachable", "the credential exists" are all
+preconditions. None of them is "it works".
+
+*Everything in this entry except the indented quotation is written by the
+Claude Code session that found the gap, not by Mr. Singh. He asked for the
+pattern to be recorded; he has not checked this wording. If it misstates him,
+the error is the transcriber's.*
+
 ## 6b. A result is about a version. Say which one.
 
 Rule 6 asks whether a check *can* fail. This asks whether its result still
@@ -298,6 +380,22 @@ would have thrown `23505` on every replacement password — deterministically, f
 every customer, on the second password a person generates, which is the one they
 generate because the first stopped working. The model knew nothing of the index,
 so the ORM was free to order the insert before the revoke.*
+
+**7a. A setting that promises a restriction is a customer-facing promise.** It
+ships only with its enforcement and the proof that the enforcement works,
+never ahead of it. (Mr. Singh's ruling, 1 Oct 2026.) Until the enforcement
+exists, the screen that offers the setting says plainly that it does not yet
+restrict anything.
+
+*Cost: the department setting "Can email outside the organisation" was saved,
+shown with an "internal only" badge, and described to administrators as "Off
+means they can only email colleagues" - and no sending path read it: not
+webmail, the phone app, the send API, or the mail edge. Every school that
+signed up was given a default "Students" department set to internal-only, so
+the product itself made the promise. Found on 30 Sept 2026 while removing an
+unused database grant (PR 363), seven weeks after the first such department
+was created. Production, 1 Oct: 2 such departments, in 2 organisations that
+were not live, with no active people in them - nobody had yet relied on it.*
 
 ## 8. Documented is not built
 
@@ -486,6 +584,90 @@ in a hurry.*
 
 ---
 
+## 11b. A hand deploy runs detached, and a log with no verdict is a failure
+
+Mr. Singh's ruling, 27 Sept 2026, after the incident below. Three parts, and
+the third is what makes the first two last.
+
+1. **Every hand deploy runs detached from the SSH session**, logging to a
+   file, so the connection dropping never stops it halfway:
+
+   ```bash
+   LOG=~/deploy-production-$(date -u +%Y%m%dT%H%M%SZ).log
+   CI=1 setsid nohup ./infra/scripts/deploy.sh production > "$LOG" 2>&1 < /dev/null &
+   tail -f "$LOG"        # Ctrl-C stops the tail only, never the deploy
+   ```
+
+   `CI=1` because the typed `production` confirmation cannot be answered
+   from `/dev/null`; the confirmation is the "go" Amit gave in chat, and the
+   deploy report names it. `setsid` gives the deploy its own session, so the
+   SIGHUP that follows a dropped connection never reaches it; `nohup` is the
+   belt to that brace.
+
+2. **A deploy with no verdict is not a success.** `deploy.sh` ends every run
+   with a `DEPLOY VERDICT: PASS <sha>` or `DEPLOY VERDICT: FAIL (exit N)`
+   line. **Whoever ran the deploy finds that line in the log before
+   reporting the deploy as done**, and pastes it.
+
+   *What PASS covers.* `deploy.sh` runs `verify-live.sh` itself, as its last
+   step before the verdict, and a failure there never reaches PASS. So PASS
+   means "deployed, and this run's own verify passed". It does **not** cover
+   anything that runs after the script: the workflow runs `verify-live.sh` a
+   second time and then checks from outside, and those have their own
+   results. On a hand deploy, the checks from outside are yours to run and
+   report separately. **A log that has neither was cut off** — the process was killed, or
+   the box died under it — and the box may be half-updated: images pulled
+   but containers not recreated, or the schema step run and nothing after.
+   Treat it as failed. Before anything else, read the running build from the
+   web container (`docker inspect tatvaos-web-1` → `BUILD_SHA`), compare it
+   with the checkout, and say which you found. Never re-run on the
+   assumption that the first run did nothing.
+
+3. **`deploy.sh` refuses to start unless it is detached** and prints the
+   command above instead. A rule in a document lasts until someone in a hurry
+   forgets it; a check in the script does not. It refuses when any of these
+   is true, and says which:
+
+   - input, output or errors are a terminal;
+   - the process has a controlling terminal (`/dev/tty` opens) — this is
+     what catches `./deploy.sh production > log 2>&1` typed in an SSH
+     session, which the first version of the check let through;
+   - output is not a regular file — this is what catches
+     `ssh host ./deploy.sh production` and `| tee log`, which have no
+     terminal at all and still die with the connection, by SIGPIPE.
+
+   **The override is narrow, so it cannot be typed by habit** (Mr. Singh,
+   29 Sept 2026):
+
+   - `DEPLOY_ATTACHED=1` counts only beside `GITHUB_ACTIONS=true`. The
+     workflow sets both. **Typed alone in an SSH session it does nothing**,
+     and the refusal says so.
+   - `DEPLOY_LOCAL_REHEARSAL=1` is the laptop's switch. It has no business
+     on the production box.
+
+   **The workflow's exception is temporary and dated.** The runner keeps the
+   output as the job log and does not hang up on its own process, so the
+   reason for the file test does not apply there today. Once Actions is
+   running again (expected 1 October 2026), the workflow is rewritten to
+   start the deploy detached and follow its log to the verdict line: one way
+   to run a deploy, not two. **If the exception is still in the workflow on
+   15 October 2026, that is a rule 12 failure** — a temporary carve-out that
+   became permanent.
+
+   `tests/deploy/test-detached-guard.sh` runs every form, refused and
+   allowed. It refuses to run where `infra/docker/.env` exists.
+
+*Incident, 26 Sept 2026: a hand deploy of #312 started at 13:58Z and died
+when the SSH session reset during the pre-deploy backup. It had not reached
+the schema step, so production stayed on `7f2de67` — one step later and it
+would have been half-updated. It then sat unnoticed for about three hours,
+because the tool call driving it had timed out into the background and
+nothing was watching a log. The re-run at 16:49Z was started with
+`setsid nohup` and polled from its log; it passed. Nothing broke. The rule
+exists because the next one lands one step later.*
+
+---
+
 ## 12. A deploy step prints `[ok]` only when it has checked something
 
 CTO's ruling, 17 Sept 2026, proposed by the Core session the same day.
@@ -546,6 +728,46 @@ So, in a deploy step:
 post-deploy checklist asked for the document by hand; a rollback line wrong
 twice; and one day of reconstruction from `docker inspect` for an answer the
 log had already printed and thrown away.*
+
+---
+
+## 13. Every test run gets its own database
+
+Mr. Singh's ruling, 29 Sept 2026, to every developer session.
+
+1. **Each test run creates its own database, applies every file in
+   `local/postgres/init/` from nothing, runs, and drops it at the end, pass or
+   fail.** Applying the files twice is free, and it is the migration re-run
+   check: every file re-runs on every deploy.
+2. **Nobody edits the shared local database to make a test pass.** If a test
+   needs a particular state, it creates that state in its own database.
+3. **The shared database (`tatvaos_mail`) is for trying things in a browser,
+   never for proof.** A PR's evidence names the throwaway database it ran
+   against.
+
+`tests/lib/throwaway-db.sh` does 1 for a suite that sources it and calls
+`tdb_create <label>`. It prints the database's name, applies every migration
+twice with `ON_ERROR_STOP`, and drops the database in an `EXIT` trap. It stops
+the run, naming the reason, if a migration fails or changes a **server-wide
+role**, because roles are the one thing every database on a Postgres server
+shares. `tests/mfa/test-recovery-codes.sh` is the example. Each lane moves its
+own suites onto it as it touches them.
+
+**The incident.** On 29 Sept the PR 329 test (calendar reminders) failed in the
+shared database for a reason that had nothing to do with PR 329. PR 330, still
+a draft, had left its row-security rule on `calendar.reminder_sends` there,
+from an earlier run of its own tests, and 329's code could not satisfy it:
+every reminder send was refused. The session found it, set the table back to
+`main`'s shape for its runs, and restored 330's settings. That worked, but only
+because the restorer knew exactly what the table had been. A shared test
+database means:
+
+- one session's unmerged change can make another's test fail, or **pass for
+  the wrong reason**, which is worse, because nobody looks;
+- two sessions resetting the same tables at the same moment corrupt each
+  other's results, with nobody noticing;
+- "restored exactly as it was" depends on the restorer knowing what "was"
+  meant.
 
 ---
 

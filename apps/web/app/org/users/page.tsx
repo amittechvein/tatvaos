@@ -38,6 +38,12 @@ interface Person {
   /** What "Send sign-in link" needs. Undefined on an older server. */
   hasPassword?: boolean | null;
   hasRecoveryEmail?: boolean | null;
+  /** Decision 0009. Masked — the list never carries a full address. */
+  recoveryEmailMasked?: string | null;
+  /** An administrator's change in flight: waiting for confirmation, or held. */
+  recoveryChange?: { status: 'pending' | 'held'; newMasked: string; holdUntil: string | null } | null;
+  /** This administrator's recovery change was reversed; an owner must clear it. */
+  recoveryChangesSuspended?: boolean | null;
 }
 
 type InviteState = 'pending' | 'expired' | 'undelivered';
@@ -523,7 +529,7 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
       </div>
 
       <Field label="Department"
-             hint="Sets their role, storage and whether they can email outsiders">
+             hint="Sets their role and storage">
         <Select  value={departmentId}
                 onChange={(e) => { setDepartmentId(e.target.value); setOverride(false); }}>
           <option value="">No department — organisation defaults</option>
@@ -586,10 +592,12 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
         )}
       </div>
 
+      {/* Not enforced yet (see app/org/departments/page.tsx, the "Can email
+          outside" switch). Until it is, this says so instead of promising it. */}
       {dept && !dept.canSendExternal && (
         <Alert tone="info" className="mt-4 mb-0">
-          {dept.name} is internal-only, so this person will be able to email colleagues
-          but not the outside world.
+          {dept.name} is marked internal-only. Internal-only departments are coming
+          soon: today this person can still email people outside the organisation.
         </Alert>
       )}
     </Modal>
@@ -597,6 +605,131 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * Decision 0009 — an administrator sets someone's recovery email.
+ *
+ * The new address is confirmed by a link mailed to it. Replacing an existing
+ * address is then held for 48 hours, during which links still go to the
+ * confirmed previous one. The person is told at their sign-in mailbox and old
+ * address, with a "this was not me" link. An owner's own recovery email is
+ * theirs alone to change. Addresses shown here are always masked.
+ *
+ * The administrator confirms it is them in the same request: their own
+ * password, or their authenticator code if they have two-step verification
+ * (Mr. Singh, 3 Oct 2026), so nobody at an unattended administrator's
+ * keyboard can redirect someone else's account recovery. Wrong tries count
+ * against their own sign-in lock. Neither is kept after the request.
+ */
+function RecoveryEmailSection({ person, busy, setBusy, canClear, onSaved, onError }: {
+  person: Person;
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+  canClear: boolean;
+  onSaved: (msg: string) => void;
+  onError: (m: string) => void;
+}) {
+  const { authedFetch, user: me } = useAuth();
+  const [email, setEmail] = useState('');
+  const [proof, setProof] = useState('');
+  // The server is the judge: if it asks for a code, ask for a code.
+  const [askCode, setAskCode] = useState(Boolean(me?.mfaEnabled));
+  const change = person.recoveryChange;
+
+  async function call(path: string, method: string, body?: unknown, done?: (b: Record<string, unknown>) => void) {
+    setBusy(true);
+    try {
+      const res = await authedFetch(`/org/users/${person.id}${path}`, {
+        method, body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.mfaRequired === true) setAskCode(true);
+      if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : 'That did not work.');
+      done?.(data);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'That did not work.');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 border-t border-line pt-4">
+      <div className="mb-1 text-sm font-semibold text-ink">Recovery email</div>
+      <p className="mb-2 text-xs text-ink-muted">
+        {person.recoveryEmailMasked
+          ? <>On file: <strong className="text-ink">{person.recoveryEmailMasked}</strong> — {person.hasVerifiedRecoveryEmail ? 'confirmed' : 'not confirmed yet'}.</>
+          : 'None on file.'}
+      </p>
+
+      {change?.status === 'pending' && (
+        <Alert tone="info" className="mb-2">
+          Waiting for <strong>{change.newMasked}</strong> to be confirmed from the link sent to it.
+        </Alert>
+      )}
+      {change?.status === 'held' && (
+        <Alert tone="info" className="mb-2">
+          <strong>{change.newMasked}</strong> is confirmed and becomes their recovery email on{' '}
+          <strong>{change.holdUntil ? formatDateTime(change.holdUntil) : 'the end of the hold'}</strong>.
+          Until then, links still go to the {person.hasVerifiedRecoveryEmail ? 'current address' : 'current address only if it was confirmed — it was not, so they are refused'}.
+        </Alert>
+      )}
+
+      {person.recoveryChangesSuspended && (
+        <Alert tone="warn" className="mb-2">
+          A recovery email this person set for someone was reversed by them (&ldquo;this was not me&rdquo;).
+          They cannot change recovery emails until an owner reviews it.
+          {canClear && (
+            <div className="mt-2">
+              <Button variant="secondary" size="sm" disabled={busy}
+                      onClick={() => void call('/recovery-suspension/clear', 'POST', {}, () => onSaved('Cleared. They can change recovery emails again.'))}>
+                I have reviewed it — clear
+              </Button>
+            </div>
+          )}
+        </Alert>
+      )}
+
+      {person.role === 'org_owner' ? (
+        <p className="text-xs text-ink-muted">Only an owner can change their own recovery email, from their account page.</p>
+      ) : person.status === 'suspended' ? null : (
+        <>
+          <div className="flex gap-2 flex-wrap items-start">
+            <Input style={{ maxWidth: 300 }} type="email" placeholder="their.personal@example.com"
+                   value={email} onChange={(e) => setEmail(e.target.value)} aria-label="New recovery email" />
+            <Input style={{ maxWidth: 200 }} type={askCode ? 'text' : 'password'}
+                   inputMode={askCode ? 'numeric' : undefined}
+                   autoComplete={askCode ? 'one-time-code' : 'current-password'}
+                   placeholder={askCode ? 'Code from your app' : 'Your password'}
+                   value={proof} onChange={(e) => setProof(e.target.value)}
+                   aria-label={askCode ? 'Your authenticator code' : 'Your own password'} />
+            <Button variant="secondary" size="sm" disabled={busy || !email.includes('@') || proof.trim().length === 0}
+                    onClick={() => {
+                      const sent = proof;
+                      setProof('');
+                      void call('/recovery-email', 'PUT',
+                        askCode ? { email, mfaCode: sent.trim() } : { email, currentPassword: sent },
+                        (b) => onSaved(String(b.message ?? 'Confirmation link sent.')));
+                    }}>
+              Set recovery email
+            </Button>
+          </div>
+          <p className="mt-1.5 text-xs text-ink-muted">
+            {askCode
+              ? 'To confirm it is you, enter the code from your authenticator app.'
+              : 'To confirm it is you, enter your own password — not theirs.'}
+          </p>
+          <p className="mt-1.5 text-xs text-ink-muted">
+            A confirmation link goes to the new address, and they are told at their sign-in mailbox
+            {person.recoveryEmailMasked ? ' and their current recovery email' : ''}.
+            {person.recoveryEmailMasked
+              ? ' Replacing an address takes effect 48 hours after it is confirmed; until then, links go to the current one.'
+              : ' It takes effect as soon as it is confirmed.'}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function EditPerson({ person, people, departments, onClose, onSaved, onError }: {
   person: Person;
   people: Person[];
@@ -665,12 +798,29 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
   // Why "Send sign-in link" cannot be used for this person, or null when it can.
   // Both facts come from the list; the server refuses the same two cases.
   const noRecovery = person.hasRecoveryEmail === false;
-  const linkBlocked: string | null = noRecovery
-    ? 'there is no recovery email on file, so a link has nowhere to go. Use Reset password.'
-    : null;
   // Somebody who has never chosen a password has nothing for a sign-in link to
   // replace. What they need is an invitation, so that is what is offered.
   const neverIn = person.hasPassword === false;
+  // Decision 0009 (Mr. Singh, 24 + 27 Sept). During a hold on an administrator's
+  // change, links may go only to a CONFIRMED previous address; and a sign-in
+  // link for someone with a password goes to a confirmed address or nowhere.
+  // The server refuses the same cases; this only says so before the click.
+  const held = person.recoveryChange?.status === 'held' ? person.recoveryChange : null;
+  const holdEnds = held?.holdUntil ? formatDateTime(held.holdUntil) : null;
+  const unconfirmed = person.hasVerifiedRecoveryEmail === false;
+  const holdBlock = held && unconfirmed
+    ? `their recovery email was changed by an administrator and is on hold until ${holdEnds}, with no confirmed previous address to use meanwhile.`
+    : null;
+  const linkBlocked: string | null = noRecovery
+    ? 'there is no recovery email on file, so a link has nowhere to go. Use Reset password.'
+    : holdBlock
+      ? `${holdBlock} Use Reset password.`
+      : !neverIn && unconfirmed
+        ? 'their recovery email has not been confirmed, so a sign-in link has nowhere safe to go. Use Reset password.'
+        : null;
+  const inviteBlocked: string | null = noRecovery
+    ? 'there is no recovery email on file, so an invitation has nowhere to go.'
+    : holdBlock;
 
   /** Suspend / reactivate / delete / reset — small POSTs sharing one shape. */
   async function act(path: string, method: string, done: (body: Record<string, unknown>) => void) {
@@ -991,8 +1141,8 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
                 // Mr. Singh, 21 Sept 2026: 169 accounts that have never signed
                 // in. For them the link is the wrong tool; an invitation is the
                 // right one, and it is the same one-use link, 72 hours.
-                <Button variant="secondary" size="sm" disabled={busy || noRecovery}
-                        title={noRecovery ? 'There is no recovery email on file, so an invitation has nowhere to go.' : undefined}
+                <Button variant="secondary" size="sm" disabled={busy || inviteBlocked !== null}
+                        title={inviteBlocked ?? undefined}
                         onClick={() => void act('/invitation/resend', 'POST', (body) => {
                           if (body.sent) onSaved(`${person.email}: ${String(body.note ?? 'Invitation sent.')}`);
                           else { onError(String(body.note ?? 'The invitation could not be sent.')); setBusy(false); }
@@ -1019,11 +1169,11 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
                 available and refuses when pressed. The server refuses the same
                 cases anyway; this only stops the administrator finding out by
                 trying. */}
-            {noRecovery && (
+            {(neverIn ? inviteBlocked : linkBlocked) && (
               <p className="mt-1.5 text-xs text-warn">
-                <strong>{neverIn ? 'Send invitation' : 'Send sign-in link'}</strong> is not available: there is
-                no recovery email on file, so a link has nowhere to go. Use <strong>Reset password</strong> and
-                hand them the password yourself.
+                <strong>{neverIn ? 'Send invitation' : 'Send sign-in link'}</strong> is not available:{' '}
+                {neverIn ? inviteBlocked : linkBlocked} You can use <strong>Reset password</strong> and hand
+                them the password yourself.
               </p>
             )}
             <p className="mt-1.5 text-xs text-ink-muted">
@@ -1043,6 +1193,11 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
             </p>
           </div>
         )
+      )}
+
+      {!editingSelf && person.status !== 'deleted' && (
+        <RecoveryEmailSection person={person} busy={busy} setBusy={setBusy}
+                              canClear={canMakeOwner} onSaved={onSaved} onError={onError} />
       )}
 
       </div>
