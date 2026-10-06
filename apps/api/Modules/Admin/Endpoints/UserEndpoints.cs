@@ -3,6 +3,7 @@ using TatvaOS.Api.Shared;
 using TatvaOS.Api.Shared.Auth;
 using TatvaOS.Api.Modules.Calendar;
 using TatvaOS.Api.Shared.Data;
+using TatvaOS.Api.Shared.Mail;
 using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Tenancy;
 
@@ -214,6 +215,17 @@ public static class UserEndpoints
             .ToListAsync(ct);
         var usageByUser = usageRows.ToDictionary(r => r.UserId);
 
+        // Decision 0009: administrator changes in flight, and suspended administrators.
+        var changes = (await db.RecoveryEmailChanges.AsNoTracking()
+            .Where(c => ids.Contains(c.UserId) && (c.Status == "pending" || c.Status == "held"))
+            .Select(c => new { c.UserId, c.Status, c.NewEmail, c.HoldUntil })
+            .ToListAsync(ct))
+            .ToDictionary(c => c.UserId);
+        var suspendedAdmins = (await db.RecoveryAdminSuspensions.AsNoTracking()
+            .Where(x => ids.Contains(x.AdminUserId) && x.ClearedAt == null)
+            .Select(x => x.AdminUserId)
+            .ToListAsync(ct)).ToHashSet();
+
         var boxByUser = boxes.GroupBy(b => b.UserId).ToDictionary(g => g.Key, g => g.First());
         var productsByUser = access.GroupBy(a => a.UserId)
             .ToDictionary(g => g.Key, g => g.Select(a => a.ProductCode).ToArray());
@@ -244,7 +256,12 @@ public static class UserEndpoints
                     ? null
                     : new InvitationInfo(inviteState, r.InviteSentAt, Mask.Email(r.RecoveryEmail)),
                 r.HasPassword,
-                !string.IsNullOrWhiteSpace(r.RecoveryEmail));
+                !string.IsNullOrWhiteSpace(r.RecoveryEmail),
+                string.IsNullOrWhiteSpace(r.RecoveryEmail) ? null : Mask.Email(r.RecoveryEmail),
+                changes.TryGetValue(r.Id, out var ch)
+                    ? new RecoveryChangeInfo(ch.Status, Mask.Email(ch.NewEmail), ch.HoldUntil)
+                    : null,
+                suspendedAdmins.Contains(r.Id));
         }).ToList();
 
         return Results.Ok(list);
@@ -326,6 +343,10 @@ public static class UserEndpoints
             (await db.Mailboxes.IgnoreQueryFilters().AnyAsync(m => m.Address == address, ct) ||
              await db.Aliases.IgnoreQueryFilters().AnyAsync(a => a.Address == address, ct)))
             return Results.Conflict(new { error = $"{address} already exists." });
+        // Used before and retired: the database would refuse it anyway
+        // (20260927-retired-addresses.sql); this is only the sentence.
+        if (await RetiredAddresses.IsHeldAsync(db, address, ct))
+            return Results.Conflict(new { error = RetiredAddresses.Held(address) });
 
         // ---- how this person gets in (decision 0005) ----------------------
         // A typed password is the admin's to hand over and wins outright. With
@@ -791,6 +812,11 @@ public static class UserEndpoints
                 skipped.Add(new { address, displayName, reason = "already exists" });
                 continue;
             }
+            if (await RetiredAddresses.IsHeldAsync(db, address, ct))
+            {
+                skipped.Add(new { address, displayName, reason = "used before and held" });
+                continue;
+            }
             // --- password -------------------------------------------------
             // Blank means an INVITATION, decided below once the recovery info
             // is known — nothing is generated any more (decision 0005). A
@@ -1057,8 +1083,26 @@ public static class UserEndpoints
             return Results.BadRequest(new { error = "This person has not set a password yet. Use Resend invitation." });
         if (string.IsNullOrWhiteSpace(user.RecoveryEmail))
             return Results.BadRequest(new { error = Invitations.NoRecoveryEmail });
-        // (There is no screen yet for adding a recovery email to an existing
-        // person, so the refusal does not tell the administrator to add one.)
+
+        // Decision 0009 (Mr. Singh, 24 + 27 Sept). During a hold on an
+        // administrator's change, recovery_email is still the OLD address; a
+        // link may go there only if it was confirmed. And in any case, "an
+        // unconfirmed address is not a recovery address": a sign-in link for
+        // someone who has a password goes to a CONFIRMED address or nowhere.
+        var hold = await RecoveryEmailAdminEndpoints.ActiveHoldAsync(db, user.Id, ct);
+        if (hold is not null && !hold.HasConfirmedOld)
+            return Results.BadRequest(new
+            {
+                error = "Their recovery email was changed by an administrator and is on hold until "
+                      + $"{RecoveryEmailAdminEndpoints.HoldEndText(hold.Until)}. There is no confirmed previous "
+                      + "address to send a link to meanwhile. Use Reset password instead.",
+            });
+        if (user.RecoveryEmailVerifiedAt is null)
+            return Results.BadRequest(new
+            {
+                error = "Their recovery email has not been confirmed, so a sign-in link has nowhere safe to go. "
+                      + "Ask them to open the confirmation link sent to it, or use Reset password instead.",
+            });
 
         var token = Invitations.Issue(user, Invitations.ChannelSignInLink);
         await db.SaveChangesAsync(ct);
@@ -1105,6 +1149,17 @@ public static class UserEndpoints
             return Results.BadRequest(new
             {
                 error = "This person already has a password. Use Reset password if they have lost it.",
+            });
+
+        // Decision 0009: the hold covers invitations too. During a hold the
+        // invitation may go only to a confirmed previous address.
+        var hold = await RecoveryEmailAdminEndpoints.ActiveHoldAsync(db, user.Id, ct);
+        if (hold is not null && !hold.HasConfirmedOld)
+            return Results.BadRequest(new
+            {
+                error = "Their recovery email was changed by an administrator and is on hold until "
+                      + $"{RecoveryEmailAdminEndpoints.HoldEndText(hold.Until)}. There is no confirmed previous "
+                      + "address to send an invitation to meanwhile.",
             });
 
         var channel = Invitations.ChannelFor(user.RecoveryEmail, user.Phone);
@@ -1240,6 +1295,12 @@ public static class UserEndpoints
             .ExecuteUpdateAsync(s => s
                 .SetProperty(p => p.RevokedAt, (DateTimeOffset?)DateTimeOffset.UtcNow), ct);
 
+        // Retired BEFORE the forwarding aliases are added: the database
+        // refuses an alias at a retired address unless the retirement names
+        // its target, and this one names the successor.
+        foreach (var mb in mailboxes)
+            await RetiredAddresses.RetireAsync(db, mb.Address, user.TenantId, "user_offboarded", successorBox?.Id, ct);
+
         var forwarded = new List<string>();
         if (successorBox is not null)
         {
@@ -1373,6 +1434,9 @@ public static class UserEndpoints
 
         var mailboxes = await db.Mailboxes.Where(m => m.UserId == id).ToListAsync(ct);
         foreach (var mb in mailboxes) mb.IsActive = false;
+        // Retired: held so nobody is ever handed this person's mail from disk.
+        foreach (var mb in mailboxes)
+            await RetiredAddresses.RetireAsync(db, mb.Address, user.TenantId, "user_deleted", null, ct);
 
         // Product access is revoked rather than deleted, for the same reason
         // the user row survives: "who could reach what, when" must remain

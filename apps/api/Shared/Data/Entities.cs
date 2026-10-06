@@ -155,6 +155,13 @@ public class Domain
     /// <summary>Ownership token. Until this is proven, no mail is accepted.</summary>
     [MaxLength(64)] public string? VerificationToken { get; set; }
     public DateTimeOffset? OwnershipVerifiedAt { get; set; }
+
+    /// <summary>
+    /// Set when ANOTHER organisation proved ownership of this fqdn, which
+    /// closes this claim. The row is kept so its holder can be told why —
+    /// and never told by whom (Mr. Singh, 24 Sept 2026).
+    /// </summary>
+    public DateTimeOffset? SupersededAt { get; set; }
     public DateTimeOffset? MxVerifiedAt { get; set; }
 
     /// <summary>
@@ -627,6 +634,13 @@ public class Plan
     public string[] IncludedProducts { get; set; } = ["mail"];
 
     /// <summary>
+    /// "organisation" or "personal" (20260926-z-personal-plans.sql). A
+    /// personal plan is held by one person in the personal house and its
+    /// limits are enforced (EffectiveSettings); an organisation plan warns.
+    /// </summary>
+    [MaxLength(16)] public string Audience { get; set; } = "organisation";
+
+    /// <summary>
     /// Feature codes (core.features). NULL = every feature of the included
     /// products plus the platform-wide ones - what every plan meant before
     /// 20260926-plan-features.sql. See PlanEntitlements.
@@ -653,6 +667,13 @@ public class Subscription
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
+    /// <summary>
+    /// Set for a personal account's plan; null for an organisation's. EVERY
+    /// organisation-level reader filters UserId == null — without it, the
+    /// house tenant's "subscription" would be whichever person's row came
+    /// first. Column: 20260926-z-personal-plans.sql.
+    /// </summary>
+    public Guid? UserId { get; set; }
     public Guid PlanId { get; set; }
     [MaxLength(16)] public string Status { get; set; } = "trial";
     public int Seats { get; set; }
@@ -1087,3 +1108,47 @@ public class VacationSend
     [MaxLength(320)] public required string Address { get; set; }
     public DateTimeOffset LastSentAt { get; set; } = DateTimeOffset.UtcNow;
 }
+
+// ---- Decision 0009: an administrator sets a recovery email ----------------
+// (20260927-core-recovery-email-changes.sql). core.users.recovery_email only
+// changes when a change is APPLIED; until then it keeps the old address, so the
+// credential paths go on reading the old one without knowing about holds.
+
+/// <summary>One administrator change to one person's recovery email.</summary>
+public class RecoveryEmailChange
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid UserId { get; set; }
+    public Guid SetByUserId { get; set; }
+    [MaxLength(320)] public string? OldEmail { get; set; }
+    public DateTimeOffset? OldVerifiedAt { get; set; }
+    [MaxLength(320)] public required string NewEmail { get; set; }
+    /// <summary>pending | held | applied | reverted | superseded</summary>
+    [MaxLength(16)] public string Status { get; set; } = "pending";
+    [MaxLength(64)] public string? ConfirmTokenHash { get; set; }
+    public DateTimeOffset? ConfirmSentAt { get; set; }
+    public DateTimeOffset? ConfirmedAt { get; set; }
+    public DateTimeOffset? HoldUntil { get; set; }
+    public DateTimeOffset? AppliedAt { get; set; }
+    [MaxLength(64)] public string? NotMeTokenHash { get; set; }
+    public DateTimeOffset? NotMeExpiresAt { get; set; }
+    public DateTimeOffset? RevertedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// An administrator whose change was reverted by the person ("this was not
+/// me") may not change recovery addresses until an owner clears this.
+/// </summary>
+public class RecoveryAdminSuspension
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid AdminUserId { get; set; }
+    public Guid ChangeId { get; set; }
+    public DateTimeOffset SuspendedAt { get; set; } = DateTimeOffset.UtcNow;
+    public Guid? ClearedByUserId { get; set; }
+    public DateTimeOffset? ClearedAt { get; set; }
+}
+

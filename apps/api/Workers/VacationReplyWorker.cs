@@ -84,7 +84,9 @@ public sealed class VacationReplyWorker(
 
         // mail.mailboxes carries no RLS; everything after is tenant-scoped.
         var boxes = (await db0.Mailboxes.IgnoreQueryFilters().AsNoTracking()
-                .Where(m => m.IsActive && m.UserId != null)
+                // Not a suspended personal account: an auto-reply is sending (§8).
+                .Where(m => m.IsActive && m.UserId != null
+                            && !db0.PersonalAccounts.IgnoreQueryFilters().Any(a => a.UserId == m.UserId && a.SuspendedAt != null))
                 .Select(m => new { m.Id, m.TenantId, m.UserId, m.Address })
                 .ToListAsync(ct))
             .Select(m => (m.Id, m.TenantId, Owner: m.UserId!.Value, m.Address))

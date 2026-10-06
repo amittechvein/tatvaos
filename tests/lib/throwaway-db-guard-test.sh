@@ -27,8 +27,12 @@ HERE="$(cd "$(dirname "$0")/../.." && pwd)"
 PASSED=0; FAILED=0
 pass() { PASSED=$((PASSED+1)); printf "  ok    %s\n" "$1"; }
 fail() { FAILED=$((FAILED+1)); printf "  FAIL  %s\n" "$1"; }
-has()   { if printf '%s' "$2" | grep -qF -- "$3"; then pass "$1"; else fail "$1 - [$3] missing"; fi; }
-hasnt() { if printf '%s' "$2" | grep -qF -- "$3"; then fail "$1 - [$3] present"; else pass "$1"; fi; }
+# A here-string, NOT printf | grep -q: under pipefail, grep -q exits at the
+# first match, printf dies of SIGPIPE writing the rest, and the pipeline is
+# "false". On a long text with an early match that made has() FAIL with the
+# line present and hasnt() PASS with it present (3 Oct 2026, PR 386).
+has()   { if grep -qF -- "$3" <<< "$2"; then pass "$1"; else fail "$1 - [$3] missing"; fi; }
+hasnt() { if grep -qF -- "$3" <<< "$2"; then fail "$1 - [$3] present"; else pass "$1"; fi; }
 same()  { if [ -n "$2" ] && [ "$2" = "$3" ]; then pass "$1  [got $2]"; else fail "$1 - got [$2], wanted [$3]"; fi; }
 
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
