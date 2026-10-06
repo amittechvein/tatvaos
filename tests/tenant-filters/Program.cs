@@ -46,6 +46,9 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
 
+// ----------------------------------------------------------------------------
+//  OWED A FIX (KNOWN_GAPS). Correct-by-design tables are in BY_DESIGN below.
+// ----------------------------------------------------------------------------
 // Every entity that is tenant-owned and has NO filter today: who owns closing
 // it, and by when. Mr. Singh, 27 Sept 2026: "each entry in it gets an owner
 // and a date, not only a name. An allow-list with names alone becomes
@@ -85,19 +88,35 @@ var KNOWN_GAPS = new Dictionary<string, Gap>
     ["CalendarReminder"] = new("Mail (calendar)", CAL, "RLS forced"),
     ["MailApiKey"] = new("Mail", CAL, "RLS forced"),
     ["MailApiSend"] = new("Mail", CAL, "RLS forced"),
-    // Added 5 Oct 2026 when this test first met main: both tables reached main
-    // (PR 373, 2 Oct; PR 311, 28 Sept) while this test was still on its branch.
-    // ADDING to this list is an exception to the rule above, so these two lines
-    // are for Mr. Singh to accept or turn into filters before PR 288 merges.
-    ["MailApiSendEnvelope"] = new("Mail", CAL, "RLS forced (20261001-mail-sender-gate-bounce.sql), as MailApiSend"),
-    ["PersonalSignup"] = new("Core (personal)", CAL,
-        "NO tenant by design - a signup exists before its account and organisation; "
-        + "CompletedUserId is set only on completion (20260926-a-personal-join.sql)"),
+    // Mr. Singh, 6 Oct 2026 (his wording). Reached main with PR 373 while this
+    // test was on its branch. The database is the ONLY net here, not the second.
+    ["MailApiSendEnvelope"] = new("Mail", CAL,
+        "No EF query filter. Safe only because nothing reads it: no DbSet, one write site, "
+        + "and SELECT/INSERT only. The database is not the second net here, it is the only net. "
+        + "Anyone adding a read adds the query filter in the same pull request. Dated 6 Oct 2026"),
     ["MailAppPassword"] = new("Mail", CAL, "RLS forced"),
     ["MailboxPermission"] = new("Mail", CAL, "RLS forced"),
     ["MfaRecoveryCode"] = new("Core (auth)", ZERO,
         "NO RLS by design - read before the tenant is known (0024-mfa.sql); "
         + "Mr. Singh's two questions (hashed at rest? constant-time?) open before he closes it"),
+};
+
+// ----------------------------------------------------------------------------
+//  CORRECT BY DESIGN - DO NOT "FIX". Mr. Singh, 6 Oct 2026: a table the scan
+//  sees as tenant-owned but that cannot carry a tenant filter, because it is
+//  read or written BEFORE any tenant exists. Not a gap and not owed a fix:
+//  each entry names what protects it instead. Filed as a gap, someone would
+//  one day "tidy" it with a filter and break the flow it serves.
+//  Matched as strictly as KNOWN_GAPS: an entry that gains a filter, or that
+//  is also in KNOWN_GAPS, fails - either is a sign someone misread it.
+// ----------------------------------------------------------------------------
+var BY_DESIGN = new Dictionary<string, (string Owner, string Why)>
+{
+    ["PersonalSignup"] = ("Core",
+        "No tenant_id - by design, a signup precedes its tenant. Not an exception owed a fix. "
+        + "Guarded instead by: a random v4 draft id acting as the bearer token; the code hashed with that id "
+        + "as salt, single-use, attempt-capped and lifetime-capped; rate limits on phone hash and IP; the "
+        + "plaintext phone cleared at completion (JoinEndpoints.cs:428) and the whole row pruned after a day, hourly"),
 };
 
 var opts = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql("Host=model-only").Options;
@@ -157,7 +176,11 @@ var gaps = owned.Where(e => !Filtered(e)).Select(e => e.ClrType.Name).ToHashSet(
 foreach (var name in gaps.OrderBy(n => n))
 {
     var e = owned.First(o => o.ClrType.Name == name);
-    if (KNOWN_GAPS.TryGetValue(name, out var g))
+    if (KNOWN_GAPS.ContainsKey(name) && BY_DESIGN.ContainsKey(name))
+        Fail($"{name} is in BOTH KNOWN_GAPS and BY_DESIGN: it is one or the other");
+    else if (BY_DESIGN.TryGetValue(name, out var bd))
+        Console.WriteLine($"  by design {name} ({reason[e]}) - {bd.Owner}, do not \"fix\": {bd.Why}");
+    else if (KNOWN_GAPS.TryGetValue(name, out var g))
     {
         if (string.IsNullOrWhiteSpace(g.Owner)) Fail($"{name}: allowed gap with no owner");
         else if (g.Due < today) Fail($"{name}: allowed gap OVERDUE - owner {g.Owner}, due {g.Due:yyyy-MM-dd} ({g.Why})");
@@ -167,10 +190,13 @@ foreach (var name in gaps.OrderBy(n => n))
 }
 foreach (var name in KNOWN_GAPS.Keys.Where(k => !gaps.Contains(k)).OrderBy(n => n))
     Fail($"{name} is in KNOWN_GAPS but has a filter now (or is gone): remove its line");
+foreach (var name in BY_DESIGN.Keys.Where(k => !gaps.Contains(k)).OrderBy(n => n))
+    Fail($"{name} is in BY_DESIGN but has a filter now (or is gone): a pre-tenant table was 'fixed' - check its flow still works, then remove the line");
 
+var byDesign = gaps.Count(BY_DESIGN.ContainsKey);
 Console.WriteLine();
 Console.WriteLine(failed == 0
-    ? $"  PASS  {owned.Count} tenant-owned entities: {owned.Count - gaps.Count} filtered, {gaps.Count} known gaps"
+    ? $"  PASS  {owned.Count} tenant-owned entities: {owned.Count - gaps.Count} filtered, {gaps.Count - byDesign} owed a fix, {byDesign} correct by design"
     : $"  FAIL  {failed} problem(s)");
 return failed == 0 ? 0 : 1;
 
