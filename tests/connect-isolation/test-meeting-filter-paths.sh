@@ -37,16 +37,20 @@ SCRATCH="$ROOT/.tmp/connect-isolation-$$"
 mkdir -p "$SCRATCH"
 LOG="$SCRATCH/api.log"
 
+# TATVAOS_PG_DB: the database, tatvaos_mail unless set. Set it to run against a
+# fresh database of your own when other sessions' APIs share tatvaos_mail
+# (their workers take this test's rows; found 1 Oct 2026).
+PGDB="${TATVAOS_PG_DB:-tatvaos_mail}"
 WSL_KEEPALIVE=""
 if [ -z "${TATVAOS_PSQL:-}" ]; then
     if command -v wsl >/dev/null 2>&1; then
         wsl -e sleep 3600 >/dev/null 2>&1 &
         WSL_KEEPALIVE=$!
         sleep 2
-        TATVAOS_PSQL="wsl -u postgres -e psql -d tatvaos_mail -Atc"
+        TATVAOS_PSQL="wsl -u postgres -e psql -d $PGDB -Atc"
         TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-$(wsl hostname -I | tr -d ' \r\n')}"
     else
-        TATVAOS_PSQL="docker exec tv-postgres psql -U postgres -d tatvaos_mail -Atc"
+        TATVAOS_PSQL="docker exec tv-postgres psql -U postgres -d $PGDB -Atc"
         TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-localhost}"
     fi
 fi
@@ -99,7 +103,7 @@ signin() {
 
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long"
 export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=$PGDB;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
 export Smtp__Host=localhost Smtp__Port=5870
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 
@@ -124,6 +128,9 @@ step "0. The database answers ($TATVAOS_PG_HOST)"
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
 [ -n "$(PG "SELECT 1")" ] || { fail "psql does not answer"; exit 1; }
 pass "psql answers"
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 
 step "1. Start the API"
 # Test values, not anybody's: enough to mint join tokens and verify webhooks.
@@ -153,7 +160,7 @@ command -v cygpath >/dev/null 2>&1 && SIGNER="$(cygpath -w "$SIGNER")"
 # signed BODY -> HTTP status of a LiveKit-signed event carrying exactly BODY
 signed() {
     local body="$1" jwt
-    jwt=$(BODY="$body" SECRET="$LK_SECRET" KEY="$LK_KEY" "$PY" "$SIGNER" | tr -d "")
+    jwt=$(BODY="$body" SECRET="$LK_SECRET" KEY="$LK_KEY" "$PY" "$SIGNER" | tr -d "\r")
     curl -s -o /dev/null -w "%{http_code}" -X POST "$API/api/connect/webhooks/livekit"         -H "Authorization: $jwt" -H "Content-Type: application/webhook+json" --data-binary "$body"
 }
 # webhook EVENT MEETING_ID -> HTTP status of a signed room event
@@ -199,7 +206,6 @@ fi
 
 step "3. The guest waiting room"
 PG "UPDATE core.users SET role='org_owner' WHERE email='amit@techvein.local' AND role='owner'" >/dev/null
-PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
 HOST=$(signin "+919999900001")
 [ -n "$HOST" ] && pass "signed in as the host" || { fail "host sign-in failed"; exit 1; }
 r=$(call POST "/api/connect/meetings" "$HOST" "{\"title\":\"Iso lobby $RUN\",\"kind\":\"instant\",\"waitingRoom\":\"guests\",\"allowGuests\":true}")
