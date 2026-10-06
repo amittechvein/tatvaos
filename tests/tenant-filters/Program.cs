@@ -110,16 +110,34 @@ var KNOWN_GAPS = new Dictionary<string, Gap>
 //  Matched as strictly as KNOWN_GAPS: an entry that gains a filter, or that
 //  is also in KNOWN_GAPS, fails - either is a sign someone misread it.
 // ----------------------------------------------------------------------------
-var BY_DESIGN = new Dictionary<string, (string Owner, string Why)>
+var BY_DESIGN = new Dictionary<string, Design>
 {
-    ["PersonalSignup"] = ("Core",
+    ["PersonalSignup"] = new("Core",
         "No tenant_id - by design, a signup precedes its tenant. Not an exception owed a fix. "
         + "Guarded instead by: a random v4 draft id acting as the bearer token; the code hashed with that id "
         + "as salt, single-use, attempt-capped and lifetime-capped; rate limits on phone hash and IP; the "
         + "plaintext phone cleared at completion (JoinEndpoints.cs:428) and the whole row pruned after a day, hourly"),
     // Moved from KNOWN_GAPS by Mr. Singh, 6 Oct 2026.
-    ["MfaRecoveryCode"] = ("Core",
+    ["MfaRecoveryCode"] = new("Core",
         "No tenant filter - by design: the code is read at redeem only, before the tenant is known (0024-mfa.sql)"),
+    // Mr. Singh, 6 Oct 2026 (both): arrived with the personal-accounts chain.
+    ["AiTrial"] = new("Core",
+        "No tenant filter - by design: one AI trial per phone number, ever, across EVERY account, so the "
+        + "'no second trial on the same phone' rule must see trials started from any account; a tenant filter "
+        + "would quietly grant a second trial. Keyed by phone HASH, not number; user_id SET NULL on delete"),
+    ["PersonalAiConsent"] = new("Core",
+        "No tenant filter - by design, and a tenant filter would be WORSE than none: every personal account "
+        + "shares the one house tenant, so it would protect nothing while turning this check green. Scoped "
+        + "instead by the person: every read pins one UserId, enforced by PersonalAiReadsOwnRowOnly",
+        PersonalAiReadsOwnRowOnly),
+    // PROPOSED by the deployer session, 6 Oct 2026, FOR MR. SINGH'S RULING (arrived
+    // with #326 an hour before this file met it). Not yet his words.
+    ["RetiredAddress"] = new("Core",
+        "No tenant filter - by design: ONE list of held addresses across every organisation and the "
+        + "personal house, so that an address retired by one organisation cannot be taken by another. "
+        + "A tenant filter would make IsHeldAsync see only the caller's own holds and let an address be reused. "
+        + "tenant_id records where it came from (nullable, no FK, outlives the tenant). Read only by "
+        + "RetiredAddresses.IsHeldAsync (address -> held?, no row content returned) and /api/admin/retired-addresses (SuperAdmin)"),
 };
 
 var opts = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql("Host=model-only").Options;
@@ -182,7 +200,10 @@ foreach (var name in gaps.OrderBy(n => n))
     if (KNOWN_GAPS.ContainsKey(name) && BY_DESIGN.ContainsKey(name))
         Fail($"{name} is in BOTH KNOWN_GAPS and BY_DESIGN: it is one or the other");
     else if (BY_DESIGN.TryGetValue(name, out var bd))
-        Console.WriteLine($"  by design {name} ({reason[e]}) - {bd.Owner}, do not \"fix\": {bd.Why}");
+    {
+        if (bd.Guard?.Invoke() is string broken) Fail($"{name}: {broken}");
+        else Console.WriteLine($"  by design {name} ({reason[e]}) - {bd.Owner}, do not \"fix\": {bd.Why}");
+    }
     else if (KNOWN_GAPS.TryGetValue(name, out var g))
     {
         if (string.IsNullOrWhiteSpace(g.Owner)) Fail($"{name}: allowed gap with no owner");
@@ -257,4 +278,40 @@ static string? FindApi()
     return null;
 }
 
+// ----------------------------------------------------------------------------
+//  core.personal_ai is safe without a tenant filter only because every read
+//  pins ONE person's row (Mr. Singh, 6 Oct 2026). Asserted in source: the
+//  DbSet is used only where it is used today, and each use names a single
+//  UserId (or is the one .Add). A new file using it fails, so a new reader is
+//  read by a person before it lands - an operator list of everyone's consent,
+//  say, would be correct only behind its own check.
+// ----------------------------------------------------------------------------
+static string? PersonalAiReadsOwnRowOnly()
+{
+    string[] allowed = ["PersonalAiService.cs", "OpenAiGateway.cs"];
+    var api = FindApi();
+    if (api is null) return "cannot find apps/api from the working directory, so the own-row check did not run";
+    var uses = new List<(string File, int No, string Here)>();
+    foreach (var f in Directory.EnumerateFiles(api, "*.cs", SearchOption.AllDirectories)
+                 .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+                          && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")))
+    {
+        var lines = File.ReadAllLines(f);
+        for (var i = 0; i < lines.Length; i++)
+            if (System.Text.RegularExpressions.Regex.IsMatch(lines[i], @"\.PersonalAi\b"))
+                uses.Add((Path.GetFileName(f), i + 1, lines[i] + " " + (i + 1 < lines.Length ? lines[i + 1] : "")));
+    }
+    if (uses.Count == 0) return "found no use of db.PersonalAi at all: the own-row check is looking in the wrong place";
+    var outside = uses.Where(u => !allowed.Contains(u.File)).ToList();
+    if (outside.Count > 0)
+        return "personal_ai is used in a new place - check it reads only the caller's own row, then add the file "
+             + "to PersonalAiReadsOwnRowOnly: " + string.Join("; ", outside.Select(u => $"{u.File}:{u.No}"));
+    var unpinned = uses.Where(u => !System.Text.RegularExpressions.Regex.IsMatch(u.Here, @"\.UserId == |\.Add\(")).ToList();
+    if (unpinned.Count > 0)
+        return "a read of personal_ai that does not pin one UserId - every read must be the caller's own row: "
+             + string.Join("; ", unpinned.Select(u => $"{u.File}:{u.No}"));
+    return null;
+}
+
 record Gap(string Owner, DateOnly? Due, string Why, Func<string?>? Guard = null);
+record Design(string Owner, string Why, Func<string?>? Guard = null);

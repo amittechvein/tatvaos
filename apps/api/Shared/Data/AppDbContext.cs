@@ -288,6 +288,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<PersonalAiConsent>().ToTable("personal_ai", "core");
         b.Entity<PersonalAiConsent>().HasKey(a => a.UserId);
         b.Entity<ConnectCapacityRefusal>().ToTable("capacity_refusals", "connect");
+        // Mr. Singh, 6 Oct 2026: it has TenantId and a reader (the host's lobby
+        // list, /api/connect, signed in), so it carries the filter like its
+        // parent ConnectMeeting. RLS (FORCE, USING + WITH CHECK) stays the second net.
+        b.Entity<ConnectCapacityRefusal>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<AddressHold>().ToTable("address_holds", "core");
         b.Entity<AddressHold>().HasKey(h => h.Address);
         b.Entity<PurgeLeftover>().ToTable("personal_purge_leftovers", "core");
