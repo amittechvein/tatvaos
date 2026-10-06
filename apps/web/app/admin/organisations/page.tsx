@@ -374,7 +374,7 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
 
       <Field label="Plan">
         <Select value={planId} onChange={(e) => setPlanId(e.target.value)}>
-          {plans.map((p) => (
+          {plans.filter((p) => p.audience !== 'personal').map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
               {p.maxUsers ? ` — up to ${p.maxUsers} people` : ' — unlimited people'}

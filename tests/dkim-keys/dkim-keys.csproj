@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The DKIM key files on the signing volume.
+
+    This test references the API PROJECT rather than compiling one file,
+    because DkimKeyService is wired to EF and tenancy and cannot be lifted
+    out. What it proves is the part that has no database in it: that
+    ForgetKeys actually deletes what OpenDKIM reads.
+
+    Written 24 September 2026, after finding that removing a domain left its
+    key behind and the platform went on signing for abc.com.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>TatvaOS.Tests.DkimKeys</RootNamespace>
+    <AssemblyName>dkim-keys-test</AssemblyName>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../apps/api/TatvaOS.Api.csproj" />
+  </ItemGroup>
+
+</Project>

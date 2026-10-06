@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Shared.Auth;
 using TatvaOS.Api.Shared.Data;
+using TatvaOS.Api.Shared.Mail;
 using TatvaOS.Api.Shared.Tenancy;
 
 namespace TatvaOS.Api.Modules.Admin.Endpoints;
@@ -111,6 +112,8 @@ public static class SharedMailboxEndpoints
         if (await db.Mailboxes.AnyAsync(m => m.Address == address, ct)
             || await db.Aliases.AnyAsync(a => a.Address == address && a.IsActive, ct))
             return Results.BadRequest(new { error = $"{address} is already in use." });
+        if (await RetiredAddresses.IsHeldAsync(db, address, ct))
+            return Results.BadRequest(new { error = RetiredAddresses.Held(address) });
 
         var quota = await storage.ResolveQuotaAsync(
             tenant.TenantId, null, req.QuotaBytes, "mail", ct);
@@ -165,6 +168,7 @@ public static class SharedMailboxEndpoints
         if (box is null) return Results.NotFound();
 
         box.IsActive = false;
+        await RetiredAddresses.RetireAsync(db, box.Address, box.TenantId, "shared_mailbox_deactivated", null, ct);
 
         var grants = await db.MailboxPermissions.Where(p => p.MailboxId == id).ToListAsync(ct);
         db.MailboxPermissions.RemoveRange(grants);

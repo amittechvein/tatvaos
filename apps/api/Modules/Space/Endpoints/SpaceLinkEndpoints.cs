@@ -121,7 +121,8 @@ public static partial class SpaceLinkEndpoints
 
     private static async Task<IResult> CreateLinkAsync(
         Guid id, CreateLinkRequest req, AppDbContext db, TenantContext tenant,
-        AuditWriter audit, IConfiguration config, CancellationToken ct)
+        AuditWriter audit, IConfiguration config,
+        TatvaOS.Api.Shared.Plans.EffectiveSettings plans, CancellationToken ct)
     {
         if (!TryCaller(tenant, out var uid)) return Results.Unauthorized();
 
@@ -131,7 +132,18 @@ public static partial class SpaceLinkEndpoints
         if (req.MaxDownloads is < 1)
             return Error(400, "maxDownloads must be at least 1.");
 
-        if (!await PublicLinksAllowedAsync(db, ct))
+        // A personal account: their PLAN decides (build plan §2.3, §4.6) —
+        // off on Free, because free file hosting with public links is the
+        // easiest way to spread malware under our name. Links made before a
+        // downgrade keep working (D4: nothing is taken away); new ones wait.
+        // An organisation: its own switch, as before.
+        var mine = await plans.ForUserAsync(uid, ct);
+        if (mine is { Personal: true })
+        {
+            if (!mine.Has("space.public_links"))
+                return Error(403, "Public links are part of Basic and Premium.");
+        }
+        else if (!await PublicLinksAllowedAsync(db, ct))
             return Error(403, "Public links are turned off for your organisation.");
 
         // Same level rule as shares: owner on personal, edit on organisational.
