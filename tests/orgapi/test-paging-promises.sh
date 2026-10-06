@@ -102,18 +102,20 @@ for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
 [ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 [ -n "$(PG "SELECT 1")" ] || { fail "psql does not answer"; exit 1; }
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long" ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-# CALIBRATION OF CHECK 3 (Mr. Singh, 21 Sept 2026: "never falsified" is the weakest
-# thing in the pack). connect.meetings has NO tenant filter in the application -
-# no EF query filter on the entity, no tenant condition in the timetable query.
-# Row-level security in Postgres is the ONLY layer. So the mutation that can make
-# check 3 go red is not a code change: run the API as a role that BYPASSES RLS.
+# CHECK 3 WITH RLS BYPASSED (Mr. Singh, 21 Sept 2026: "never falsified" is the
+# weakest thing in the pack; decision 0007).
 #   MUTATE_BYPASS_RLS=1 TATVAOS_SUPER_PW=<local postgres password> bash <this file>
-# Expected: check 3 red, the other organisation's class in the answer. Local only;
-# production's API role is tatvaos_app, which is neither superuser nor BYPASSRLS.
+# runs the API as a role that BYPASSES row-level security, so the database's
+# layer is gone and only the application's remains.
+#   Before 0007 step one (no EF filter on ConnectMeeting): check 3 went RED, the
+#   other organisation's class in the answer — RLS was the only layer.
+#   From 0007 step one (HasQueryFilter on ConnectMeeting): check 3 must stay
+#   GREEN. Red here now means the application's layer is missing again.
+# Local only; production's API role is tatvaos_app, neither superuser nor BYPASSRLS.
 DB_USER="tatvaos_app"; DB_PW="dev_app_pw"
 if [ "${MUTATE_BYPASS_RLS:-0}" = "1" ]; then
     DB_USER="postgres"; DB_PW="${TATVAOS_SUPER_PW:?set TATVAOS_SUPER_PW to the LOCAL postgres password}"
-    printf "  *** MUTATION: the API runs as a role that BYPASSES row-level security. Check 3 SHOULD FAIL. ***
+    printf "  *** RLS BYPASSED: the API runs as a role that skips row-level security. Only the EF filter (0007) guards check 3; it must stay green. ***
 "
 fi
 export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=$DB_USER;Password=$DB_PW;Pooling=true"

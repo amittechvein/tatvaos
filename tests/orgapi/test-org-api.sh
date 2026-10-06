@@ -216,7 +216,7 @@ KEY=$(jq_ "$(body "$r")" "d['key']"); KEY_ID=$(jq_ "$(body "$r")" "d['id']")
 [ "${KEY:0:4}" = "tvk_" ] && pass "the key has the tvk_ prefix" || fail "key prefix: ${KEY:0:4}"
 [ "$(jq_ "$(body "$r")" "d['keyPrefix']")" = "${KEY:0:12}" ] && pass "the visible prefix is the first 12 characters" || fail "keyPrefix wrong"
 r=$(curl -s "$API/api/org/keys" -H "Authorization: Bearer $TOKEN")
-printf '%s' "$r" | grep -qF -- "$KEY" && fail "the list carries the key itself" || pass "the list never carries the key"
+grep -qF -- "$KEY" <<< "$r" && fail "the list carries the key itself" || pass "the list never carries the key"
 [ "$(PG "SELECT key_hash <> '$KEY' FROM core.api_keys WHERE id='$KEY_ID'")" = "t" ] && pass "stored hashed, not in the clear" || fail "the key is stored in the clear"
 r=$(post "$API/api/org/keys" "$TOKEN" "{\"label\":\"Bad $RUN\",\"scopes\":[\"people:everything\"]}")
 [ "$(status "$r")" = "400" ] && pass "an unknown scope is refused, not ignored" || fail "unknown scope answered $(status "$r")"
@@ -286,7 +286,7 @@ n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='org.api_person_admitt
 [ "${n:-0}" -ge 1 ] && pass "the admission is recorded against the key" || fail "no audit row naming the key"
 n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='org.api_key_created' AND target_id='$KEY_ID'")
 [ "${n:-0}" -ge 1 ] && pass "so is the key's creation" || fail "no audit row for the key"
-printf '%s' "$(PG "SELECT coalesce(string_agg(after_state::text,' '),'') FROM core.audit_logs WHERE action LIKE 'org.api%'")" | grep -qF -- "$KEY" && fail "the key itself is in the audit trail" || pass "and the key itself appears nowhere in it"
+grep -qF -- "$KEY" <<< "$(PG "SELECT coalesce(string_agg(after_state::text,' '),'') FROM core.audit_logs WHERE action LIKE 'org.api%'")" && fail "the key itself is in the audit trail" || pass "and the key itself appears nowhere in it"
 
 step "9. Nothing secret in the API log"
 n=$(grep -c -F -- "$KEY" "$LOG"); [ "$n" -eq 0 ] && pass "the key appears nowhere in the API log" || fail "the key appears $n time(s) in the log"

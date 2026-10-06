@@ -340,6 +340,35 @@ export default function Stage({ seat, meeting, prefs }: {
   // rather than reusing `error`, because a promotion rendered in the red
   // failure banner reads as a problem.
   const [notice, setNotice] = useState<string | null>(null);
+  // The last capacity refusal the host was told about (undefined = not yet polled).
+  const lastCapacityRef = useRef<string | null | undefined>(undefined);
+
+  // ── A personal host's time limit (build plan §4.5). ─────────────────
+  // Warned at ten and at five minutes before the end — 50 and 55 on Free's
+  // 60 — for everyone in the room. The server ENDS it at the limit
+  // (PersonalMeetingLimitWorker); this only makes that no surprise. Counted
+  // from the meeting's start, or from this browser joining if the room had
+  // not reported its start yet when the meeting row was read.
+  const joinedAtRef = useRef(Date.now());
+  const warnedRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const max = meeting?.planLimits?.maxMinutes;
+    if (!max) return;
+    const started = meeting?.startedAt ? Date.parse(meeting.startedAt) : joinedAtRef.current;
+    const check = () => {
+      const left = max - (Date.now() - started) / 60000;
+      for (const at of [10, 5]) {
+        if (left <= at && left > 0 && !warnedRef.current.has(at)) {
+          warnedRef.current.add(at);
+          const whole = Math.max(1, Math.ceil(left));
+          setNotice(`This meeting ends in ${whole} ${whole === 1 ? 'minute' : 'minutes'} — the host's plan allows ${max} minutes.`);
+        }
+      }
+    };
+    check();
+    const t = setInterval(check, 15000);
+    return () => clearInterval(t);
+  }, [meeting?.planLimits?.maxMinutes, meeting?.startedAt]);
   // Which mute-all is in flight, so neither button can be pressed twice.
   const [mutingAll, setMutingAll] = useState<'guests' | 'everyone' | null>(null);
   // A role change announced in the room after this browser joined. The meeting
@@ -1198,6 +1227,17 @@ export default function Stage({ seat, meeting, prefs }: {
         const r = await connectApi.lobby(authedFetch, meeting.id);
         if (!alive) return;
         setKnocking(r.waiting);
+
+        // Someone turned away because this personal host's meeting is full
+        // (build plan §4.5): told once per new refusal, not on every poll.
+        if (r.capacity && r.capacity.lastAt !== lastCapacityRef.current) {
+          const first = lastCapacityRef.current === undefined;
+          lastCapacityRef.current = r.capacity.lastAt;
+          // The first poll only learns what already happened, like the knocks.
+          if (!first) setNotice(r.capacity.notice);
+        } else if (!r.capacity && lastCapacityRef.current === undefined) {
+          lastCapacityRef.current = null;
+        }
 
         // ── THE KNOCK TONE, AND WHY THE FIRST POLL IS SILENT. ───────────
         //
@@ -2678,8 +2718,18 @@ export default function Stage({ seat, meeting, prefs }: {
           </button>
         </>
       )}
+      {/* A personal host whose plan has no recording (build plan §4.5): the
+          button says Premium and does nothing. The server refuses the start
+          regardless of what a browser sends. */}
+      {isHost && meeting && !recOff && !isPrivate && meeting.planLimits && !meeting.planLimits.recording && (
+        <button type="button" className="cx-btn cx-btn--rec" disabled
+                title="Recording is part of Premium.">
+          <i className="ri-record-circle-line" />
+          Record · Premium
+        </button>
+      )}
       {/* Recording. The long comment above this Host section is about THIS button. */}
-      {isHost && meeting && !recOff && !isPrivate && (
+      {isHost && meeting && !recOff && !isPrivate && !(meeting.planLimits && !meeting.planLimits.recording) && (
         <>
           <button type="button" className={`cx-btn cx-btn--rec ${recording ? 'is-rec' : ''}`}
                   onClick={() => {
