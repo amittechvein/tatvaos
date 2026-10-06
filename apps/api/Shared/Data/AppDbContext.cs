@@ -99,6 +99,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<PersonalSignup> PersonalSignups => Set<PersonalSignup>();
     public DbSet<PersonalSignupAttempt> PersonalSignupAttempts => Set<PersonalSignupAttempt>();
     public DbSet<PersonalAccount> PersonalAccounts => Set<PersonalAccount>();
+    /// <summary>Platform-wide by design: one trial per phone, across every account ever.</summary>
+    public DbSet<AiTrial> AiTrials => Set<AiTrial>();
 
     // ---- mail ----
     public DbSet<Mailbox> Mailboxes => Set<Mailbox>();
@@ -273,6 +275,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<PersonalSignupAttempt>().ToTable("personal_signup_attempts", "core");
         b.Entity<PersonalAccount>().ToTable("personal_accounts", "core");
         b.Entity<PersonalAccount>().HasKey(a => a.UserId);
+        b.Entity<AiTrial>().ToTable("ai_trials", "core");
+        b.Entity<AiTrial>().HasKey(t => t.PhoneHash);
         // Declared so EF orders the INSERTs: the user and this row are saved
         // in one SaveChanges, and an undeclared FK lets EF write this first.
         b.Entity<PersonalAccount>().HasOne<User>().WithOne()
