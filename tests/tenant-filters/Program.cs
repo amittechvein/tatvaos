@@ -58,25 +58,10 @@ using TatvaOS.Api.Shared.Tenancy;
 // a new entity pass: give the entity its filter.
 //
 // Dates proposed by the lane on 27 Sept, for Mr. Singh to confirm or move.
-var S2 = new DateOnly(2026, 10, 31);   // 0007 step two
 var CAL = new DateOnly(2026, 10, 31);  // calendar / mail filters
 var KNOWN_GAPS = new Dictionary<string, Gap>
 {
-    // Connect: decision 0007 step two (child tables get tenant_id, then filters).
-    ["ConnectCaptionLine"] = new("Connect", S2, "0007 step two"),
-    ["ConnectLobbyRequest"] = new("Connect", S2, "0007 step two"),
-    ["ConnectMeetingBlock"] = new("Connect", S2, "0007 step two"),
-    ["ConnectMeetingChat"] = new("Connect", S2, "0007 step two"),
-    ["ConnectMeetingEvent"] = new("Connect", S2, "0007 step two"),
-    ["ConnectMeetingInvitation"] = new("Connect", S2, "0007 step two (has tenant_id; filter only)"),
-    ["ConnectMeetingNotes"] = new("Connect", S2, "0007 step two"),
-    ["ConnectParticipant"] = new("Connect", S2, "0007 step two"),
-    ["ConnectRecording"] = new("Connect", S2, "0007 step two"),
-    ["ConnectRecordingAccess"] = new("Connect", S2, "0007 step two (has tenant_id; filter only)"),
-    ["ConnectRecordingShare"] = new("Connect", S2, "0007 step two (has tenant_id; filter only)"),
-    ["ConnectRecordingShareGrant"] = new("Connect", S2, "0007 step two (has tenant_id; filter only)"),
-    ["ConnectTenantSettings"] = new("Connect", S2, "0007 step two (has tenant_id; filter only)"),
-    ["ConnectTranscript"] = new("Connect", S2, "0007 step two"),
+    // Connect: all fourteen closed by 0007 step two (28 Sept 2026).
 
     // Found by this test on its first run, 25 Sept 2026, outside Connect.
     ["CalendarCalendar"] = new("Mail (calendar)", CAL, "RLS forced"),
