@@ -96,6 +96,8 @@ interface PlanForm {
   maxDomains: string;
   pricingModel: PricingModel;
   price: string;
+  /** Yearly price; '' = twelve times the monthly price. */
+  yearlyPrice: string;
   products: Record<string, boolean>;
   /** AI credits a month — empty = no limit, 0 = none (the same rule as every AI limit). */
   aiCreditModel: StorageModel;
@@ -117,6 +119,7 @@ function blankForm(catalogue: ProductRow[]): PlanForm {
     maxDomains: '',
     pricingModel: 'per_user',
     price: '',
+    yearlyPrice: '',
     aiCreditModel: 'pooled',
     aiCredits: '',
     products: catalogue.length
@@ -151,6 +154,10 @@ function formFromPlan(p: PlanRow, catalogue: ProductRow[]): PlanForm {
     price:
       pricingModel === 'per_user' ? String(p.pricePerUserMonthly)
       : pricingModel === 'flat' ? String(p.priceMonthly)
+      : '',
+    yearlyPrice:
+      pricingModel === 'per_user' && p.pricePerUserYearly != null ? String(p.pricePerUserYearly)
+      : pricingModel === 'flat' && p.priceYearly != null ? String(p.priceYearly)
       : '',
     // The union of what the UI knows about and what this plan already grants,
     // so an unrecognised product still shows up as a ticked box rather than
@@ -224,6 +231,8 @@ function toBody(f: PlanForm, features: FeatureRow[]): UpsertPlanBody {
     includedProducts: Object.entries(f.products).filter(([, on]) => on).map(([k]) => k),
     pricePerUserMonthly: f.pricingModel === 'per_user' ? Number(f.price) : null,
     priceMonthly: f.pricingModel === 'flat' ? Number(f.price) : null,
+    pricePerUserYearly: f.pricingModel === 'per_user' && f.yearlyPrice.trim() !== '' ? Number(f.yearlyPrice) : null,
+    priceYearly: f.pricingModel === 'flat' && f.yearlyPrice.trim() !== '' ? Number(f.yearlyPrice) : null,
     // Only the amount for the chosen model is sent, like storage above.
     aiCreditModel: f.aiCreditModel,
     aiCreditsPerUser: f.aiCreditModel === 'per_user' && f.aiCredits.trim() !== '' ? Number(f.aiCredits) : null,
@@ -455,9 +464,16 @@ function PlanCard({ plan: p, features, onEdit, onDelete }: {
           <Feature>{p.maxDomains ? `${p.maxDomains} domain${p.maxDomains > 1 ? 's' : ''}` : 'Unlimited domains'}</Feature>
         )}
         <Feature>
-          {p.aiCreditModel === 'per_user'
-            ? p.aiCreditsPerUser != null ? `${p.aiCreditsPerUser.toLocaleString('en-IN')} AI credits per user / month` : 'AI credits: no limit'
-            : p.aiCreditsPooled != null ? `${p.aiCreditsPooled.toLocaleString('en-IN')} AI credits pooled / month` : 'AI credits: no limit'}
+          {/* Mr. Singh on PR 313 (28 Sept 2026): until Amit sets Premium's own
+              number, a personal plan gets the same AI allowance as the trial —
+              which today has no per-person figure; only the platform's
+              monthly AI ceiling for the whole personal house applies. The
+              table says so rather than "no limit". */}
+          {p.audience === 'personal' && (p.aiCreditModel === 'per_user' ? p.aiCreditsPerUser : p.aiCreditsPooled) == null
+            ? 'AI: the same as the AI trial until a number is set here (no per-person allowance yet; the monthly AI ceiling for all personal accounts applies)'
+            : p.aiCreditModel === 'per_user'
+              ? p.aiCreditsPerUser != null ? `${p.aiCreditsPerUser.toLocaleString('en-IN')} AI credits per user / month` : 'AI credits: no limit'
+              : p.aiCreditsPooled != null ? `${p.aiCreditsPooled.toLocaleString('en-IN')} AI credits pooled / month` : 'AI credits: no limit'}
         </Feature>
         <Feature><span className="capitalize">{p.includedProducts.join(', ') || 'mail'}</span></Feature>
         <Feature>
@@ -721,6 +737,15 @@ function PlanFormModal({
                      aria-label={form.pricingModel === 'per_user' ? 'Price per user per month' : 'Price per month'}
                      placeholder={form.pricingModel === 'per_user' ? 'per user, per month' : 'per month'}
                      onChange={(e) => set('price', e.target.value)} />
+            </div>
+          )}
+          {form.pricingModel !== 'custom' && (
+            <div className="mt-2">
+              <Input type="number" min={0} value={form.yearlyPrice}
+                     aria-label={form.pricingModel === 'per_user' ? 'Price per user per year' : 'Price per year'}
+                     placeholder={`Yearly: empty = 12 × monthly${Number(form.price) > 0 ? ` (₹${(Number(form.price) * 12).toLocaleString('en-IN')})` : ''}`}
+                     onChange={(e) => set('yearlyPrice', e.target.value)} />
+              <p className="mt-1 text-xs text-ink-muted">Prices are before GST. Invoices add 18%.</p>
             </div>
           )}
         </div>

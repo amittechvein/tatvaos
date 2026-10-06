@@ -215,6 +215,17 @@ public static class UserEndpoints
             .ToListAsync(ct);
         var usageByUser = usageRows.ToDictionary(r => r.UserId);
 
+        // Decision 0009: administrator changes in flight, and suspended administrators.
+        var changes = (await db.RecoveryEmailChanges.AsNoTracking()
+            .Where(c => ids.Contains(c.UserId) && (c.Status == "pending" || c.Status == "held"))
+            .Select(c => new { c.UserId, c.Status, c.NewEmail, c.HoldUntil })
+            .ToListAsync(ct))
+            .ToDictionary(c => c.UserId);
+        var suspendedAdmins = (await db.RecoveryAdminSuspensions.AsNoTracking()
+            .Where(x => ids.Contains(x.AdminUserId) && x.ClearedAt == null)
+            .Select(x => x.AdminUserId)
+            .ToListAsync(ct)).ToHashSet();
+
         var boxByUser = boxes.GroupBy(b => b.UserId).ToDictionary(g => g.Key, g => g.First());
         var productsByUser = access.GroupBy(a => a.UserId)
             .ToDictionary(g => g.Key, g => g.Select(a => a.ProductCode).ToArray());
@@ -245,7 +256,12 @@ public static class UserEndpoints
                     ? null
                     : new InvitationInfo(inviteState, r.InviteSentAt, Mask.Email(r.RecoveryEmail)),
                 r.HasPassword,
-                !string.IsNullOrWhiteSpace(r.RecoveryEmail));
+                !string.IsNullOrWhiteSpace(r.RecoveryEmail),
+                string.IsNullOrWhiteSpace(r.RecoveryEmail) ? null : Mask.Email(r.RecoveryEmail),
+                changes.TryGetValue(r.Id, out var ch)
+                    ? new RecoveryChangeInfo(ch.Status, Mask.Email(ch.NewEmail), ch.HoldUntil)
+                    : null,
+                suspendedAdmins.Contains(r.Id));
         }).ToList();
 
         return Results.Ok(list);
@@ -532,7 +548,7 @@ public static class UserEndpoints
             note = inviteToken is null
                 ? "They must change the password you typed on first sign-in."
                 : inviteDelivered == true
-                    ? $"An invitation to set their password has been sent to {Mask.Email(recoveryEmail)}." + Invitations.CheckSpamNote
+                    ? $"An invitation to set their password has been sent to {Mask.Email(recoveryEmail)}."
                     : "The invitation could not be sent. Resend it from their profile once the address is right, or set a password instead.",
         });
     }
@@ -1067,8 +1083,26 @@ public static class UserEndpoints
             return Results.BadRequest(new { error = "This person has not set a password yet. Use Resend invitation." });
         if (string.IsNullOrWhiteSpace(user.RecoveryEmail))
             return Results.BadRequest(new { error = Invitations.NoRecoveryEmail });
-        // (There is no screen yet for adding a recovery email to an existing
-        // person, so the refusal does not tell the administrator to add one.)
+
+        // Decision 0009 (Mr. Singh, 24 + 27 Sept). During a hold on an
+        // administrator's change, recovery_email is still the OLD address; a
+        // link may go there only if it was confirmed. And in any case, "an
+        // unconfirmed address is not a recovery address": a sign-in link for
+        // someone who has a password goes to a CONFIRMED address or nowhere.
+        var hold = await RecoveryEmailAdminEndpoints.ActiveHoldAsync(db, user.Id, ct);
+        if (hold is not null && !hold.HasConfirmedOld)
+            return Results.BadRequest(new
+            {
+                error = "Their recovery email was changed by an administrator and is on hold until "
+                      + $"{RecoveryEmailAdminEndpoints.HoldEndText(hold.Until)}. There is no confirmed previous "
+                      + "address to send a link to meanwhile. Use Reset password instead.",
+            });
+        if (user.RecoveryEmailVerifiedAt is null)
+            return Results.BadRequest(new
+            {
+                error = "Their recovery email has not been confirmed, so a sign-in link has nowhere safe to go. "
+                      + "Ask them to open the confirmation link sent to it, or use Reset password instead.",
+            });
 
         var token = Invitations.Issue(user, Invitations.ChannelSignInLink);
         await db.SaveChangesAsync(ct);
@@ -1092,7 +1126,7 @@ public static class UserEndpoints
             sent = delivered,
             sentTo = Mask.Email(user.RecoveryEmail),
             note = delivered
-                ? $"A link has been sent to {Mask.Email(user.RecoveryEmail)}. It works once, for {(int)Invitations.SignInLinkLifetime.TotalHours} hours. Their current password keeps working until they use it." + Invitations.CheckSpamNote
+                ? $"A link has been sent to {Mask.Email(user.RecoveryEmail)}. It works once, for {(int)Invitations.SignInLinkLifetime.TotalHours} hours. Their current password keeps working until they use it."
                 : "The link could not be sent. Check the recovery address, or use Reset password.",
         });
     }
@@ -1117,6 +1151,17 @@ public static class UserEndpoints
                 error = "This person already has a password. Use Reset password if they have lost it.",
             });
 
+        // Decision 0009: the hold covers invitations too. During a hold the
+        // invitation may go only to a confirmed previous address.
+        var hold = await RecoveryEmailAdminEndpoints.ActiveHoldAsync(db, user.Id, ct);
+        if (hold is not null && !hold.HasConfirmedOld)
+            return Results.BadRequest(new
+            {
+                error = "Their recovery email was changed by an administrator and is on hold until "
+                      + $"{RecoveryEmailAdminEndpoints.HoldEndText(hold.Until)}. There is no confirmed previous "
+                      + "address to send an invitation to meanwhile.",
+            });
+
         var channel = Invitations.ChannelFor(user.RecoveryEmail, user.Phone);
         if (channel is null) return Results.BadRequest(new { error = Invitations.NoWayIn });
 
@@ -1136,7 +1181,7 @@ public static class UserEndpoints
             sent = delivered,
             sentTo = Mask.Email(user.RecoveryEmail),
             note = delivered
-                ? $"A new invitation has been sent to {Mask.Email(user.RecoveryEmail)}. The previous link no longer works." + Invitations.CheckSpamNote
+                ? $"A new invitation has been sent to {Mask.Email(user.RecoveryEmail)}. The previous link no longer works."
                 : "The invitation could not be sent. Check the recovery address, or set a password instead.",
         });
     }

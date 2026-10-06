@@ -70,6 +70,14 @@ const PATHS = {
   history:   'M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5M12 7v5l3.5 2',
   notes:     'M6 3h9l4 4v14H6zM15 3v4h4M9 12h6M9 16h6M9 8h3',
   record:    'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z',
+  // Docs: a page with ruled lines and a folded corner — the product mark.
+  // `notes` is Connect's minutes and stays theirs; this is its own string
+  // so restyling either cannot restyle the other.
+  doc:       'M14 3H6v18h12V7l-4-4zM14 3v4h4M9 11h6M9 14h6M9 17h4',
+  star:      'M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3z',
+  clock:     'M12 21a9 9 0 100-18 9 9 0 000 18zM12 7v5l3 2',
+  // Sheets: a page with a grid — its own string, so Docs' mark can change alone.
+  sheet:     'M14 3H6v18h12V7l-4-4zM14 3v4h4M8.5 11h7v7h-7zM8.5 14.5h7M12 11v7',
 };
 
 // ============================================================================
@@ -111,6 +119,14 @@ export const RAIL_PRODUCTS: RailProduct[] = [
   // entries were bought under that code — but the product's NAME is Space.
   { code: 'drive', label: 'Space', href: '/space/personal', icon: <Icon d={PATHS.drive} />,
     live: true, colour: '#28c76f', match: ['/space'] },
+  // Docs has NO tile yet, on purpose. It ships switched off and is turned on
+  // per organisation by the platform operator (docs.tenant_settings), and this
+  // list is the same for everyone — a tile here would lead every customer to
+  // a "not switched on" page. The tile comes back, blue (#1a73e8, not
+  // Calendar's #4285f4), in the commit that turns Docs on for everyone.
+  // Sheets, likewise: no tile. It has its own per-organisation switch
+  // (SheetsSwitch), off by default; the tile (green, #188038) comes back in
+  // the commit that turns Sheets on for everyone.
   // Being built. It stays in the grid because it is genuinely next and the
   // tile sets the expectation; products nobody has STARTED were removed —
   // a wall of greyed tiles reads as a suite that does not exist.
@@ -379,6 +395,43 @@ export function hireNav({ showTeam, showCareers = false }: { showTeam: boolean; 
 // ============================================================================
 //  Space — file storage.
 // ============================================================================
+// ============================================================================
+//  Docs — the home page's views. Real paths, for the same reason as Family's:
+//  the rail decides what is active by pathname alone.
+// ============================================================================
+export function docsNav(): NavSection[] {
+  return [
+    {
+      heading: 'Docs',
+      items: [
+        { href: '/docs', label: 'Recent', icon: <Icon d={PATHS.clock} colour="#1a73e8" /> },
+        { href: '/docs/owned', label: 'Owned by me', icon: <Icon d={PATHS.doc} colour="#0fbcf9" /> },
+        { href: '/docs/shared', label: 'Shared with me', icon: <Icon d={PATHS.sent} colour="#6C3CE9" /> },
+        { href: '/docs/starred', label: 'Starred', icon: <Icon d={PATHS.star} colour="#f5a623" /> },
+        { href: '/docs/trash', label: 'Trash', icon: <Icon d={PATHS.trash} colour="#98a2b8" /> },
+      ],
+    },
+  ];
+}
+
+// ============================================================================
+//  Sheets — the home page's views, as Docs'.
+// ============================================================================
+export function sheetsNav(): NavSection[] {
+  return [
+    {
+      heading: 'Sheets',
+      items: [
+        { href: '/sheets', label: 'Recent', icon: <Icon d={PATHS.clock} colour="#188038" /> },
+        { href: '/sheets/owned', label: 'Owned by me', icon: <Icon d={PATHS.sheet} colour="#0fbcf9" /> },
+        { href: '/sheets/shared', label: 'Shared with me', icon: <Icon d={PATHS.sent} colour="#6C3CE9" /> },
+        { href: '/sheets/starred', label: 'Starred', icon: <Icon d={PATHS.star} colour="#f5a623" /> },
+        { href: '/sheets/trash', label: 'Trash', icon: <Icon d={PATHS.trash} colour="#98a2b8" /> },
+      ],
+    },
+  ];
+}
+
 export function spaceNav(): NavSection[] {
   return [
     {

@@ -1,5 +1,4 @@
 using System.Net.Http.Headers;
-using System.Net.Mail;
 using System.Text;
 using System.Text.Json;
 using TatvaOS.Api.Shared.Settings;
@@ -48,17 +47,25 @@ public sealed class SystemMailer(
         string? unsubscribe = null)
     {
         var host = config["Smtp:Host"] ?? "postfix";
-        var port = int.TryParse(config["Smtp:Port"], out var p) ? p : 587;
+        var port = int.TryParse(config["Smtp:Port"], out var p) ? p : 10587;   // same default as MailSender
         var sender = from
                      ?? await settings.GetAsync(SettingKeys.SmtpFrom, ct)
                      ?? config["Smtp:From"] ?? "no-reply@tatvaos.com";
 
         try
         {
-            using var client = new SmtpClient(host, port);
-            using var msg = SystemMailMessage.Build(sender, to, subject, body, html, unsubscribe);
-
-            await client.SendMailAsync(msg, ct);
+            // MailKit, the same client webmail uses, for ONE reason above all:
+            // System.Net.Mail gives no way to set the EHLO name, so every
+            // system email announced itself to Postfix as the container's
+            // hostname — "Received: from fab1a52ccfd5" in a real message on
+            // 24 Sept, against webmail's "from mx.tatvaos.com". A HELO name
+            // that resolves to nothing is a spam signal on every message.
+            using var client = new MailKit.Net.Smtp.SmtpClient();
+            if (config["Mail:Host"] is { Length: > 0 } helo) client.LocalDomain = helo;
+            await client.ConnectAsync(host, port, MailKit.Security.SecureSocketOptions.None, ct);
+            var mime = SystemMailMessage.Build(sender, to, subject, body, html, unsubscribe);
+            await client.SendAsync(mime, ct);
+            await client.DisconnectAsync(true, ct);
             return true;
         }
         catch (Exception ex)
