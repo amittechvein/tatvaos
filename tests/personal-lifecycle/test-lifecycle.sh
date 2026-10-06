@@ -11,11 +11,11 @@
 #      Space file (the same bytes), contacts.vcf, calendars (.ics)
 #   2. Self-delete: the password is required; cancellable in the 7 days;
 #      nothing happens before day 7; on day 7 EVERYTHING goes — the person,
-#      mailbox and messages, Space files AND their blobs on disk, the maildir
-#      on disk, contacts, meetings they hosted — while the AI trial record
+#      mailbox and messages, Space files AND their blobs on disk (the maildir
+#      is QUEUED for the mail server's job, infra/scripts/maildir-removals.sh), contacts, meetings they hosted — while the AI trial record
 #      stays (one per phone, ever) and the audit row is written
 #   3. The address is held 90 days, then free; and held BEYOND that while a
-#      maildir leftover exists (calibrated: a file the purge could not delete)
+#      maildir leftover exists (calibrated: the job's tool "succeeds", files stay)
 #   4. Inactive: 12 months → warning, +30 days → second warning, +90 days from
 #      the first → deleted; signing in after a warning clears it (calibrated)
 #   5. Suspension: a reason is required; the person can still sign in and
@@ -69,6 +69,10 @@ status() { printf '%s' "$1" | tail -n1; }
 body()   { printf '%s' "$1" | sed '$d'; }
 run_pass() { req POST /api/admin/personal-lifecycle/run "$OP" >/dev/null; }
 login() { jq_ "$(body "$(req POST /api/auth/login "" "{\"email\":\"$1\",\"password\":\"$PW\"}")")" "d.get('accessToken') or ''"; }
+# The mail server's removal job, its two Docker calls swapped for a local stand-in.
+mr_job() {
+    TATVAOS_VMAIL="$VMAIL" MR_BATCH=100     MR_PSQL="wsl -e env PGPASSWORD=devpass psql -h localhost -U postgres -d tatvaos_personal -Atq -v ON_ERROR_STOP=1"     MR_EXPUNGE="bash tests/personal-maildir-removal/fake-doveadm.sh expunge"     MR_COUNT="bash tests/personal-maildir-removal/fake-doveadm.sh count"     bash infra/scripts/maildir-removals.sh
+}
 available() { jq_ "$(body "$(req GET "/api/join/address?name=$1" "")")" "d['available']"; }
 
 # ---------------------------------------------------------------------------
@@ -176,7 +180,13 @@ same "day 7: the person is gone" "$(PG "SELECT count(*) FROM core.users WHERE id
 same "…their mailbox and messages" "$(PG "SELECT count(*) FROM mail.mailboxes WHERE address='$A_ADDR'")|$(PG "SELECT count(*) FROM mail.messages WHERE subject='Alpha letter $RUN'")" "0|0"
 same "…their Space file row" "$(PG "SELECT count(*) FROM space.files WHERE id='$A_FILE'")" "0"
 if [ -n "$(find "$BLOBS" -name "$(basename "$A_BLOB")" 2>/dev/null)" ]; then fail "the blob is still on disk"; else pass "…and its bytes, on disk"; fi
-[ -d "$VMAIL/personal.local/$A_NAME" ] && fail "the maildir is still on disk" || pass "…the maildir, on disk"
+# The API never touches mail files (Mr. Singh, PR 319): it QUEUES the maildir,
+# and the mail server's job removes it through doveadm.
+same "the API left the maildir alone (read-only to it)" "$(find "$VMAIL/personal.local/$A_NAME" -type f | wc -l | tr -d ' ')" "1"
+same "…and queued it for the mail server" "$(PG "SELECT last_error FROM core.personal_purge_leftovers WHERE kind='maildir' AND ref='$A_ADDR'")" "queued for the mail server (infra/scripts/maildir-removals.sh)"
+mr_job >/dev/null
+same "the mail server's job: the files are gone" "$(find "$VMAIL/personal.local/$A_NAME" -type f 2>/dev/null | wc -l | tr -d ' ')" "0"
+same "…the queue row with them (the 90-day hold alone remains; C proves the rest)" "$(PG "SELECT count(*) FROM core.personal_purge_leftovers WHERE ref='$A_ADDR'")" "0"
 same "…their contacts" "$(PG "SELECT count(*) FROM family.contacts WHERE display_name='Alpha Friend $RUN'")" "0"
 same "…the meetings they hosted" "$(PG "SELECT count(*) FROM connect.meetings WHERE title='Alpha meeting $RUN'")" "0"
 same "…their calendar" "$(PG "SELECT count(*) FROM calendar.events WHERE title='Alpha event $RUN'")" "0"
@@ -244,9 +254,9 @@ same "the numbers answer (trials started counted)" "$(jq_ "$s" "d['trialsStarted
 r=$(req POST "/api/admin/personal-accounts/$C_ID/delete" "$OP" '{"reason":"test","confirmAddress":"wrong@personal.local"}')
 same "delete with the wrong address typed: refused" "$(status "$r")" "400"
 
-# The maildir calibration rides on C's deletion: a file the purge cannot remove.
-mkdir -p "$VMAIL/personal.local/$C_NAME/cur" && printf 'x' > "$VMAIL/personal.local/$C_NAME/cur/locked.eml"
-attrib +r "$(cygpath -w "$VMAIL/personal.local/$C_NAME/cur/locked.eml")" >/dev/null 2>&1 || chmod a-w "$VMAIL/personal.local/$C_NAME/cur/locked.eml"
+# The maildir calibration rides on C's deletion: the mail server's tool says it
+# worked and the files are still there.
+mkdir -p "$VMAIL/personal.local/$C_NAME/cur" && printf 'x' > "$VMAIL/personal.local/$C_NAME/cur/stuck.eml"
 r=$(req POST "/api/admin/personal-accounts/$C_ID/delete" "$OP" "{\"reason\":\"test\",\"confirmAddress\":\"$C_ADDR\"}")
 same "delete with the address typed back: scheduled" "$(status "$r")" "200"
 run_pass
@@ -254,10 +264,14 @@ same "C is gone at the next pass" "$(PG "SELECT count(*) FROM core.users WHERE i
 same "the maildir it could not delete is recorded" "$(PG "SELECT count(*) FROM core.personal_purge_leftovers WHERE kind='maildir' AND address='$C_ADDR'")" "1"
 PG "UPDATE core.address_holds SET held_until=now()-interval '1 minute' WHERE address='$C_ADDR'" >/dev/null
 same "past its 90 days, the address is STILL held (the old mail may be on disk)" "$(available "$C_NAME")" "False"
-attrib -r "$(cygpath -w "$VMAIL/personal.local/$C_NAME/cur/locked.eml")" >/dev/null 2>&1 || chmod u+w "$VMAIL/personal.local/$C_NAME/cur/locked.eml"
 run_pass
-same "the retry removes it" "$(PG "SELECT count(*) FROM core.personal_purge_leftovers WHERE address='$C_ADDR'")" "0"
-[ -d "$VMAIL/personal.local/$C_NAME" ] && fail "C's maildir still on disk" || pass "…from disk"
+same "an API pass does not retry a maildir (it is the mail server's)" "$(PG "SELECT count(*) FROM core.personal_purge_leftovers WHERE address='$C_ADDR'")|$(find "$VMAIL/personal.local/$C_NAME" -type f | wc -l | tr -d ' ')" "1|1"
+MR_FAKE_STUCK=1 mr_job >/dev/null
+same "the job's tool 'succeeds', the file stays: still queued, still held" "$(PG "SELECT count(*) FROM core.personal_purge_leftovers WHERE address='$C_ADDR'")|$(available "$C_NAME")" "1|False"
+mr_job >/dev/null
+same "the next job pass removes it" "$(PG "SELECT count(*) FROM core.personal_purge_leftovers WHERE address='$C_ADDR'")" "0"
+# doveadm expunge empties the folders and leaves them; message files are what count.
+same "…no message file left on disk" "$(find "$VMAIL/personal.local/$C_NAME" -type f 2>/dev/null | wc -l | tr -d ' ')" "0"
 same "…and only then is the address free" "$(available "$C_NAME")" "True"
 
 # ---------------------------------------------------------------------------
