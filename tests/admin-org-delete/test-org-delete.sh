@@ -391,6 +391,32 @@ same "the Space folder on disk is seen" "$(jq_ "$B" "d['spaceFolderOnDisk']")" "
 has  "the full table list is there too" "$B" "core.subscriptions.tenant_id"
 hasnt "no address of a person is in the preview" "$B" "person@$FQDN"
 
+step "8b. A refused audit line undoes the deletion (Mr. Singh on PR 355, 30 Sept)"
+# The removal and the operator's audit line commit together. The database is
+# made to refuse the "organisation.deleted" line; Delete must then fail AND
+# leave the organisation, its record and its files exactly as they were.
+# A trigger is added for this, so the step runs only on a database of its own.
+if [ -z "${TDB_NAME:-}" ]; then
+    fail "step 8b adds a trigger and runs only on a throwaway database (tests/lib/throwaway-db.sh): NOT run"
+else
+    PG "CREATE OR REPLACE FUNCTION public.zz_refuse_delete_audit() RETURNS trigger LANGUAGE plpgsql AS \$\$ BEGIN RAISE EXCEPTION 'test: audit refused'; END \$\$" >/dev/null
+    PG "CREATE TRIGGER zz_refuse_delete_audit BEFORE INSERT ON core.audit_logs FOR EACH ROW WHEN (NEW.action = 'platform:organisation.deleted') EXECUTE FUNCTION public.zz_refuse_delete_audit()" >/dev/null
+    same "the refusing trigger is in place" "$(PG "SELECT count(*) FROM pg_trigger WHERE tgname='zz_refuse_delete_audit'")" "1"
+    REFUSALS0=$(grep -c "test: audit refused" "$LOG")
+    r=$(callm POST "$DEL" "$OPERATOR" "$GOOD")
+    same "Delete with its audit line refused: fails (500)" "$(status "$r")" "500"
+    # It must be THAT refusal, not another (on 6 Oct a TVD09 refusal made this
+    # step pass for the wrong reason).
+    [ "$(grep -c "test: audit refused" "$LOG")" -gt "$REFUSALS0" ]         && pass "…and it failed because the audit line was refused"         || fail "…but NOT because the audit line was refused: $(grep -o 'TVD[0-9]*: [^.]*' "$LOG" | tail -1)"
+    same "…the organisation is still there" "$(PG "SELECT count(*) FROM core.tenants WHERE id='$ORG'")" "1"
+    same "…with its people" "$(PG "SELECT count(*) FROM core.users WHERE tenant_id='$ORG'")" "1"
+    same "…no deletion record was kept" "$(PG "SELECT count(*) FROM core.organisation_deletions")" "$RECORDS0"
+    there "…its recording is still on disk (files go only after the commit)" "$SCRATCH/recordings/del-$RUN.mp4"
+    there "…and its Space file" "$SCRATCH/blobs/$ORG/2026/09/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    PG "DROP TRIGGER zz_refuse_delete_audit ON core.audit_logs" >/dev/null
+    same "the trigger is gone again" "$(PG "SELECT count(*) FROM pg_trigger WHERE tgname='zz_refuse_delete_audit'")" "0"
+fi
+
 step "9. Deleted"
 r=$(callm POST "$DEL" "$OPERATOR" "$GOOD"); B=$(body "$r")
 same "delete answers 200" "$(status "$r")" "200"
@@ -407,8 +433,15 @@ same "its job opening, location and designation" \
 same "its own audit log" "$(PG "SELECT count(*) FROM core.audit_logs WHERE tenant_id='$ORG'")0" "00"
 same "its sign-up draft" "$(PG "SELECT count(*) FROM core.signup_drafts WHERE org_name='$NAME'")0" "00"
 same "Techvein's grant to its person (no foreign key)" "$(PG "SELECT count(*) FROM connect.recording_share_grants WHERE subject_tenant_id='$ORG' OR subject_user_id='$PERSON'")0" "00"
-same "nothing anywhere names it, except the one line kept on purpose" \
-    "$(PG "SELECT core.organisation_row_counts('$ORG')::text")" '{"connect.recording_access_log.subject_tenant_id": 1}'
+# What is left on purpose: the line in Techvein's access log (above), and
+# PR 326's hold on the person's address, which must outlive the organisation
+# so nobody new is handed the old mail from disk.
+LEFT=$(PG "SELECT core.organisation_row_counts('$ORG')::text")
+has   "nothing anywhere names it except what is kept on purpose: Techvein's access-log line" "$LEFT" '"connect.recording_access_log.subject_tenant_id": 1'
+has   "…and the address hold (PR 326)" "$LEFT" '"core.retired_addresses.tenant_id": 1'
+same  "…and nothing else" "$(PG "SELECT (core.organisation_row_counts('$ORG') - 'connect.recording_access_log.subject_tenant_id' - 'core.retired_addresses.tenant_id')::text")" '{}'
+same  "the person's address is held, so it cannot be given to anyone new" \
+    "$(PG "SELECT count(*) FROM core.retired_addresses WHERE address='person@$FQDN' AND released_at IS NULL")" "1"
 
 step "10. Everybody else is untouched"
 same "Techvein's people" "$(PG "SELECT count(*) FROM core.users WHERE tenant_id='$TECHVEIN'")" "$USERS_TV"

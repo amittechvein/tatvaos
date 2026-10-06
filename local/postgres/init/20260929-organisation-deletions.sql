@@ -435,11 +435,22 @@ BEGIN
     -- 4. Everything else, by cascade.
     DELETE FROM core.tenants WHERE id = p_tenant;
 
-    -- 5. Did it all go? ONE column is left on purpose and not counted:
-    --    another organisation's access log, where a line says one of these
-    --    people opened THAT organisation's recording (above).
+    -- 5. Did it all go? TWO columns are left on purpose and not counted:
+    --    * another organisation's access log, where a line says one of these
+    --      people opened THAT organisation's recording (above);
+    --    * core.retired_addresses (PR 326): when the cascade deletes the
+    --      organisation's mailboxes and aliases, 326's triggers write a hold
+    --      for each address, so nobody new can be handed the old owner's
+    --      mail from disk. Those rows are MEANT to outlive the organisation
+    --      ("no FK: the row must outlive the tenant", Mr. Singh's design);
+    --      deleting them here would undo exactly what they are for. They are
+    --      released by a person in the console once the mail server counts
+    --      zero files (infra/scripts/maildir-removals.sh).
+    --    Found 6 Oct 2026: 326 merged after this function was written, and
+    --    this very check refused the deletion (TVD09) until it was named here.
     v_left := core.organisation_row_counts(p_tenant)
-              - 'connect.recording_access_log.subject_tenant_id';
+              - 'connect.recording_access_log.subject_tenant_id'
+              - 'core.retired_addresses.tenant_id';
     IF v_left <> '{}'::jsonb THEN
         RAISE EXCEPTION 'Rows still name this organisation after the delete: %. Nothing was deleted. A table has no foreign key to core.tenants and is not handled in core.delete_organisation.', v_left
             USING ERRCODE = 'TVD09';

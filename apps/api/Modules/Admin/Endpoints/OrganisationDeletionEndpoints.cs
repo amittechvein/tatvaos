@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using TatvaOS.Api.Modules.Connect;
 using TatvaOS.Api.Modules.Connect.Endpoints;
+using TatvaOS.Api.Shared.Auth;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
 
@@ -59,13 +60,17 @@ public static partial class OrganisationDeletionEndpoints
     public static void MapOrganisationDeletionEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/admin/organisations/{id:guid}")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         g.MapGet("/deletion-preview", PreviewAsync);
-        g.MapPost("/delete", DeleteAsync);
+        // Its own transaction (OperatorWriteTransaction): the database removal
+        // and its audit line commit together, and only THEN are files removed
+        // from disk, which no rollback could bring back.
+        g.MapPost("/delete", DeleteAsync)
+            .WithMetadata(new OperatorWriteTransaction.ManagesOwnTransaction());
 
         var d = app.MapGroup("/api/admin/organisation-deletions")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         d.MapGet("/", ListAsync);
         d.MapPost("/{recordId:guid}/remove-files", RemoveFilesAgainAsync);
@@ -158,32 +163,51 @@ public static partial class OrganisationDeletionEndpoints
             .Where(x => x.TenantId == id).Select(x => x.Fqdn).ToListAsync(ct);
         var mailDirs = MailFoldersOnDisk(config, domains).ToArray();
 
-        // The operator's own organisation, for the audit line afterwards —
-        // read now, while nothing has changed.
+        // The operator's own organisation, where the audit line goes — read
+        // now, while nothing has changed.
         var operatorTenant = await db.Users.IgnoreQueryFilters().AsNoTracking()
             .Where(u => u.Id == actor).Select(u => (Guid?)u.TenantId).FirstOrDefaultAsync(ct);
+        if (operatorTenant is not Guid home)
+            return Results.Json(new { error = "Your own account could not be read, so the deletion could not be recorded. Nothing was deleted." },
+                statusCode: 500);
 
+        // ONE TRANSACTION: the removal and the operator's audit line commit
+        // together or not at all (Mr. Singh on PR 355, 30 Sept 2026). A refused
+        // audit line throws, the transaction rolls back, and the organisation
+        // is still there. Files come AFTER the commit: removing them first
+        // and then failing to commit would leave rows pointing at nothing.
         Guid recordId;
-        try
+        await using (var tx = await db.Database.BeginTransactionAsync(ct))
         {
-            recordId = await db.Database.SqlQuery<Guid>($"""
-                SELECT core.delete_organisation({id}, {req.TypedName}, {actor}, {req.Reason}, {mailDirs}) AS "Value"
-                """).FirstAsync(ct);
-        }
-        catch (PostgresException ex) when (ex.SqlState.StartsWith("TVD", StringComparison.Ordinal))
-        {
-            // The function's own refusals, in its own words. TVD09 is the one
-            // that matters most: rows were left behind, so NOTHING was deleted.
-            log.LogWarning("Deleting organisation {Id} was refused by the database: {State} {Message}",
-                id, ex.SqlState, ex.MessageText);
-            var status = ex.SqlState switch
+            try
             {
-                "TVD01" => 404,
-                "TVD04" => 400,
-                "TVD00" or "TVD09" or "TVD11" or "TVD12" => 500,
-                _ => 409,
-            };
-            return Results.Json(new { error = ex.MessageText, code = ex.SqlState }, statusCode: status);
+                recordId = await db.Database.SqlQuery<Guid>($"""
+                    SELECT core.delete_organisation({id}, {req.TypedName}, {actor}, {req.Reason}, {mailDirs}) AS "Value"
+                    """).FirstAsync(ct);
+            }
+            catch (PostgresException ex) when (ex.SqlState.StartsWith("TVD", StringComparison.Ordinal))
+            {
+                // The function's own refusals, in its own words. TVD09 is the one
+                // that matters most: rows were left behind, so NOTHING was deleted.
+                log.LogWarning("Deleting organisation {Id} was refused by the database: {State} {Message}",
+                    id, ex.SqlState, ex.MessageText);
+                var status = ex.SqlState switch
+                {
+                    "TVD01" => 404,
+                    "TVD04" => 400,
+                    "TVD00" or "TVD09" or "TVD11" or "TVD12" => 500,
+                    _ => 409,
+                };
+                return Results.Json(new { error = ex.MessageText, code = ex.SqlState }, statusCode: status);
+            }
+
+            tenant.EnterPlatformScope(home, actor);
+            await db.SyncTenantAsync(ct);
+            await audit.WriteAsync("organisation.deleted", "tenant", id.ToString(),
+                before: new { org.Name, org.Type, org.Status, domains = domains.Count },
+                after: new { record = recordId, reason = req.Reason }, ct: ct);
+
+            await tx.CommitAsync(ct);
         }
 
         log.LogWarning(
@@ -199,22 +223,6 @@ public static partial class OrganisationDeletionEndpoints
         {
             log.LogError(ex, "Organisation {Id} is deleted, but removing its files failed. Record {Record}: press remove-files.", id, recordId);
             files = new { error = "The files could not be removed. Press \"Remove files\" on the record." };
-        }
-
-        try
-        {
-            if (operatorTenant is Guid home)
-            {
-                tenant.EnterPlatformScope(home, actor);
-                await db.SyncTenantAsync(ct);
-                await audit.WriteAsync("organisation.deleted", "tenant", id.ToString(),
-                    before: new { org.Name, org.Type, org.Status, domains = domains.Count },
-                    after: new { record = recordId, reason = req.Reason }, ct: ct);
-            }
-        }
-        catch (Exception ex)
-        {
-            log.LogError(ex, "Organisation {Id} is deleted; the operator's audit line could not be written. Record {Record} holds the facts.", id, recordId);
         }
 
         return Results.Ok(new { deleted = true, record = recordId, name = org.Name, mailFoldersLeft = mailDirs, files });
@@ -424,10 +432,8 @@ public static partial class OrganisationDeletionEndpoints
     /// this file's own test: the database refused "an operator" it could not
     /// find). Same order as TenantMiddleware.
     /// </summary>
-    private static Guid CurrentUserId(HttpContext http) =>
-        Guid.TryParse(
-            http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
-                ?? http.User.FindFirst("sub")?.Value, out var id) ? id : Guid.Empty;
+    // The shared lookup (PR 355): NameIdentifier first, then "sub".
+    private static Guid CurrentUserId(HttpContext http) => SignedIn.UserIdOrEmpty(http);
 }
 
 /// <summary>
