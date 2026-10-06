@@ -211,25 +211,10 @@ $$;
 REVOKE ALL ON FUNCTION connect.share_access_for_user(uuid, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION connect.share_access_for_user(uuid, uuid) TO tatvaos_app;
 
--- Kept for anything that still calls it, now built on the same definition.
--- p_user_tenant is IGNORED, for the reason above; the signature stays because
--- the function has existed in production since 20260908-b.
-CREATE OR REPLACE FUNCTION connect.share_for_user(
-    p_recording_id uuid,
-    p_user_id      uuid,
-    p_user_tenant  uuid)
-RETURNS uuid
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = connect, pg_catalog
-AS $$
-    SELECT a.share_id
-      FROM connect.share_access_for_user(p_recording_id, p_user_id) a;
-$$;
-
-REVOKE ALL ON FUNCTION connect.share_for_user(uuid, uuid, uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION connect.share_for_user(uuid, uuid, uuid) TO tatvaos_app;
+-- connect.share_for_user was REMOVED on 28 Sept 2026: nothing called it, and a definer
+-- nothing calls is only a way past every isolation layer (decision 0007's
+-- definer review). 20260928-e-connect-drop-unused-definers.sql drops it
+-- from databases that still have it. Do not bring it back without a caller.
 
 
 -- ----------------------------------------------------------------------------
