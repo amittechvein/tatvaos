@@ -32,7 +32,7 @@
 set -uo pipefail
 
 PY="${TATVAOS_PYTHON:-python}"
-API="${TATVAOS_API:-http://localhost:5141}"
+API="${TATVAOS_API:-http://localhost:5297}"
 PSQL="${TATVAOS_PSQL:-wsl -e env PGPASSWORD=devpass psql -h localhost -U postgres -d tatvaos_personal -Atc}"
 MIGRATION="local/postgres/init/20260926-z-personal-plans.sql"
 TECHVEIN="11111111-1111-1111-1111-111111111111"
