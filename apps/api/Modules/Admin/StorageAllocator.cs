@@ -82,7 +82,7 @@ public sealed class StorageAllocator(AppDbContext db)
         // Seat limit comes from the plan behind the live subscription, not from
         // a column on the tenant. One place to change when a customer upgrades.
         var maxUsers = await db.Subscriptions.AsNoTracking()
-            .Where(s => s.TenantId == tenantId && (s.Status == "active" || s.Status == "trial"))
+            .Where(s => s.TenantId == tenantId && s.UserId == null && (s.Status == "active" || s.Status == "trial"))
             .Select(s => s.Plan!.MaxUsers)
             .FirstOrDefaultAsync(ct);
 

@@ -22,17 +22,17 @@ public static class PlanFeatureEndpoints
     public static void MapPlanFeatureEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/admin/features", FeaturesAsync)
-            .RequireAuthorization("SuperAdmin").WithTags("Platform administration");
+            .RequireOperator().WithTags("Platform administration");
 
         var org = app.MapGroup("/api/admin/organisations/{id:guid}")
-            .RequireAuthorization("SuperAdmin").WithTags("Platform administration");
+            .RequireOperator().WithTags("Platform administration");
         org.MapGet("/plan", PlanAsync);
         org.MapPost("/feature-overrides", CreateOverrideAsync);
         org.MapPost("/feature-overrides/{overrideId:guid}/withdraw", WithdrawOverrideAsync);
         org.MapPut("/keeps-everything", KeepsEverythingAsync);
 
         app.MapGet("/api/admin/plan-warnings", AllWarningsAsync)
-            .RequireAuthorization("SuperAdmin").WithTags("Platform administration");
+            .RequireOperator().WithTags("Platform administration");
 
         // The organisation's own view — only when the operator has switched
         // client warnings on (plans.warn_clients). Warnings, never the plan's
@@ -224,5 +224,5 @@ public static class PlanFeatureEndpoints
     }
 
     private static Guid CurrentUserId(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 }

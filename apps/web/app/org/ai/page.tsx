@@ -91,6 +91,7 @@ interface AiState {
 const FEATURE_NAMES: Record<string, string> = {
   'connect.minutes': 'Meeting minutes',
   docs: 'Docs',
+  sheets: 'Sheets',
   'platform.probe': 'Platform check',
   'mail.rewrite': 'Mail — Help me write',
   'mail.suggest': 'Mail — Suggested replies',
@@ -254,12 +255,13 @@ export default function OrgAiPage() {
           busy={saving}
         >
           <p>{state.mailDisclosure}</p>
+          {/* The approved wording (Mr. Singh, 30 Sept 2026; AiDisclosure.WhoDecides):
+              only Help me write starts on. */}
           <p className="text-ink-muted">
-            People will see Help me write in the composer, which sends only the text
-            they typed and only when they ask, and suggested replies under a message,
-            which send that message when they open it. Mail they sent, junk and
-            automated senders are never sent. Turning it off again is one click and
-            takes effect at once.
+            Help me write starts on when you turn Mail AI on; suggested replies and
+            Summarise stay off until you turn each one on below. Only an administrator
+            can turn Mail AI on or off. Turning it off is one click and takes effect
+            at once.
           </p>
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="ghost" disabled={saving} onClick={() => setConfirmMail(false)}>
@@ -345,8 +347,8 @@ function MailAiCard({
         <>
           <p className="mb-2">
             <Badge tone="ok">On</Badge>{' '}
-            Help me write rewrites a draft when asked; suggested replies appear under a
-            message when it is opened.
+            TatvaOS AI is on for Mail. Each feature below has its own switch, and
+            says what it sends.
           </p>
           <p className="text-ink-muted text-[0.75rem] mb-0">{state.mailDisclosure}</p>
 

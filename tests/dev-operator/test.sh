@@ -90,6 +90,10 @@ try:
 except Exception: print('(not JSON)')" 2>/dev/null; }
 
 export JWT_SIGNING_KEY='dev-only-key-at-least-32-characters-long'
+# PR 311: outside Development the API refuses to start without the phone-hash
+# key, as production must. This test starts Production and Staging on purpose,
+# so it supplies a test-only key, as it does the sign-in key above.
+export Personal__PhoneHashKey='test-only-phone-hash-key-at-least-32-characters'
 export ASPNETCORE_URLS="$API"
 pg_conn() { printf 'Host=%s;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true' "$1"; }
 LOOPBACK_DB="${TATVAOS_DEVOP_DB_HOST:-localhost}"
