@@ -10,6 +10,7 @@
 // deleted.
 
 import { spawn } from 'node:child_process';
+import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -296,6 +297,118 @@ try {
   const small = await priya.req('POST', `/api/issues/${id}/attachments?activity=${act1}&name=small.bin`, new Uint8Array(1024));
   check('a file that fits is still accepted', small.status === 201);
   check('usage grows by exactly that file', (await amit.req('GET', '/api/settings')).json.storage.used === before.used + 1024);
+
+  console.log('Possible duplicates (no AI)');
+  await priya.req('POST', '/api/issues', { module_id: core, submodule_id: dash, type: 'bug', title: 'Dashboard attendance chart shows wrong totals', details: 'Totals double on Mondays.', priority: 'medium' });
+  const sim = async (q) => (await priya.req('GET', '/api/similar?' + new URLSearchParams(q))).json;
+  const s1 = await sim({ title: 'attendance chart totals are wrong' });
+  check('a re-worded report finds the earlier one', s1.length >= 1 && s1[0].title === 'Dashboard attendance chart shows wrong totals', JSON.stringify(s1.map((x) => x.title)));
+  check('an unrelated title finds nothing', (await sim({ title: 'Recording download fails for long meetings' })).every((x) => !/attendance/i.test(x.title)));
+  check('one meaningful word is not enough', (await sim({ title: 'the chart' })).length === 0);
+  check('common words alone match nothing', (await sim({ title: 'the issue is not working on the page' })).length === 0);
+  check('duplicates list carries key and status', /^TV-\d{6}$/.test(s1[0].key) && !!s1[0].status_label);
+
+  console.log('Improve my report (AI) — against a fake AI server, nothing leaves this machine');
+  const seen = [];
+  let fakeMode = 'ok';
+  const fake = http.createServer((rq, rs) => {
+    let body = '';
+    rq.on('data', (c) => { body += c; });
+    rq.on('end', () => {
+      seen.push({ auth: rq.headers.authorization, path: rq.url, body });
+      if (fakeMode === 'fail') { rs.writeHead(500, { 'Content-Type': 'application/json' }); return rs.end(JSON.stringify({ error: 'SECRET-ECHO ' + body.slice(0, 50) })); }
+      if (fakeMode === 'garbage') { rs.writeHead(200, { 'Content-Type': 'application/json' }); return rs.end(JSON.stringify({ choices: [{ message: { content: 'not json at all' } }] })); }
+      let isSummary = false;
+      try { isSummary = JSON.parse(body).messages[0].content.startsWith('You summarise'); } catch {}
+      const content = isSummary ? JSON.stringify({ summary: 'Search button too small; fixed twice after a reopen; now closed.', next_step: 'Nothing: the Tester verified it.', open_questions: ['Does it also happen on phones?', 7] }) : JSON.stringify({
+        title: 'Mail search: Search button too small to see on desktop',
+        details: 'Steps to reproduce:\n1. Open Mail\nWhat happened:\nButton is tiny.\nWhat was expected:\nA visible button.\nOther notes:\nNot given — please add.',
+        type: 'bug', priority: 'urgent', area: 'TatvaOS Mail › Search', missing: ['Which browser?', 42, 'Which screen size?'],
+      });
+      rs.writeHead(200, { 'Content-Type': 'application/json' });
+      rs.end(JSON.stringify({ choices: [{ message: { content } }] }));
+    });
+  });
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+  const fakeUrl = `http://127.0.0.1:${fake.address().port}/v1`;
+  try {
+    // mail module is inactive (deactivated above) — reactivate so the area list offers it
+    await amit.req('PATCH', '/api/modules/' + mail, { active: true });
+    const improve = (c, body) => c.req('POST', '/api/ai/improve', body);
+    const draft = { title: 'search btn hard to see', details: 'in mail the search button is very small', type: 'bug', submodule_id: search };
+    check('off by default: refused, nothing sent', (await improve(priya, draft)).status === 409 && seen.length === 0);
+    // Amit, 26 Sept: people see "TatvaOS AI", never a vendor name or address.
+    const page = (await priya.req('GET', '/app.js')).text + (await priya.req('GET', '/')).text;
+    check('no vendor name anywhere on the page', !/openai|gpt/i.test(page) && /TatvaOS AI/.test(page));
+    const fresh = (await amit.req('GET', '/api/settings')).json.ai;
+    check('no address until an admin enters one', fresh.base_url_set === false && !/openai/i.test(fresh.problem));
+    check('status says not ready', (await priya.req('GET', '/api/ai/status')).json.ready === false);
+    await amit.req('PUT', '/api/settings', { ai: { enabled: true, base_url: fakeUrl, model: 'fake-model', api_key: 'test-key-123', data_location: '' } });
+    const noLoc = await improve(priya, draft);
+    check('a key with no data location is REFUSED', noLoc.status === 409 && /data location/i.test(noLoc.json.error) && seen.length === 0, noLoc.text);
+    await amit.req('PUT', '/api/settings', { ai: { base_url: 'https://api.openai.com/v1', data_location: 'India' } });
+    const wrongLoc = (await amit.req('GET', '/api/settings')).json.ai;
+    check('api.openai.com with location "India" is REFUSED (it is in the US)', wrongLoc.ready === false && /United States/.test(wrongLoc.problem), wrongLoc.problem);
+    await amit.req('PUT', '/api/settings', { ai: { base_url: fakeUrl, data_location: 'Test machine (localhost)', daily_limit: 4 } });
+    const shown = JSON.stringify((await amit.req('GET', '/api/settings')).json);
+    check('settings never return the key, the address or the model', !shown.includes('test-key-123') && !shown.includes(fakeUrl) && !shown.includes('127.0.0.1') && !shown.includes('fake-model'), shown.slice(0, 300));
+    const s2 = (await amit.req('GET', '/api/settings')).json.ai;
+    check('…but say they are saved', s2.base_url_set === true && s2.model_set === true && s2.key_set === true);
+    await amit.req('PUT', '/api/settings', { ai: { base_url: '', model: '' } });
+    check('an empty box keeps the saved value', (await amit.req('GET', '/api/settings')).json.ai.base_url_set === true && (await amit.req('GET', '/api/settings')).json.ai.model_set === true);
+    check('developer mode cannot use it', (await rahul.req('POST', '/api/ai/improve', draft)).status === 403);
+    const ok = await improve(priya, draft);
+    check('tester gets a suggestion', ok.status === 200 && /Search button too small/.test(ok.json.suggestion.title), ok.text);
+    const sent = seen.at(-1);
+    check('sent to /chat/completions with the tracker key', sent.path === '/v1/chat/completions' && sent.auth === 'Bearer test-key-123');
+    check("sent the tester's words", sent.body.includes('search button is very small'));
+    check("did NOT send the tester's name or email, or other issues", !/priya/i.test(sent.body) && !sent.body.includes('Dashboard attendance'));
+    const sg = ok.json.suggestion;
+    check('unknown priority from the AI is dropped', sg.priority === null);
+    check('area mapped to real ids only when it is one we offered', sg.area && sg.area.module_id === mail && sg.area.submodule_id === search);
+    check('non-text questions dropped', sg.missing.length === 2 && sg.missing.every((q) => typeof q === 'string'));
+    fakeMode = 'garbage';
+    check('unreadable AI answer: friendly error', (await improve(priya, draft)).status === 502);
+    fakeMode = 'fail';
+    const bad = await improve(priya, draft);
+    check('AI error: friendly message, provider body NOT passed on', bad.status === 502 && !bad.text.includes('SECRET-ECHO'), bad.text);
+    fakeMode = 'ok';
+    // 3 calls so far (ok, unreadable, error) all count; the 4th is allowed, the 5th is not.
+    check('4th call of the day still allowed', (await improve(priya, draft)).status === 200 && seen.length === 4);
+    const lim = await improve(priya, draft);
+    check('daily limit (4) reached: refused, and nothing more sent', lim.status === 429 && seen.length === 4 && /limit/.test(lim.json.error), `${lim.status} sent=${seen.length}`);
+    const withAi = (await priya.req('POST', '/api/issues', { module_id: mail, submodule_id: search, type: 'bug', title: 'Mail search: Search button too small', details: 'x', priority: 'high', ai_assisted: true })).json.id;
+    check('report records that AI helped', (await amit.req('GET', '/api/issues/' + withAi)).json.activity[0].meta.ai_assisted === true);
+    console.log('Summarise this issue (AI, developers and admins)');
+    await amit.req('PUT', '/api/settings', { ai: { daily_limit: 50 } });
+    const summ = (c) => c.req('POST', '/api/ai/summarise/' + id);
+    check('tester mode cannot summarise', (await summ(priya)).status === 403);
+    const n0 = seen.length;
+    const sm1 = await summ(rahul);
+    check('developer gets a summary', sm1.status === 200 && /fixed twice/.test(sm1.json.summary) && sm1.json.cached === false, sm1.text);
+    const sb = seen.at(-1).body;
+    check('sent: the report and its history', seen.length === n0 + 1 && sb.includes('Search button is not visible') && sb.includes('Chrome 130 on Windows'));
+    check('people appear as roles', sb.includes('Tester') && sb.includes('Developer'));
+    const userMsg = JSON.parse(sb).messages[1].content;
+    check('NOT sent: any name or email address', !/priya|rahul|amit|dev two|techvein.com|@/i.test(userMsg), userMsg.slice(0, 200));
+    check('NOT sent: file names', !/Screenshot\.png|Screen-recording\.mp4|evil\.html/.test(sb));
+    check('non-text questions dropped', sm1.json.open_questions.length === 1);
+    const sm2 = await summ(rahul);
+    check('nothing new: saved summary, no second AI call', sm2.json.cached === true && seen.length === n0 + 1 && sm2.json.summary === sm1.json.summary);
+    await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'comment', body: 'Also seen on tablets.' });
+    const sm3 = await summ(amit);
+    check('after a new comment: a fresh summary (admin may ask too)', sm3.json.cached === false && seen.length === n0 + 2 && seen.at(-1).body.includes('Also seen on tablets.'));
+    fakeMode = 'garbage';
+    await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'comment', body: 'One more note.' });
+    check('unreadable answer: friendly error', (await summ(rahul)).status === 502);
+    fakeMode = 'ok';
+    const sm4 = await summ(rahul);
+    check('…and the bad answer was not saved as the summary', sm4.json.cached === false && /fixed twice/.test(sm4.json.summary));
+    const used = (await amit.req('GET', '/api/settings')).json.ai.used_today;
+    check('summaries count toward the daily limit', used >= 8, String(used));
+    await amit.req('PUT', '/api/settings', { ai: { enabled: false } });
+    check('switching off stops it at once', (await improve(priya, draft)).status === 409 && (await summ(rahul)).status === 409);
+  } finally { fake.close(); }
 
   console.log('Rules that protect history');
   check('module with reports cannot be deleted', (await amit.req('DELETE', '/api/modules/' + mail)).status === 409);
