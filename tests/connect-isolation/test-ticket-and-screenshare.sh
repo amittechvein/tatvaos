@@ -56,16 +56,20 @@ SCRATCH="$ROOT/.tmp/ticket-walk-$$"
 mkdir -p "$SCRATCH/recordings"
 LOG="$SCRATCH/api.log"
 
+# TATVAOS_PG_DB: the database, tatvaos_mail unless set. Set it to run against a
+# fresh database of your own when other sessions' APIs share tatvaos_mail
+# (their workers take this test's rows; found 1 Oct 2026).
+PGDB="${TATVAOS_PG_DB:-tatvaos_mail}"
 WSL_KEEPALIVE=""
 if [ -z "${TATVAOS_PSQL:-}" ]; then
     if command -v wsl >/dev/null 2>&1; then
         wsl -e sleep 3600 >/dev/null 2>&1 &
         WSL_KEEPALIVE=$!
         sleep 2
-        TATVAOS_PSQL="wsl -u postgres -e psql -d tatvaos_mail -Atc"
+        TATVAOS_PSQL="wsl -u postgres -e psql -d $PGDB -Atc"
         TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-$(wsl hostname -I | tr -d ' \r\n')}"
     else
-        TATVAOS_PSQL="docker exec tv-postgres psql -U postgres -d tatvaos_mail -Atc"
+        TATVAOS_PSQL="docker exec tv-postgres psql -U postgres -d $PGDB -Atc"
         TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-localhost}"
     fi
 fi
@@ -108,7 +112,7 @@ fetch() {
 TICKET_KEY="dev-only-key-at-least-32-characters-long"   # test value, set below
 export JWT_SIGNING_KEY="$TICKET_KEY" Jwt__SigningKey="$TICKET_KEY"
 export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=$PGDB;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
 export Smtp__Host=localhost Smtp__Port=5870
 REC_DIR="$SCRATCH/recordings"
 command -v cygpath >/dev/null 2>&1 && REC_DIR_API="$(cygpath -w "$REC_DIR")" || REC_DIR_API="$REC_DIR"
@@ -139,7 +143,9 @@ step "0. The database answers ($TATVAOS_PG_HOST)"
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
 [ -n "$(PG "SELECT 1")" ] || { fail "psql does not answer"; exit 1; }
 pass "psql answers"
-same "the three test phones belong to the right people"     "$(PG "SELECT string_agg(email, ' ' ORDER BY phone) FROM core.users WHERE phone BETWEEN '+919999900001' AND '+919999900003'")"     "amit@techvein.local hr@techvein.local principal@abcschool.local"
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 
 step "1. Start the API"
 dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
@@ -203,8 +209,14 @@ cat > "$SCRATCH/forge.py" <<'PYEOF'
 import os, sys, json, time, hmac, hashlib, base64
 b = lambda x: base64.urlsafe_b64encode(x).rstrip(b"=").decode()
 t, m, r, u, e = sys.argv[1:6]
-body = b(json.dumps({"T": t, "M": m, "R": r, "U": u, "E": int(time.time()) + int(e)},
-                    separators=(",", ":")).encode())
+# "Y": the token type every body signed with Jwt:SigningKey has carried since
+# PR 346 (ConnectDownloadTicket.Type); Verify refuses any other. Without it this
+# forger's "exact copy" was no copy at all, and the control failed (6 Oct 2026,
+# CI run 37453497710). NO_TYPE=1 leaves it out, to prove that refusal.
+claims = {"T": t, "M": m, "R": r, "U": u, "E": int(time.time()) + int(e)}
+if os.environ.get("NO_TYPE") != "1":
+    claims["Y"] = "connect-download"
+body = b(json.dumps(claims, separators=(",", ":")).encode())
 print(body + "." + b(hmac.new(os.environ["KEY"].encode(), body.encode(), hashlib.sha256).digest()))
 PYEOF
 FORGE="$SCRATCH/forge.py"; command -v cygpath >/dev/null 2>&1 && FORGE="$(cygpath -w "$FORGE")"
@@ -221,6 +233,8 @@ same "signed, naming ANOTHER MEETING the organiser also made: refused (the recor
     "$(fetch "$(forge "$TECHVEIN" "$M2" "$REC" "$HOST_ID" 300)" | cut -d' ' -f1)" "404"
 same "signed, but expired: refused" \
     "$(fetch "$(forge "$TECHVEIN" "$M1" "$REC" "$HOST_ID" -5)" | cut -d' ' -f1)" "404"
+same "signed and correct in every field, but with NO token type (the shape before PR 346): refused" \
+    "$(fetch "$(NO_TYPE=1 forge "$TECHVEIN" "$M1" "$REC" "$HOST_ID" 300)" | cut -d' ' -f1)" "404"
 
 PG "DELETE FROM connect.participants WHERE id = '$PART'" >/dev/null
 same "(the colleague is removed from the meeting)" "$(PG "SELECT count(*) FROM connect.participants WHERE id = '$PART'")" "0"
@@ -248,7 +262,7 @@ track() {
 # track_room EVENT ROOMNAME -> HTTP status, for a room that is not m-<id>
 track_room() {
     local body="{\"event\":\"$1\",\"id\":\"tw-$RUN-$RANDOM\",\"createdAt\":\"$(date +%s)\",\"room\":{\"name\":\"$2\"},\"participant\":{\"identity\":\"u-walk-$RUN\"},\"track\":{\"sid\":\"TR_$RUN\",\"source\":\"SCREEN_SHARE\"}}"
-    local jwt; jwt=$(BODY="$body" SECRET="$LK_SECRET" KEY="$LK_KEY" "$PY" "$SIGNER" | tr -d "")
+    local jwt; jwt=$(BODY="$body" SECRET="$LK_SECRET" KEY="$LK_KEY" "$PY" "$SIGNER" | tr -d "\r")
     curl -s -o /dev/null -w "%{http_code}" -X POST "$API/api/connect/webhooks/livekit"         -H "Authorization: $jwt" -H "Content-Type: application/webhook+json" --data-binary "$body"
 }
 reached() { grep -c "Share enforcement, meeting $1" "$LOG" | tr -d ' '; }
@@ -276,7 +290,7 @@ same "the screen share stopping is acted on too" "$(track track_unpublished "$MS
 # multiple-sharer event above is one; two more that should not happen in life.
 logged() { grep -c -- "$1" "$LOG" | tr -d ' '; }
 same "...and the multiple-sharer event SAYS why it did nothing"     "$(logged "in meeting $MM: share mode is multiple, nothing to enforce")" "1"
-GHOST="$("$PY" -c "import uuid; print(uuid.uuid4())" | tr -d "")"
+GHOST="$("$PY" -c "import uuid; print(uuid.uuid4())" | tr -d "\r")"
 same "a screen share for a meeting that does not exist: 200, and a warning naming it"     "$(track track_published "$GHOST" SCREEN_SHARE)/$(sleep 1; logged "for meeting $GHOST ignored: no such meeting")" "200/1"
 same "a screen share in a room that is not a meeting room: 200, and a warning"     "$(track_room track_published "lobby-$RUN")/$(sleep 1; logged "the room is not a meeting room")" "200/1"
 same "no screen share was read under the wrong organisation (the error line never appears)"     "$(logged "NOT ACTED ON: the meeting exists")" "0"
