@@ -187,6 +187,63 @@ run_as postgres "
     DELETE FROM connect.meetings
      WHERE title IN ('iso-techvein','iso-school','forged-by-isolation-test');" >/dev/null 2>&1
 
+hdr "Connect's child tables carry their own tenant_id (decision 0007, step two)"
+
+# Nine tables that were isolated only by a policy joining to connect.meetings
+# for every row now carry tenant_id, set by a trigger FROM THE MEETING. Fixture
+# as postgres: a School meeting with one row in each table the trigger feeds.
+SM=$(scalar_as postgres "WITH x AS (INSERT INTO connect.meetings (tenant_id, code, title, kind, status)
+        VALUES ('$SCHOOL', 'iso-s2-$$', 'iso-s2-school', 'instant', 'active') RETURNING id) SELECT id FROM x")
+run_as postgres "
+    INSERT INTO connect.participants (meeting_id, identity, display_name, role, is_guest)
+        VALUES ('$SM', 'iso-s2-p', 'iso-s2', 'participant', true);
+    INSERT INTO connect.meeting_events (meeting_id, kind, occurred_at) VALUES ('$SM', 'room_started', now());
+    INSERT INTO connect.meeting_chat (meeting_id, client_id, identity, display_name, body) VALUES ('$SM', gen_random_uuid(), 'iso-s2-p', 'iso', 'iso-s2');
+    INSERT INTO connect.recordings (meeting_id, egress_id, mode, status, file_name) VALUES ('$SM', 'EG_iso_s2_$$', 'audio', 'ready', 'iso-s2.ogg');" >/dev/null 2>&1
+
+for t in participants lobby_requests meeting_events meeting_chat caption_lines meeting_blocks meeting_notes recordings transcripts; do
+    n=$(no_context "SELECT count(*) FROM connect.$t")
+    [ "${n:-1}" -eq 0 ] && pass "connect.$t: no tenant context returns zero rows"                         || fail "DANGEROUS: connect.$t shows ${n} row(s) with no tenant set"
+    empty=$(scalar_as tatvaos_app "SET app.tenant_id = ''; SELECT count(*) FROM connect.$t")
+    [ "${empty:-x}" = "0" ] && pass "connect.$t: empty tenant string returns zero"                             || fail "connect.$t: empty app.tenant_id returned '${empty}'"
+    there=$(scalar_as postgres "SELECT count(*) FROM connect.$t WHERE tenant_id = '$SCHOOL'")
+    leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM connect.$t WHERE tenant_id = '$SCHOOL'")
+    if [ "${there:-0}" -eq 0 ]; then
+        pass "connect.$t: (no School rows exist to leak - covered by the no-context checks)"
+    elif [ "${leak:-1}" -eq 0 ]; then
+        pass "connect.$t: Techvein sees none of ABC School's ${there} row(s)"
+    else
+        fail "LEAK: connect.$t shows ${leak} ABC School row(s) to Techvein"
+    fi
+done
+
+# The fixture really exists, row by row: it is ONE psql batch, one bad insert
+# rolls back all four (a ready recording without a file did, on the first
+# run), and then "no School rows to leak" would be every answer above.
+for t in participants meeting_events meeting_chat recordings; do
+    same_n=$(scalar_as postgres "SELECT count(*) FROM connect.$t WHERE meeting_id = '$SM' AND tenant_id = '$SCHOOL'")
+    [ "${same_n:-0}" -eq 1 ] && pass "connect.$t: the trigger gave the School fixture row the School's tenant_id"                              || fail "connect.$t: the School fixture row is missing or has the wrong tenant_id (got '${same_n}')"
+done
+
+# A writer cannot choose tenant_id: the trigger takes it from the meeting.
+run_as postgres "INSERT INTO connect.meeting_events (meeting_id, kind, occurred_at, tenant_id)
+    VALUES ('$SM', 'participant_joined', now(), '$TECHVEIN');" >/dev/null 2>&1
+forged=$(scalar_as postgres "SELECT count(*) FROM connect.meeting_events WHERE meeting_id = '$SM' AND tenant_id = '$TECHVEIN'")
+[ "${forged:-1}" -eq 0 ] && pass "a supplied tenant_id is overwritten from the meeting (even as postgres)"                          || fail "LEAK: a child row kept a tenant_id that is not its meeting's"
+
+# Techvein cannot hang a row off ABC School's meeting: the trigger cannot see
+# the meeting under Techvein's RLS, tenant_id stays NULL, NOT NULL refuses it.
+out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    INSERT INTO connect.meeting_chat (meeting_id, client_id, identity, display_name, body) VALUES ('$SM', gen_random_uuid(), 'x', 'x', 'iso-s2-forged');" 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qiE 'null value|row-level security'; then
+    pass "Techvein cannot write a chat row into ABC School's meeting"
+else
+    fail "LEAK: Techvein wrote into ABC School's meeting ($(printf '%s' "$out" | head -c 120))"
+fi
+
+run_as postgres "DELETE FROM connect.meetings WHERE id = '$SM';" >/dev/null 2>&1
+
 hdr "Locations and designations are isolated (Hire & People, Phase 0)"
 
 # Fixture as postgres (bypasses RLS), asserted as tatvaos_app, removed at the

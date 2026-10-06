@@ -36,6 +36,12 @@ namespace TatvaOS.Api.Modules.Connect;
 /// </summary>
 public sealed class ConnectCaptionLine
 {
+    /// <summary>
+    /// Decision 0007 step two (20260928-connect-child-tenant-id.sql). Set by the
+    /// database from the row's meeting, whatever is written here - so a new row
+    /// may leave it empty. Present so the query filter can read it.
+    /// </summary>
+    public Guid TenantId { get; set; }
     public Guid Id { get; set; }
     public Guid MeetingId { get; set; }
 
