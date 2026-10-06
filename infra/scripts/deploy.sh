@@ -1002,6 +1002,15 @@ if [ "$(free_gb)" -lt 15 ]; then
     note "         the maildirs and Caddy's certificates."
 fi
 
+# The bug tracker (apps/bugs, bug.tatvaos.com) is its own compose project, but
+# its uploads — screenshots and recordings — sit on this same disk. Mr. Singh,
+# PR 301 condition 2: say how much, every deploy. Report only: an absent or
+# stopped tracker prints nothing and never affects this deploy's verdict.
+bugs_mb=$(docker exec tatvaos-bugs du -sm /data 2>/dev/null | cut -f1)
+if [ -n "$bugs_mb" ]; then
+    note "bug tracker data (volume tatvaos-bugs_bugsdata): ${bugs_mb} MB — uploads capped by BUGS_STORAGE_LIMIT_MB (default 2048)"
+fi
+
 # ---------------------------------------------------------------------------
 step "Verifying what is actually live"
 #

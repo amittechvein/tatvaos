@@ -459,7 +459,7 @@ CONSENT_ID=$(jq_ "$(body "$r")" "[c for c in d if c['clientId']=='$CID_B'][0]['i
 [ -n "$CONSENT_ID" ] && [ "$CONSENT_ID" != "None" ] && pass "application B is in the owner's list" || fail "application B missing from the consents list"
 [ "$(jq_ "$(body "$r")" "[c for c in d if c['clientId']=='$CID_A']")" = "[]" ] && pass "the REVOKED application A is not listed" || fail "revoked application still listed"
 [ "$(jq_ "$(body "$r")" "', '.join([c for c in d if c['clientId']=='$CID_B'][0]['receives'])")" = "your name, your work email address, which organisation you belong to, access to your information when you are not using the application" ] && pass "each row says in words what the application receives" || fail "receives: $(brief "$(body "$r")")"
-printf '%s' "$(body "$r")" | grep -qF -- "$SEC_B" && fail "the consents list carries a client secret" || pass "no secret in the list"
+grep -qF -- "$SEC_B" <<< "$(body "$r")" && fail "the consents list carries a client secret" || pass "no secret in the list"
 # Another person cannot remove it: HR's token, the owner's consent id.
 h=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$API/api/auth/oauth/consents/$CONSENT_ID" -H "Authorization: Bearer $TOKEN")
 [ "$h" = "404" ] && pass "another person removing it: 404, not found rather than refused" || fail "cross-person remove answered $h"
@@ -549,7 +549,7 @@ r=$(userinfo_body "$ACCESS13")
 
 # The consent screen offers the person the same words.
 r=$(curl -s "$API/api/auth/oauth/consent?client_id=$CID_C&redirect_uri=$(urlenc "$RP")&scope=openid%20profile" -H "Authorization: Bearer $OWNER_TOKEN")
-printf '%s' "$r" | grep -q "work email address" && fail "consent details mention the email this app cannot have" || pass "consent details name only what it may receive"
+grep -q "work email address" <<< "$r" && fail "consent details mention the email this app cannot have" || pass "consent details name only what it may receive"
 
 # A new secret retires the old one, at once.
 r=$(curl -s -w '\n%{http_code}' -X POST "$API/api/org/applications/$APP_C/secret" -H "Authorization: Bearer $OWNER_TOKEN")
@@ -568,7 +568,7 @@ remember "$(jq_ "$(body "$r")" "d.get('access_token','')")"; remember "$(jq_ "$(
 n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='oidc.application_secret_regenerated' AND target_id='$APP_C'")
 [ "${n:-0}" -ge 1 ] && pass "the regeneration is in the audit log" || fail "no audit row for the new secret"
 r=$(curl -s "$API/api/org/applications" -H "Authorization: Bearer $OWNER_TOKEN")
-printf '%s' "$r" | grep -qF -- "$SEC_C2" && fail "the list carries the new secret" || pass "the list still never carries a secret"
+grep -qF -- "$SEC_C2" <<< "$r" && fail "the list carries the new secret" || pass "the list still never carries a secret"
 
 # ===========================================================================
 step "14. What the application SAYS about itself, and the logo we keep"

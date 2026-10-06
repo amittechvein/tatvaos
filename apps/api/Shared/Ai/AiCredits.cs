@@ -84,7 +84,7 @@ public static class AiCredits
         if (over is int o) return new Allowance(o, "override", null, null, null, null);
 
         var sub = await db.Subscriptions.IgnoreQueryFilters().AsNoTracking()
-            .Where(s => s.TenantId == tenantId && s.Status != "cancelled")
+            .Where(s => s.TenantId == tenantId && s.UserId == null && s.Status != "cancelled")
             .OrderByDescending(s => s.StartedAt)
             .Select(s => new { s.Seats, s.Plan!.Name, s.Plan.AiCreditModel, s.Plan.AiCreditsPerUser, s.Plan.AiCreditsPooled })
             .FirstOrDefaultAsync(ct);

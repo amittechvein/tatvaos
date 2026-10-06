@@ -99,6 +99,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<PersonalSignup> PersonalSignups => Set<PersonalSignup>();
     public DbSet<PersonalSignupAttempt> PersonalSignupAttempts => Set<PersonalSignupAttempt>();
     public DbSet<PersonalAccount> PersonalAccounts => Set<PersonalAccount>();
+    /// <summary>Platform-wide by design: one trial per phone, across every account ever.</summary>
+    public DbSet<AiTrial> AiTrials => Set<AiTrial>();
+    /// <summary>A personal account's own AI switch; keyed by the person.</summary>
+    public DbSet<PersonalAiConsent> PersonalAi => Set<PersonalAiConsent>();
+    /// <summary>RLS-scoped by tenant, like every connect.* table.</summary>
+    public DbSet<ConnectCapacityRefusal> ConnectCapacityRefusals => Set<ConnectCapacityRefusal>();
+    /// <summary>Platform-wide: an address is held across every tenant.</summary>
+    public DbSet<AddressHold> AddressHolds => Set<AddressHold>();
+    public DbSet<TatvaOS.Api.Shared.Mail.RetiredAddress> RetiredAddresses => Set<TatvaOS.Api.Shared.Mail.RetiredAddress>();
+    public DbSet<PurgeLeftover> PurgeLeftovers => Set<PurgeLeftover>();
 
     // ---- mail ----
     public DbSet<Mailbox> Mailboxes => Set<Mailbox>();
@@ -273,6 +283,17 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<PersonalSignupAttempt>().ToTable("personal_signup_attempts", "core");
         b.Entity<PersonalAccount>().ToTable("personal_accounts", "core");
         b.Entity<PersonalAccount>().HasKey(a => a.UserId);
+        b.Entity<AiTrial>().ToTable("ai_trials", "core");
+        b.Entity<AiTrial>().HasKey(t => t.PhoneHash);
+        b.Entity<PersonalAiConsent>().ToTable("personal_ai", "core");
+        b.Entity<PersonalAiConsent>().HasKey(a => a.UserId);
+        b.Entity<ConnectCapacityRefusal>().ToTable("capacity_refusals", "connect");
+        b.Entity<AddressHold>().ToTable("address_holds", "core");
+        b.Entity<AddressHold>().HasKey(h => h.Address);
+        b.Entity<PurgeLeftover>().ToTable("personal_purge_leftovers", "core");
+        // Written by triggers too; the id is the database's.
+        b.Entity<TatvaOS.Api.Shared.Mail.RetiredAddress>().ToTable("retired_addresses", "core")
+            .Property(r => r.Id).ValueGeneratedOnAdd();
         // Declared so EF orders the INSERTs: the user and this row are saved
         // in one SaveChanges, and an undeclared FK lets EF write this first.
         b.Entity<PersonalAccount>().HasOne<User>().WithOne()

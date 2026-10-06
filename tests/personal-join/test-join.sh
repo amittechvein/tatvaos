@@ -44,7 +44,7 @@
 set -uo pipefail
 
 PY="${TATVAOS_PYTHON:-python}"
-API="${TATVAOS_API:-http://localhost:5141}"
+API="${TATVAOS_API:-http://localhost:5297}"
 LOG="${TATVAOS_API_LOG:-.tmp/api.log}"
 PSQL="${TATVAOS_PSQL:-wsl -e env PGPASSWORD=devpass psql -h localhost -U postgres -d tatvaos_personal -Atc}"
 MIGRATION="local/postgres/init/20260926-a-personal-join.sql"
@@ -60,7 +60,11 @@ step() { printf '\n%s>> %s%s\n' "$CYAN" "$1" "$RST"; }
 # same/has/hasnt, never a bare [ "$a" = "$b" ] on values that can both be
 # empty — empty = empty is the false green this repository keeps meeting.
 same()  { [ -n "$2" ] && [ "$2" = "$3" ] && pass "$1" || fail "$1 — wanted '$3', got '$2'"; }
-has()   { printf '%s' "$2" | grep -qF -- "$3" && pass "$1" || fail "$1 — '$3' not in: $2"; }
+# A here-string, NOT printf | grep -q: under pipefail, grep -q exits at the
+# first match, printf dies of SIGPIPE writing the rest, and the pipeline is
+# "false". On a long text with an early match that made has() FAIL with the
+# line present and hasnt() PASS with it present (3 Oct 2026, PR 386).
+has()   { grep -qF -- "$3" <<< "$2" && pass "$1" || fail "$1 — '$3' not in: $2"; }
 
 PG() { $PSQL "$1" 2>/dev/null | tr -d '\r'; }
 j() { "$PY" -c "import sys,json; d=json.load(sys.stdin); print($1)" 2>/dev/null; }

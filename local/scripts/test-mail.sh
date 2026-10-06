@@ -513,7 +513,7 @@ else
 fi
 # Only a report that RAN can be checked for addresses: a missing script's
 # error message contains no '@' either, and passed this check in the red run.
-if [ "$rep_rc" -eq 0 ] && [ -n "$rep" ] && ! printf '%s' "$rep" | grep -q '@'; then pass "the daily report prints no address"
+if [ "$rep_rc" -eq 0 ] && [ -n "$rep" ] && ! grep -q '@' <<< "$rep"; then pass "the daily report prints no address"
 else fail "the daily report printed an address, or did not run (exit $rep_rc)"; fi
 
 # The filter does not stay root (Mr. Singh, 2 Oct): it reads the owner-only
