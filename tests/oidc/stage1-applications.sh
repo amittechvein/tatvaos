@@ -79,7 +79,7 @@ r=$(get "$API/api/org/applications" "$TOKEN")
 # -F -- : the secret is a literal, and a value grep cannot parse must never
 # be able to turn this into a pass. In this shape (found && fail || pass) a
 # grep that ERRORS reads as "absent" — green with the secret sitting in the list.
-printf '%s' "$(body "$r")" | grep -qF -- "$SECRET" && fail "the list contains the secret" || pass "secret absent from the list"
+grep -qF -- "$SECRET" <<< "$(body "$r")" && fail "the list contains the secret" || pass "secret absent from the list"
 [ "$(jq_ "$(body "$r")" "[a for a in d if a['id']=='$APP'][0]['secretPrefix']")" = "${SECRET:0:10}…" ] && pass "prefix present in the list" || fail "prefix missing from the list"
 [ "$(jq_ "$(body "$r")" "[a for a in d if a['id']=='$APP'][0]['redirectUris'][0]")" = "https://payroll.example.test/callback" ] && pass "redirect URI read back through OpenIddict's manager" || fail "redirect uris: $(body "$r")"
 

@@ -492,6 +492,7 @@ services:
       PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:?PLATFORM_DOMAIN must be set}
       WEBSITE_DOMAIN: ${WEBSITE_DOMAIN:?WEBSITE_DOMAIN must be set}
       HIRE_DOMAIN: ${HIRE_DOMAIN:?HIRE_DOMAIN must be set}
+      DOCS_DOMAIN: ${DOCS_DOMAIN:?DOCS_DOMAIN must be set}
     ports:
       - "80:80"
       - "443:443"

@@ -57,3 +57,10 @@ redir @to_account https://{$ACCOUNT_DOMAIN}{uri}
     not host {$HIRE_DOMAIN}
 }
 redir @to_hire https://{$HIRE_DOMAIN}{uri}
+
+# Docs only: Sheets (/sheets) is not switched on anywhere and has no door yet.
+@to_docs {
+    path /docs /docs/*
+    not host {$DOCS_DOMAIN}
+}
+redir @to_docs https://{$DOCS_DOMAIN}{uri}

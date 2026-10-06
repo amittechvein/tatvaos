@@ -72,8 +72,30 @@ public sealed class InvoiceIssuer(AppDbContext db, SettingsReader settings)
         static string? Add(List<string> m, string what) { m.Add(what); return null; }
     }
 
+    /// <summary>What an operator is told if they try to invoice the personal house.</summary>
+    public const string NotForPersonal =
+        "Personal accounts are not invoiced here. This is the personal-accounts organisation, and its people pay for their own plans separately.";
+
+    /// <summary>The last layer: a subscription with a person on it is never invoiced.</summary>
+    private static void AssertOrganisationRow(Subscription sub)
+    {
+        if (sub.UserId is not null) throw new PersonalSubscriptionInvoiceException(sub.Id);
+    }
+
     public async Task<(Draft? Draft, string? Error)> ComposeAsync(Guid tenantId, IssueRequest req, CancellationToken ct)
     {
+        // A PERSONAL plan is never invoiced by this issuer (Mr. Singh on
+        // PR 313, 28 Sept 2026). Personal payments arrive later and
+        // separately; a personal Free row billed as an organisation would be a
+        // GST invoice to a person, for nothing. Three layers: the house is
+        // refused here; every read below takes only organisation rows
+        // (user_id IS NULL); and AssertOrganisationRow stops anything that gets
+        // past both. tests/billing-personal proves each, red first.
+        // The uncached, static check (#314 made the instance one cached and
+        // DI-built): issuing an invoice is a write path, so one indexed read.
+        if (await TatvaOS.Api.Modules.Personal.PersonalHouse.IsHouseTenantAsync(db, tenantId, ct))
+            return (null, NotForPersonal);
+
         var (seller, missing, _, terms) = await SellerAsync(ct);
         if (seller is null)
             return (null, "Fill in Techvein's billing details in Settings → Billing first: " + string.Join(", ", missing) + ".");
@@ -94,10 +116,11 @@ public sealed class InvoiceIssuer(AppDbContext db, SettingsReader settings)
         if (req.IncludePlan)
         {
             var sub = await db.Subscriptions.AsNoTracking()
-                .Where(s => s.TenantId == tenantId && s.Status != "cancelled")
+                .Where(s => s.TenantId == tenantId && s.UserId == null && s.Status != "cancelled")
                 .OrderByDescending(s => s.StartedAt)
                 .FirstOrDefaultAsync(ct);
             if (sub is null) return (null, "This organisation has no plan to bill. Choose a plan first.");
+            AssertOrganisationRow(sub);
             var plan = await db.Plans.AsNoTracking().FirstAsync(p => p.Id == sub.PlanId, ct);
 
             cycle = sub.BillingCycle;
@@ -205,8 +228,9 @@ public sealed class InvoiceIssuer(AppDbContext db, SettingsReader settings)
         if (d.IncludesPlan && d.PeriodEnd is DateOnly end)
         {
             var sub = await db.Subscriptions
-                .Where(s => s.TenantId == tenantId && s.Status != "cancelled")
+                .Where(s => s.TenantId == tenantId && s.UserId == null && s.Status != "cancelled")
                 .OrderByDescending(s => s.StartedAt).FirstAsync(ct);
+            AssertOrganisationRow(sub);
             // Midnight India time on that day, stored in UTC — Npgsql refuses any
             // other offset for timestamptz, and the refusal is a 500 on issue.
             sub.RenewsAt = new DateTimeOffset(end.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.FromHours(5.5))
@@ -218,6 +242,10 @@ public sealed class InvoiceIssuer(AppDbContext db, SettingsReader settings)
         return inv;
     }
 }
+
+public sealed class PersonalSubscriptionInvoiceException(Guid subscriptionId)
+    : Exception($"Refusing to invoice subscription {subscriptionId}: it belongs to a person (user_id is set). "
+                + "Personal plans are never invoiced by the organisation issuer.");
 
 public sealed class InvoiceNumberTooLongException(string number)
     : Exception($"The next invoice number, {number}, would be longer than GST's 16 characters. Use a shorter prefix.");

@@ -99,6 +99,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<PersonalSignup> PersonalSignups => Set<PersonalSignup>();
     public DbSet<PersonalSignupAttempt> PersonalSignupAttempts => Set<PersonalSignupAttempt>();
     public DbSet<PersonalAccount> PersonalAccounts => Set<PersonalAccount>();
+    /// <summary>Platform-wide by design: one trial per phone, across every account ever.</summary>
+    public DbSet<AiTrial> AiTrials => Set<AiTrial>();
+    /// <summary>A personal account's own AI switch; keyed by the person.</summary>
+    public DbSet<PersonalAiConsent> PersonalAi => Set<PersonalAiConsent>();
+    /// <summary>RLS-scoped by tenant, like every connect.* table.</summary>
+    public DbSet<ConnectCapacityRefusal> ConnectCapacityRefusals => Set<ConnectCapacityRefusal>();
+    /// <summary>Platform-wide: an address is held across every tenant.</summary>
+    public DbSet<AddressHold> AddressHolds => Set<AddressHold>();
+    public DbSet<TatvaOS.Api.Shared.Mail.RetiredAddress> RetiredAddresses => Set<TatvaOS.Api.Shared.Mail.RetiredAddress>();
+    public DbSet<PurgeLeftover> PurgeLeftovers => Set<PurgeLeftover>();
 
     // ---- mail ----
     public DbSet<Mailbox> Mailboxes => Set<Mailbox>();
@@ -273,6 +283,21 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<PersonalSignupAttempt>().ToTable("personal_signup_attempts", "core");
         b.Entity<PersonalAccount>().ToTable("personal_accounts", "core");
         b.Entity<PersonalAccount>().HasKey(a => a.UserId);
+        b.Entity<AiTrial>().ToTable("ai_trials", "core");
+        b.Entity<AiTrial>().HasKey(t => t.PhoneHash);
+        b.Entity<PersonalAiConsent>().ToTable("personal_ai", "core");
+        b.Entity<PersonalAiConsent>().HasKey(a => a.UserId);
+        b.Entity<ConnectCapacityRefusal>().ToTable("capacity_refusals", "connect");
+        // Mr. Singh, 6 Oct 2026: it has TenantId and a reader (the host's lobby
+        // list, /api/connect, signed in), so it carries the filter like its
+        // parent ConnectMeeting. RLS (FORCE, USING + WITH CHECK) stays the second net.
+        b.Entity<ConnectCapacityRefusal>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<AddressHold>().ToTable("address_holds", "core");
+        b.Entity<AddressHold>().HasKey(h => h.Address);
+        b.Entity<PurgeLeftover>().ToTable("personal_purge_leftovers", "core");
+        // Written by triggers too; the id is the database's.
+        b.Entity<TatvaOS.Api.Shared.Mail.RetiredAddress>().ToTable("retired_addresses", "core")
+            .Property(r => r.Id).ValueGeneratedOnAdd();
         // Declared so EF orders the INSERTs: the user and this row are saved
         // in one SaveChanges, and an undeclared FK lets EF write this first.
         b.Entity<PersonalAccount>().HasOne<User>().WithOne()
@@ -325,6 +350,24 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // Explicit schema on every one, like everything else here: a default
         // is exactly how a Mail table once silently landed in core.
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeeting>().ToTable("meetings", "connect");
+        // Decision 0007, step one: the second isolation layer. Until this line,
+        // RLS was the ONLY thing keeping one organisation's meetings from
+        // another's — run the API as a role that bypasses RLS and the Meetings
+        // API timetable returned another organisation's classes
+        // (tests/orgapi/test-paging-promises.sh, MUTATE_BYPASS_RLS=1).
+        //
+        // Every read of this set was checked before adding it (26 sites, 8
+        // files): each runs with a tenant already entered — a signed-in user,
+        // an organisation key, the guest door, the LiveKit webhook, the notes
+        // worker and the ticketed download all call EnterAnonymousScope first.
+        // TenantId THROWS when no tenant is set, so a path that reads meetings
+        // without one now fails loudly instead of quietly returning nothing.
+        //
+        // If a new path breaks on this filter, enter the tenant before the
+        // query. IgnoreQueryFilters() drops EVERY filter on that query,
+        // including ones added later — it is never the default fix (0007).
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeeting>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectParticipant>().ToTable("participants", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectLobbyRequest>().ToTable("lobby_requests", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingEvent>().ToTable("meeting_events", "connect");
@@ -383,6 +426,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .OnDelete(DeleteBehavior.NoAction);
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingAccess>().ToTable("recording_access_log", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingSharePasswordFailure>().ToTable("recording_share_password_failures", "connect");
+        // 0007: arrived without a filter; caught by tests/tenant-filters on the
+        // 27 Sept merge; walked 28 Sept (tests/connect-isolation/
+        // test-recording-share-link.sh). Its only EF read is the host's share
+        // list, in a session; the anonymous link counts failures through
+        // definer functions. With RLS bypassed and no filter, the host's count
+        // included another organisation's row (2 for 1).
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingSharePasswordFailure>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         // HasKey IS NOT OPTIONAL HERE, and leaving it out took production
         // down on 9 September. This entity's key is TenantId; EF's convention
         // only recognises `Id` or `ConnectTenantSettingsId`, so it found no

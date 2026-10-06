@@ -295,7 +295,7 @@ public static class DocsEndpoints
 
         // Where it lands and who owns it: Space's rule, not a copy of it.
         var (err, folderId, ownership, owner) =
-            await SpaceEndpoints.ResolveDestinationAsync(db, uid, req.FolderId, req.Scope ?? "personal", ct);
+            await SpaceEndpoints.ResolveDestinationAsync(db, tenant.TenantId, uid, req.FolderId, req.Scope ?? "personal", ct);
         if (err is not null) return err;
 
         // A new spreadsheet's Space copy is empty until its first checkpoint

@@ -312,7 +312,16 @@ if docker ps --format '{{.Names}}' | grep -q postgres; then
     PG=$(docker ps --format '{{.Names}}' | grep postgres | head -1)
     # Compressed on the way out — a plain dump of a mail database is mostly
     # text and gzip takes roughly 90% of it away.
-    if docker exec -t "$PG" pg_dumpall -U postgres 2>/dev/null | gzip > "${OUT}/postgres.sql.gz"; then
+    #
+    # NO TTY FLAG. Until 25 Sept 2026 this was `docker exec -t`. A TTY is for
+    # people, not data streams: it turned every line ending into CR+LF (the
+    # 14:30 set that day had 148,026 lines and 148,026 carriage returns), and
+    # a TTY has ONE output, so pg_dumpall's error messages would have gone
+    # INTO the dump instead of to 2>/dev/null. Restores still worked, because
+    # COPY accepts CR+LF (production restore drill, PR 254). Do NOT "fix" it
+    # to -T: that is a `docker compose exec` flag, and plain `docker exec -T`
+    # fails with "unknown shorthand flag" — hidden here by 2>/dev/null.
+    if docker exec "$PG" pg_dumpall -U postgres 2>/dev/null | gzip > "${OUT}/postgres.sql.gz"; then
         ok "postgres.sql.gz ($(du -h "${OUT}/postgres.sql.gz" | cut -f1))"
     else
         bad "pg_dumpall failed"; failed=1
@@ -472,7 +481,7 @@ if [ -n "${BACKUP_S3_REMOTE:-}" ] && [ -n "${BACKUP_ENC_PASSPHRASE:-}" ]; then
             # upload failed thins nothing.
             if [ "$offbox_ok" = "1" ] && [ "$TIERED" = "1" ]; then
                 listing=$(rclone lsf --files-only "$BACKUP_S3_REMOTE" 2>/dev/null)
-                if ! printf '%s\n' "$listing" | grep -qxF -- "${STAMP}.tar.gz.enc"; then
+                if ! grep -qxF -- "${STAMP}.tar.gz.enc" <<< "$listing"; then
                     # The set just uploaded must be in the listing. If it is
                     # not, the listing is wrong (failed, truncated) and must
                     # not be read as "these are all the sets there are".
