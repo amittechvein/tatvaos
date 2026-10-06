@@ -88,3 +88,51 @@ export function usePersonal(authedFetch: AuthedFetch, userId: string | undefined
   }, [authedFetch, userId]);
   return personal;
 }
+
+// ---------------------------------------------------------------------------
+//  Lifecycle (build plan §4.2, §8): delete, cancel, download, suspended.
+// ---------------------------------------------------------------------------
+
+export interface MyLifecycle {
+  deleteAfter: string | null;
+  deletionReason: 'self' | 'operator' | 'inactive' | null;
+  canCancel: boolean;
+  suspended: boolean;
+}
+
+export async function fetchLifecycle(f: AuthedFetch): Promise<MyLifecycle> {
+  const res = await f('/me/lifecycle');
+  if (!res.ok) throw new Error('Could not load your account status.');
+  return res.json();
+}
+
+async function sentence(res: Response, fallback: string): Promise<never> {
+  const body = await res.json().catch(() => ({}));
+  throw new Error(typeof body.error === 'string' ? body.error : fallback);
+}
+
+export async function requestDeletion(f: AuthedFetch, password: string): Promise<string> {
+  const res = await f('/me/delete', { method: 'POST', body: JSON.stringify({ password }) });
+  if (!res.ok) return sentence(res, 'Could not schedule the deletion.');
+  return (await res.json()).deleteAfter as string;
+}
+
+export async function cancelDeletion(f: AuthedFetch): Promise<void> {
+  const res = await f('/me/delete/cancel', { method: 'POST' });
+  if (!res.ok) return sentence(res, 'Could not cancel the deletion.');
+}
+
+/**
+ * Download my data. Signed in, the page asks for a link; the link is
+ * one-use and lasts ten minutes (the server's PersonalExportLink), and the
+ * browser simply follows it — so even a 10 GB zip streams to disk rather than
+ * being gathered in this page's memory. Once a day: the server says when.
+ */
+export async function downloadMyData(f: AuthedFetch): Promise<void> {
+  const res = await f('/me/export/link', { method: 'POST' });
+  if (!res.ok) return sentence(res, 'Could not prepare your data.');
+  const { url } = await res.json() as { url: string };
+  // NEXT_PUBLIC_API_URL ends in /api; the link is a path from the API's root.
+  const api = (process.env.NEXT_PUBLIC_API_URL ?? '/api').replace(/\/api\/?$/, '');
+  window.location.assign(`${api}${url}`);
+}

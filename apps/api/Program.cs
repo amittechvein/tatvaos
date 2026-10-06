@@ -124,6 +124,9 @@ builder.Services.AddSingleton<TatvaOS.Api.Modules.Personal.PersonalPhone>();
 // The one "what may this person have?" answer (build plan §2.5).
 builder.Services.AddScoped<TatvaOS.Api.Shared.Plans.EffectiveSettings>();
 builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalAiService>();
+// A personal account's life after signup: deletion, inactivity, suspension (§8).
+builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalLifecycle>();
+builder.Services.AddSingleton<TatvaOS.Api.Modules.Personal.PersonalExportLink>();
 // Signup's prune, hourly: an abandoned signup's plain phone number lives a
 // day at most even while /join is shut and nobody starts one (PR 311).
 builder.Services.AddHostedService<TatvaOS.Api.Modules.Personal.PersonalSignupPruneWorker>();
@@ -501,6 +504,7 @@ builder.Services.AddHostedService<ConnectNotesWorker>();
 // their plan's time; the AI trial's day-12 reminder and end note.
 builder.Services.AddHostedService<PersonalMeetingLimitWorker>();
 builder.Services.AddHostedService<PersonalTrialWorker>();
+builder.Services.AddHostedService<PersonalLifecycleWorker>();
 
 // The public-link resolve is the one anonymous, internet-reachable route
 // on the platform. Per-IP fixed window. Behind Caddy the peer address is
@@ -909,6 +913,7 @@ app.MapSignupEndpoints();
 app.MapJoinEndpoints();
 app.MapReservedUsernameEndpoints();
 app.MapPersonalPlanEndpoints();
+app.MapPersonalLifecycleEndpoints();
 app.MapSettingsEndpoints();
 app.MapDepartmentEndpoints();
 // Locations and designations: Phase 0 of Hire & People (24 Sept 2026).
