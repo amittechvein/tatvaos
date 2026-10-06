@@ -60,7 +60,6 @@ using TatvaOS.Api.Shared.Tenancy;
 // Dates proposed by the lane on 27 Sept, for Mr. Singh to confirm or move.
 var S2 = new DateOnly(2026, 10, 31);   // 0007 step two
 var CAL = new DateOnly(2026, 10, 31);  // calendar / mail filters
-var ZERO = new DateOnly(2026, 10, 15); // the zero-layer PR (departments + reminder_sends)
 var KNOWN_GAPS = new Dictionary<string, Gap>
 {
     // Connect: decision 0007 step two (child tables get tenant_id, then filters).
@@ -90,15 +89,16 @@ var KNOWN_GAPS = new Dictionary<string, Gap>
     ["MailApiSend"] = new("Mail", CAL, "RLS forced"),
     // Mr. Singh, 6 Oct 2026 (his wording). Reached main with PR 373 while this
     // test was on its branch. The database is the ONLY net here, not the second.
-    ["MailApiSendEnvelope"] = new("Mail", CAL,
+    // NO DATE, A CHECK (his second ruling that day): its safety does not decay
+    // with time but the moment someone adds a read, so EnvelopeStillWriteOnly
+    // below enforces the sentence instead of a date standing in for it.
+    ["MailApiSendEnvelope"] = new("Mail", null,
         "No EF query filter. Safe only because nothing reads it: no DbSet, one write site, "
         + "and SELECT/INSERT only. The database is not the second net here, it is the only net. "
-        + "Anyone adding a read adds the query filter in the same pull request. Dated 6 Oct 2026"),
+        + "Anyone adding a read adds the query filter in the same pull request. Dated 6 Oct 2026",
+        EnvelopeStillWriteOnly),
     ["MailAppPassword"] = new("Mail", CAL, "RLS forced"),
     ["MailboxPermission"] = new("Mail", CAL, "RLS forced"),
-    ["MfaRecoveryCode"] = new("Core (auth)", ZERO,
-        "NO RLS by design - read before the tenant is known (0024-mfa.sql); "
-        + "Mr. Singh's two questions (hashed at rest? constant-time?) open before he closes it"),
 };
 
 // ----------------------------------------------------------------------------
@@ -117,6 +117,9 @@ var BY_DESIGN = new Dictionary<string, (string Owner, string Why)>
         + "Guarded instead by: a random v4 draft id acting as the bearer token; the code hashed with that id "
         + "as salt, single-use, attempt-capped and lifetime-capped; rate limits on phone hash and IP; the "
         + "plaintext phone cleared at completion (JoinEndpoints.cs:428) and the whole row pruned after a day, hourly"),
+    // Moved from KNOWN_GAPS by Mr. Singh, 6 Oct 2026.
+    ["MfaRecoveryCode"] = ("Core",
+        "No tenant filter - by design: the code is read at redeem only, before the tenant is known (0024-mfa.sql)"),
 };
 
 var opts = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql("Host=model-only").Options;
@@ -183,8 +186,11 @@ foreach (var name in gaps.OrderBy(n => n))
     else if (KNOWN_GAPS.TryGetValue(name, out var g))
     {
         if (string.IsNullOrWhiteSpace(g.Owner)) Fail($"{name}: allowed gap with no owner");
-        else if (g.Due < today) Fail($"{name}: allowed gap OVERDUE - owner {g.Owner}, due {g.Due:yyyy-MM-dd} ({g.Why})");
-        else Console.WriteLine($"  known {name} ({reason[e]}) - {g.Owner}, due {g.Due:yyyy-MM-dd}: {g.Why}");
+        else if (g.Due is null && g.Guard is null) Fail($"{name}: allowed gap with neither a date nor a check");
+        else if (g.Due is DateOnly due && due < today) Fail($"{name}: allowed gap OVERDUE - owner {g.Owner}, due {due:yyyy-MM-dd} ({g.Why})");
+        else if (g.Guard?.Invoke() is string broken) Fail($"{name}: {broken}");
+        else Console.WriteLine($"  known {name} ({reason[e]}) - {g.Owner}, "
+                               + (g.Due is DateOnly d ? $"due {d:yyyy-MM-dd}" : "no date: guarded by a check") + $": {g.Why}");
     }
     else Fail($"{name} ({e.GetSchema()}.{e.GetTableName()}) is tenant-owned ({reason[e]}) and has NO query filter");
 }
@@ -207,4 +213,48 @@ static string LastWord(string pascal)
     return pascal;
 }
 
-record Gap(string Owner, DateOnly Due, string Why);
+// ----------------------------------------------------------------------------
+//  MailApiSendEnvelope is safe without a query filter only while nothing reads
+//  it (Mr. Singh, 6 Oct 2026). All three protections are visible in source, so
+//  this asserts them: the type is named on exactly three lines in apps/api -
+//  its declaration, its model line, and the one write (.Add) - and nowhere
+//  else. A fourth line is how a read would arrive. Source scan, no database,
+//  the same family as tests/ai/every_ai_entry_calls_gate.py. Matched by what
+//  each line says, not its line number: AppDbContext's line moves as models
+//  are added above it (377 on main, 378 here, on 6 Oct).
+// ----------------------------------------------------------------------------
+static string? EnvelopeStillWriteOnly()
+{
+    const string Type = "MailApiSendEnvelope";
+    var api = FindApi();
+    if (api is null) return "cannot find apps/api from the working directory, so the write-only check did not run";
+    var hits = Directory.EnumerateFiles(api, "*.cs", SearchOption.AllDirectories)
+        .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+                 && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
+        .SelectMany(f => File.ReadLines(f).Select((line, i) => (File: Path.GetFileName(f), No: i + 1, Line: line)))
+        .Where(h => System.Text.RegularExpressions.Regex.IsMatch(h.Line, $@"\b{Type}\b"))
+        .ToList();
+    bool Has(string file, string text) => hits.Any(h => h.File == file && h.Line.Contains(text));
+    var expected = Has("MailApiKey.cs", $"class {Type}")
+                && Has("AppDbContext.cs", $"Entity<TatvaOS.Api.Modules.Mail.{Type}>()")
+                && Has("MailSendApiEndpoints.cs", $"Set<{Type}>().Add(");
+    if (!expected || hits.Count < 3)
+        return $"the write-only check lost one of its three known lines (found {hits.Count}): "
+             + "re-read where api_send_envelopes is declared, modelled and written before trusting this entry";
+    if (hits.Count > 3)
+        return "a read may have been added to api_send_envelopes - add the EF query filter in this PR, "
+             + "and move the entry out of KNOWN_GAPS. New line(s): "
+             + string.Join("; ", hits.Where(h => !(h.File == "MailApiKey.cs" || h.File == "AppDbContext.cs"
+                                                   || (h.File == "MailSendApiEndpoints.cs" && h.Line.Contains($"Set<{Type}>().Add("))))
+                                     .Select(h => $"{h.File}:{h.No}"));
+    return null;
+}
+
+static string? FindApi()
+{
+    for (var d = new DirectoryInfo(Directory.GetCurrentDirectory()); d is not null; d = d.Parent)
+        if (Directory.Exists(Path.Combine(d.FullName, "apps", "api"))) return Path.Combine(d.FullName, "apps", "api");
+    return null;
+}
+
+record Gap(string Owner, DateOnly? Due, string Why, Func<string?>? Guard = null);
