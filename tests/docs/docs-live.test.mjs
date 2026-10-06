@@ -171,10 +171,17 @@ const RENDER_PORT = Number(process.env.DOCS_RENDER_PORT ?? 18450);
 const REAL_PORT = RENDER_PORT + 1;
 const held = [];
 let holding = false;
+// The NEXT /render/doc request is answered by this function instead of the
+// real service: a 504, a 200 missing its fields, or a dropped connection.
+// Each is a failure DocsRenderClient.PostAsync must turn into a refused save
+// (Mr. Singh on PR 391, 7 Oct 2026: which test drives each failure mode
+// through the shared POST path). No hook in production code.
+let injectNext = null;
 const proxy = http.createServer((req, res) => {
   const chunks = [];
   req.on('data', (c) => chunks.push(c));
   req.on('end', () => {
+    if (injectNext && req.url === '/render/doc') { const answer = injectNext; injectNext = null; answer(req, res); return; }
     const forward = () => {
       const up = http.request({ host: '127.0.0.1', port: REAL_PORT, path: req.url, method: req.method,
         headers: { 'content-type': req.headers['content-type'] ?? 'application/json' } }, (r) => {
@@ -494,6 +501,35 @@ async function main() {
   check('the next save works, and the typing done while it was down is in the file',
     upAgain.status === 200 && fileAfter.includes('TYPED WHILE DOWN') && !fileAfter.includes('BROWSER COPY'),
     `status ${upAgain.status} ${JSON.stringify(upAgain.body)}`);
+
+  // ---- every other way the render can fail, through the same POST path ------------
+  // The service stopped (above) is "unreachable behind a proxy that answers
+  // 502". These are the rest of DocsRenderClient.PostAsync's failures: the
+  // service's own 504 (over its limit), a 200 that lacks the fields a save
+  // needs, and a connection dropped mid-request. Each must refuse the save
+  // visibly (503 render_failed) and leave Space's file untouched.
+  console.log('Every other render failure refuses the save, visibly');
+  const failures = [
+    ['the render service answers 504 (over its limit)', (_q, r) => { r.writeHead(504, { 'content-type': 'application/json' }); r.end('{"error":"render timed out","limitMs":10000}'); }],
+    ['the render service answers 200 without html and text (an incomplete answer)', (_q, r) => { r.writeHead(200, { 'content-type': 'application/json' }); r.end('{"state":"AAA=","schema":"docs-1"}'); }],
+    ['the connection is dropped mid-request (unreachable)', (q) => { q.socket.destroy(); }],
+  ];
+  for (const [label, answer] of failures) {
+    const before = String((await A(`/space/files/${id}/content`)).body);
+    const acks = a1.acks.length;
+    appendParagraph(a1.doc, `TYPED BEFORE: ${label}`);
+    await waitFor(() => a1.acks.length > acks);
+    injectNext = answer;
+    const failed = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ upToSeq: a1.lastSeq }) });
+    check(`${label}: the save is refused (503 render_failed)`, failed.status === 503 && failed.body?.reason === 'render_failed',
+      `status ${failed.status} ${JSON.stringify(failed.body)}`);
+    check('…the injected answer was really used (calibration)', injectNext === null);
+    check("…and Space's file is unchanged", String((await A(`/space/files/${id}/content`)).body) === before);
+  }
+  const recovered = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ upToSeq: a1.lastSeq }) });
+  check('after all three, the next save works and carries the typing', recovered.status === 200
+    && String((await A(`/space/files/${id}/content`)).body).includes('TYPED BEFORE: the connection is dropped'),
+    `status ${recovered.status} ${JSON.stringify(recovered.body)}`);
 
   // ---- two saves at once: an older build never overwrites a newer file -------------
   // Mr. Singh, 30 Sept 2026. The render runs outside the editing lock, so

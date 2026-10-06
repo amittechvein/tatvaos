@@ -80,15 +80,18 @@ public static class DocsEndpoints
         g.MapPost("/{id:guid}/ai", AiAsync);
 
         // A SPREADSHEET SAVES THROUGH ITS OWN TWO ROUTES (1 Oct 2026, when PR
-        // 367's server-built Docs files met Sheets). A document's file is built
-        // on the server and the browser's copy is ignored (0011 condition 1);
-        // a spreadsheet's .xlsx is still the one its browser wrote, behind
-        // XlsxGuard, until Sheets has its own server build — and until then
-        // Sheets cannot be switched on (SheetsSwitch.ServerRenderLanded). Kept
-        // apart so that removing Docs' ignored browser fields (done 3 Oct
-        // 2026) could not break Sheets, and so the browser-written path is one
-        // named place that the server build replaces. Each route refuses the
-        // other kind.
+        // 367's server-built Docs files met Sheets). Since the Sheets server
+        // build (PR 391), both kinds are built on the server from what it
+        // stored and the browser's copy is never read (0011 condition 1): a
+        // document by /render/doc, a spreadsheet by /render/sheet, with
+        // XlsxGuard on the server's own .xlsx. They stay apart because each
+        // kind has its own renderer, and a spreadsheet given to the document
+        // renderer would come back as an empty page stored as its file. Each
+        // route refuses the other kind. Both set RenderedSeq when they write,
+        // so docs.browser_written_count (the switch-on guard) treats a
+        // server-built spreadsheet exactly as a server-built document. Sheets
+        // still cannot be switched on until SheetsSwitch.ServerRenderLanded
+        // is set true, in its own pull request after deploy and production checks.
         var s = app.MapGroup("/api/sheets")
             .RequireAuthorization("User")
             .WithTags("Sheets");
