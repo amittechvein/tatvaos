@@ -21,8 +21,8 @@ command -v flock >/dev/null || { echo "needs flock (util-linux) — run on Linux
 
 pass=0; fail=0
 same()  { if [ "$2" = "$3" ]; then pass=$((pass+1)); echo "  ok    $1"; else fail=$((fail+1)); echo "  FAIL  $1: expected [$3], got [$2]"; fi; }
-has()   { if printf '%s\n' "$2" | grep -qF -- "$3"; then pass=$((pass+1)); echo "  ok    $1"; else fail=$((fail+1)); echo "  FAIL  $1: [$3] missing"; fi; }
-hasnt() { if printf '%s\n' "$2" | grep -qF -- "$3"; then fail=$((fail+1)); echo "  FAIL  $1: [$3] present"; else pass=$((pass+1)); echo "  ok    $1"; fi; }
+has()   { if grep -qF -- "$3" <<< "$2"; then pass=$((pass+1)); echo "  ok    $1"; else fail=$((fail+1)); echo "  FAIL  $1: [$3] missing"; fi; }
+hasnt() { if grep -qF -- "$3" <<< "$2"; then fail=$((fail+1)); echo "  FAIL  $1: [$3] present"; else pass=$((pass+1)); echo "  ok    $1"; fi; }
 
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT

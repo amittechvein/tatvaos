@@ -32,7 +32,7 @@ out=$(run); rc=$?
 has "both copies carry the key: SAME, SAME" "$out" "SAME     local  20260928-0900/env.txt"
 has "…off-box too" "$out" "SAME     off-box 20260928-0900.tar.gz.enc"
 [ $rc = 0 ] && pass "…exit 0" || fail "exit $rc"
-if printf '%s' "$out" | grep -qF -- "$KEYV"; then fail "THE KEY WAS PRINTED"; else pass "the key's value is never printed"; fi
+if grep -qF -- "$KEYV" <<< "$out"; then fail "THE KEY WAS PRINTED"; else pass "the key's value is never printed"; fi
 
 # RED: the backups predate the key (the case Mr. Singh named).
 mkdir -p "$T/backups/20260928-1100"; printf 'OTHER=1\n' > "$T/backups/20260928-1100/env.txt"

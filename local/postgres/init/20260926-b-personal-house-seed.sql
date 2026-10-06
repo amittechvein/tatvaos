@@ -21,7 +21,7 @@ INSERT INTO core.domains (id, tenant_id, fqdn, type, is_active,
     ('a9999999-9999-9999-9999-999999999999',
      '99999999-9999-9999-9999-999999999999',
      'personal.local', 'primary', true, now(), now())
-ON CONFLICT (fqdn) DO NOTHING;
+ON CONFLICT (id) DO NOTHING;   -- by id: #277 removed the plain UNIQUE (fqdn) this used to name
 
 INSERT INTO core.storage_pools (tenant_id, storage_model, total_bytes, per_user_quota_bytes) VALUES
     ('99999999-9999-9999-9999-999999999999', 'per_user', 0, 1073741824)  -- 1 GB each
