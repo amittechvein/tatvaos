@@ -209,8 +209,14 @@ cat > "$SCRATCH/forge.py" <<'PYEOF'
 import os, sys, json, time, hmac, hashlib, base64
 b = lambda x: base64.urlsafe_b64encode(x).rstrip(b"=").decode()
 t, m, r, u, e = sys.argv[1:6]
-body = b(json.dumps({"T": t, "M": m, "R": r, "U": u, "E": int(time.time()) + int(e)},
-                    separators=(",", ":")).encode())
+# "Y": the token type every body signed with Jwt:SigningKey has carried since
+# PR 346 (ConnectDownloadTicket.Type); Verify refuses any other. Without it this
+# forger's "exact copy" was no copy at all, and the control failed (6 Oct 2026,
+# CI run 37453497710). NO_TYPE=1 leaves it out, to prove that refusal.
+claims = {"T": t, "M": m, "R": r, "U": u, "E": int(time.time()) + int(e)}
+if os.environ.get("NO_TYPE") != "1":
+    claims["Y"] = "connect-download"
+body = b(json.dumps(claims, separators=(",", ":")).encode())
 print(body + "." + b(hmac.new(os.environ["KEY"].encode(), body.encode(), hashlib.sha256).digest()))
 PYEOF
 FORGE="$SCRATCH/forge.py"; command -v cygpath >/dev/null 2>&1 && FORGE="$(cygpath -w "$FORGE")"
@@ -227,6 +233,8 @@ same "signed, naming ANOTHER MEETING the organiser also made: refused (the recor
     "$(fetch "$(forge "$TECHVEIN" "$M2" "$REC" "$HOST_ID" 300)" | cut -d' ' -f1)" "404"
 same "signed, but expired: refused" \
     "$(fetch "$(forge "$TECHVEIN" "$M1" "$REC" "$HOST_ID" -5)" | cut -d' ' -f1)" "404"
+same "signed and correct in every field, but with NO token type (the shape before PR 346): refused" \
+    "$(fetch "$(NO_TYPE=1 forge "$TECHVEIN" "$M1" "$REC" "$HOST_ID" 300)" | cut -d' ' -f1)" "404"
 
 PG "DELETE FROM connect.participants WHERE id = '$PART'" >/dev/null
 same "(the colleague is removed from the meeting)" "$(PG "SELECT count(*) FROM connect.participants WHERE id = '$PART'")" "0"
