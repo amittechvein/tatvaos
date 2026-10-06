@@ -2,7 +2,7 @@
 
 *Drafted 3 October 2026 by the session that built Docs' server rendering and the Sheets editor; **refreshed 6 October 2026** (round two). Everything here was true on that date; check `main` and production before relying on it (house rule 6b).*
 
-*Some paths below live on branches not yet merged on that date. They are marked with their pull request: **(PR 370)** PDF engine `docs/pdf-design`, **(PR 379)** Sheets design `sheets/server-render-design`, **(PR 384)** Docs AI wording `docs/ai-privacy-wording`, **(PR 388)** Docs AI prices `docs/ai-price-per-action`, **(PR 390 / 391 / 393)** the Sheets server build, stacked on 379, **(PR 387)** the older-Excel hint `sheets/older-excel-hint`.*
+*Some paths below live on branches not yet merged on that date. They are marked with their pull request: **(PR 370)** PDF engine `docs/pdf-design`, **(PR 379)** Sheets design `sheets/server-render-design`, **(PR 384)** Docs AI wording `docs/ai-privacy-wording`, **(PR 388)** Docs AI prices `docs/ai-price-per-action`, **(PR 390 / 391)** the Sheets server build, stacked on 379 (stage 3, #393, folded into 391 on 6 Oct), **(PR 387)** the older-Excel hint `sheets/older-excel-hint`.*
 
 Docs and Sheets are TatvaOS's collaborative documents and spreadsheets. Both are **Space files**: a document or spreadsheet *is* a file in Space, with Space's sharing, trash and stars. Both edit live through Yjs over a WebSocket (`DocsLiveHub`). They share the `docs.*` tables, the API routes (`DocsEndpoints`) and the live hub.
 
@@ -22,7 +22,7 @@ Docs and Sheets are TatvaOS's collaborative documents and spreadsheets. Both are
 ## 2. Decisions already made — do not re-open these
 
 - **Decision 0011** (`docs/decisions/0011-*.md`), the conditions for customers:
-  - **condition 1:** the file Space serves is built on the server from what the server stored, never the browser's copy. **Done for Docs** (PR 367, live 1 Oct). **Built for Sheets** in PRs 390 → 391 → 393, not yet merged.
+  - **condition 1:** the file Space serves is built on the server from what the server stored, never the browser's copy. **Done for Docs** (PR 367, live 1 Oct). **Built for Sheets** in PRs 390 → 391 (stages 2 and 3 folded), not yet merged.
   - **condition 2:** documents go by email as **PDF**, built on the server. Engine and gate done (`docs/DOCS_PDF_DESIGN.md`, `apps/render/pdf/`, `tests/docs-render/pdf-gate.*`, all **(PR 370)**), email wiring not.
   - **condition 4:** what storage drops is named, from a **closed list** (`apps/render/spike/storage-drops.mjs`). A new entry needs Mr. Singh's ruling.
 - **Who sees Docs:** Techvein only (Amit, 4 Oct). **Nothing in Docs or Sheets goes to another customer without Mr. Singh and Amit.** The one-day staff trial was skipped on Amit's decision (4 Oct): nobody had used it.
@@ -49,11 +49,12 @@ Docs and Sheets are TatvaOS's collaborative documents and spreadsheets. Both are
 | Docs for Techvein | **live**, on `docs.tatvaos.com` since 4 Oct; a typed line saved and built on the server on 5 Oct | nothing; other organisations need Mr. Singh and Amit |
 | PDF by email (PR 370) | gate **91/0** in CI on `main` of 6 Oct | Mr. Singh's sign-off; a Hindi reader for `devanagari-sample.pdf`; then the email wiring (footer line included) |
 | Docs AI (PRs 384, 388) | wording, and per-action labels at 1 / 1 / 1 / 5 credits | Mr. Singh on the wording; **Amit on the price** (a one-line change either way) |
-| Sheets' server `.xlsx` (PRs 379 → 390 → 391 → 393) | design, test workbooks and all three build stages; green, clicked through on a laptop | Mr. Singh's reading. **391 and 393 merge together**: 391 alone makes a spreadsheet created from a template or an imported file arrive empty. Then a deploy, three production checks and a one-line switch PR |
+| Sheets' server `.xlsx` (PRs 379 → 390 → 391) | design, test workbooks and all three build stages (391 carries stages 2 and 3, folded so they can't land apart); green, clicked through on a laptop | Mr. Singh's reading. **The stack merges top down** (391 into 390's branch, 390 into 379's, then one merge of 379 into `main`). Then a deploy, three production checks and a one-line switch PR |
 | Older-Excel hint (PR 387) | built, green | Mr. Singh's read of the sentence |
 
 ## 4. Traps that have already cost someone a day
 
+- **A number that didn't move when it should have is as suspicious as a number that's wrong** (Mr. Singh, 6 Oct). A result that matches yesterday's, after a day in which something changed, is a result to distrust. Found when the tenancy check, run with `--no-build` on the laptop, printed the day before's counts after Connect's fourteen new filters had landed: it was reading a stale compiled copy. (CI always builds; it runs `dotnet run --project tests/tenant-filters` with no `--no-build`.)
 - **A planted calibration that doesn't compile tests the OLD binary.** `run-docs-live.sh` refuses a stale Release DLL; plant something that compiles (`if (id == Guid.Empty)`).
 - **CI is not the laptop.** Things it found that the laptop hid: missing database roles on a fresh Postgres; `/var/lib/space` not writable; a timing test that measured the machine; a child process inheriting CI's `NODE_OPTIONS` with a path relative to the repository root. Every test makes its own throwaway database (rule 13) and sizes its own load.
 - **Every tenant-owned table needs an EF query filter** (`tests/tenant-filters`, in CI since 6 Oct). All seven Docs and Sheets tables have one. If it ever flags a Docs or Sheets table, **don't file it yourself**: bring Mr. Singh the facts (`tenant_id`? RLS? who reads it, and what scopes the read) and a recommendation.
