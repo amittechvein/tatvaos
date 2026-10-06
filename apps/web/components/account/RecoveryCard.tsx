@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/Form';
 import { Alert } from '@/components/ui/Page';
 import {
   fetchRecoveryStatus, removePhone, removeRecoveryEmail, requestPhoneChange,
-  setRecoveryEmail, verifyPhoneChange, type RecoveryStatus,
+  setRecoveryEmail, verifyPhoneChange, MfaRequiredError, type RecoveryStatus,
 } from '@/lib/recovery';
 
 // ---------------------------------------------------------------------------
@@ -64,6 +64,10 @@ export function RecoveryCard() {
   const [devCode, setDevCode] = useState<string | null>(null);
   const [removing, setRemoving] = useState<Removing>(null);
   const [password, setPassword] = useState('');
+  // Decision 0009: shown only after the server asks for it (an owner with
+  // two-step verification on). Nobody else ever sees this field.
+  const [needMfa, setNeedMfa] = useState(false);
+  const [mfaCode, setMfaCode] = useState('');
   const firstLoad = useRef(true);
 
   const load = useCallback(async () => {
@@ -88,6 +92,7 @@ export function RecoveryCard() {
     try {
       await fn();
     } catch (e) {
+      if (e instanceof MfaRequiredError) setNeedMfa(true);
       setError(e instanceof Error ? e.message : 'Something went wrong.');
     } finally {
       setBusy(false);
@@ -101,11 +106,12 @@ export function RecoveryCard() {
     if (!EMAIL_RE.test(value)) { setError('Enter a valid email address.'); return; }
     if (!password) { setError('Enter your current password.'); return; }
     void run(async () => {
-      const r = await setRecoveryEmail(authedFetch, value, password);
+      const r = await setRecoveryEmail(authedFetch, value, password, mfaCode);
       setNotice(r.message);
       setEmailMode('view');
       setEmail('');
       setPassword('');
+      setMfaCode('');
       await load();
     });
   };
@@ -121,8 +127,9 @@ export function RecoveryCard() {
   const doRemoveEmail = () => {
     if (!password) { setError('Enter your current password to remove it.'); return; }
     void run(async () => {
-      await removeRecoveryEmail(authedFetch, password);
+      await removeRecoveryEmail(authedFetch, password, mfaCode);
       setPassword('');
+      setMfaCode('');
       setRemoving(null);
       setNotice('Recovery email removed.');
       await load();
@@ -228,6 +235,11 @@ export function RecoveryCard() {
             <Input  type="password" autoComplete="current-password"
                    placeholder="Current password" value={password}
                    onChange={(e) => setPassword(e.target.value)} disabled={busy} />
+            {needMfa && (
+              <Input  inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+                     placeholder="Authenticator code" aria-label="Code from your authenticator app"
+                     value={mfaCode} onChange={(e) => setMfaCode(e.target.value)} disabled={busy} />
+            )}
             <div className="flex gap-2">
               <Button variant="primary" type="submit" disabled={busy}>Send link</Button>
               <Button variant="ghost" type="button" disabled={busy}
@@ -272,6 +284,13 @@ export function RecoveryCard() {
                    placeholder="Current password" value={password}
                    onChange={(e) => setPassword(e.target.value)} disabled={busy} />
                   </div>
+                  {needMfa && (
+                    <div className="w-full max-w-[10rem]">
+                      <Input  inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+                             placeholder="Authenticator code" aria-label="Code from your authenticator app"
+                             value={mfaCode} onChange={(e) => setMfaCode(e.target.value)} disabled={busy} />
+                    </div>
+                  )}
                   <Button variant="ghost" type="button" className="text-danger" disabled={busy} onClick={doRemoveEmail}>
                     Confirm remove
                   </Button>

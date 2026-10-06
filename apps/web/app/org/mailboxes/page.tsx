@@ -333,13 +333,21 @@ function AccessDialog({ box, people, onClose, onChanged, onError }: {
     await run(async () => {
       for (const level of ['read', 'send_as', 'full'] as const) {
         for (const userId of picked[level]) {
-          const res = await authedFetch(`/mail/mailboxes/${box.id}/permissions`, {
-            method: 'POST',
-            body: JSON.stringify({ userId, permission: level }),
-          });
-          if (!res.ok) {
-            const b = await res.json().catch(() => ({}));
-            throw new Error(b.error ?? 'Could not grant access.');
+          // A MANAGER IS read + send_as, as the box below promises ("can read
+          // and answer"). Until 5 Oct 2026 this granted send_as alone, and the
+          // API deliberately does not let send_as imply read (MailboxAccess):
+          // so a manager saw the mailbox in the switcher, could not open it,
+          // and could not compose from it (Amit, 5 Oct). Granting is
+          // idempotent, so asking for read again is harmless.
+          for (const permission of level === 'send_as' ? ['read', 'send_as'] : [level]) {
+            const res = await authedFetch(`/mail/mailboxes/${box.id}/permissions`, {
+              method: 'POST',
+              body: JSON.stringify({ userId, permission }),
+            });
+            if (!res.ok) {
+              const b = await res.json().catch(() => ({}));
+              throw new Error(b.error ?? 'Could not grant access.');
+            }
           }
           // 'full' implies the other two, so the rows they would duplicate go.
           if (level === 'full') {
@@ -420,9 +428,15 @@ function AccessDialog({ box, people, onClose, onChanged, onError }: {
                 <span className="block font-semibold truncate">{p.displayName}</span>
                 <span className="block text-[0.75rem] text-ink-muted truncate">{p.email}</span>
               </span>
-              {p.levels.map((lvl) => (
+              {/* A manager holds read AND send_as; show it once, as "manager".
+                  Its × takes away answering only, leaving them a member.
+                  A manager WITHOUT read (granted before 5 Oct 2026) is shown
+                  as such, so it can be seen and fixed. */}
+              {p.levels.filter((lvl) => !(lvl === 'read' && p.levels.includes('send_as'))).map((lvl) => (
                 <span key={lvl} className="inline-flex items-center gap-1">
-                  <Badge tone="neutral">{LEVEL_LABEL[lvl]}</Badge>
+                  {lvl === 'send_as' && !p.levels.includes('read')
+                    ? <Badge tone="warn">manager, cannot open it: add them as a member too</Badge>
+                    : <Badge tone="neutral">{LEVEL_LABEL[lvl]}</Badge>}
                   {/* Each level removable on its own: taking away someone's
                       ability to answer should not also stop them reading. */}
                   <button type="button"

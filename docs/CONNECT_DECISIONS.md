@@ -290,6 +290,27 @@ Order: fixes → Mr. Singh reads → merge → Amit's go + no live meeting → h
 deploy, dark → production matrix → switch on. The deploy report says "not
 purely additive: replaces unused definer functions".
 
+### Switched on, 27 September 2026 — BEFORE the production matrix
+
+What happened, in order:
+- 26 Sept 11:52Z: #312 deployed dark (`7f2de67`).
+- 12:34Z: stage 1. The test list was Techvein and Trineetra by Techvein.
+- 16:53Z: #323 deployed (`c7cb110`): visible fields, colour per level, and a branded link page.
+
+Amit used sharing on production and reported "all work perfectly".
+
+On 27 Sept he chose to switch the button on for every organisation **before
+the production matrix was run**. He was told what it covers that ordinary use
+does not: revocation mid-playback, expiry, suspension, the password pause,
+public links switched off while live, and the access log. That is an override
+of this section's order, recorded here, and it was his decision to make.
+
+Now set: `CONNECT_RECORDING_SHARING_OFFERED=true`, and the test list is removed.
+The server's `.env` was backed up first, as `.env.before-sharing-on-*`.
+
+**Still owed:** the production matrix, run by the rules above now that sharing
+is on for everyone. Its result is to be written here.
+
 ---
 
 ## 4. Guest removal does not remove a guest

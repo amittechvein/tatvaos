@@ -36,7 +36,7 @@ INSERT INTO core.domains (id, tenant_id, fqdn, type, is_active,
     ('a1111111-1111-1111-1111-111111111111',
      '11111111-1111-1111-1111-111111111111',
      'techvein.local', 'primary', true, now(), now(), 'tv2026a')
-ON CONFLICT (fqdn) DO NOTHING;
+ON CONFLICT (id) DO NOTHING;   -- by id: #277 removed the plain UNIQUE (fqdn) this used to name
 
 -- NOT ON CONFLICT DO NOTHING. subscriptions has no unique constraint on
 -- tenant_id, so a fresh uuid never conflicts and apply-schema.sh would add a
@@ -159,7 +159,7 @@ INSERT INTO core.domains (id, tenant_id, fqdn, type, is_active,
     ('b2222222-2222-2222-2222-222222222222',
      '22222222-2222-2222-2222-222222222222',
      'abcschool.local', 'primary', true, now(), now(), 'tv2026a')
-ON CONFLICT (fqdn) DO NOTHING;
+ON CONFLICT (id) DO NOTHING;   -- by id: #277 removed the plain UNIQUE (fqdn) this used to name
 
 INSERT INTO core.subscriptions (tenant_id, plan_id, status, seats)
 SELECT '22222222-2222-2222-2222-222222222222',

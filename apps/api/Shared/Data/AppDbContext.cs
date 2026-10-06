@@ -76,6 +76,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     /// lookup. See the entity comment.
     /// </summary>
     public DbSet<MfaRecoveryCode> MfaRecoveryCodes => Set<MfaRecoveryCode>();
+    public DbSet<RecoveryEmailChange> RecoveryEmailChanges => Set<RecoveryEmailChange>();
+    public DbSet<RecoveryAdminSuspension> RecoveryAdminSuspensions => Set<RecoveryAdminSuspension>();
     public DbSet<UserAvatar> UserAvatars => Set<UserAvatar>();
 
     /// <summary>
@@ -97,6 +99,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<PersonalSignup> PersonalSignups => Set<PersonalSignup>();
     public DbSet<PersonalSignupAttempt> PersonalSignupAttempts => Set<PersonalSignupAttempt>();
     public DbSet<PersonalAccount> PersonalAccounts => Set<PersonalAccount>();
+    /// <summary>Platform-wide by design: one trial per phone, across every account ever.</summary>
+    public DbSet<AiTrial> AiTrials => Set<AiTrial>();
+    /// <summary>A personal account's own AI switch; keyed by the person.</summary>
+    public DbSet<PersonalAiConsent> PersonalAi => Set<PersonalAiConsent>();
+    /// <summary>RLS-scoped by tenant, like every connect.* table.</summary>
+    public DbSet<ConnectCapacityRefusal> ConnectCapacityRefusals => Set<ConnectCapacityRefusal>();
+    /// <summary>Platform-wide: an address is held across every tenant.</summary>
+    public DbSet<AddressHold> AddressHolds => Set<AddressHold>();
+    public DbSet<TatvaOS.Api.Shared.Mail.RetiredAddress> RetiredAddresses => Set<TatvaOS.Api.Shared.Mail.RetiredAddress>();
+    public DbSet<PurgeLeftover> PurgeLeftovers => Set<PurgeLeftover>();
 
     // ---- mail ----
     public DbSet<Mailbox> Mailboxes => Set<Mailbox>();
@@ -254,6 +266,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<OidcScope>().ToTable("oidc_scopes", "core");
         b.Entity<OidcToken>().ToTable("oidc_tokens", "core");
         b.Entity<MfaRecoveryCode>().ToTable("mfa_recovery_codes", "core");
+        // Decision 0009. Filtered from the first line (0007's rule: every
+        // tenant-owned entity carries a query filter); RLS is forced as well.
+        b.Entity<RecoveryEmailChange>().ToTable("recovery_email_changes", "core");
+        b.Entity<RecoveryEmailChange>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<RecoveryAdminSuspension>().ToTable("recovery_admin_suspensions", "core");
+        b.Entity<RecoveryAdminSuspension>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<UserAvatar>().ToTable("user_avatars", "core");
         b.Entity<UserAvatar>().HasKey(a => a.UserId);
         b.Entity<SignupDraft>().ToTable("signup_drafts", "core");
@@ -265,6 +283,17 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<PersonalSignupAttempt>().ToTable("personal_signup_attempts", "core");
         b.Entity<PersonalAccount>().ToTable("personal_accounts", "core");
         b.Entity<PersonalAccount>().HasKey(a => a.UserId);
+        b.Entity<AiTrial>().ToTable("ai_trials", "core");
+        b.Entity<AiTrial>().HasKey(t => t.PhoneHash);
+        b.Entity<PersonalAiConsent>().ToTable("personal_ai", "core");
+        b.Entity<PersonalAiConsent>().HasKey(a => a.UserId);
+        b.Entity<ConnectCapacityRefusal>().ToTable("capacity_refusals", "connect");
+        b.Entity<AddressHold>().ToTable("address_holds", "core");
+        b.Entity<AddressHold>().HasKey(h => h.Address);
+        b.Entity<PurgeLeftover>().ToTable("personal_purge_leftovers", "core");
+        // Written by triggers too; the id is the database's.
+        b.Entity<TatvaOS.Api.Shared.Mail.RetiredAddress>().ToTable("retired_addresses", "core")
+            .Property(r => r.Id).ValueGeneratedOnAdd();
         // Declared so EF orders the INSERTs: the user and this row are saved
         // in one SaveChanges, and an undeclared FK lets EF write this first.
         b.Entity<PersonalAccount>().HasOne<User>().WithOne()

@@ -101,7 +101,7 @@ LINE=$(printf "%s\n" "$SENDER" | grep -F "SMS not configured" | head -n1)
 if [ -n "$LINE" ]; then pass "1. the sender logged that nothing was sent: $(printf '%s' "$LINE" | sed 's/^ *//')"
 else fail "1. the sender logged nothing at all - the checks below would be a false green"; fi
 
-if [ -n "$LINE" ] && ! printf "%s" "$LINE" | grep -qF "$DIGITS"; then pass "2. that line does not contain the number"
+if [ -n "$LINE" ] && ! grep -qF "$DIGITS" <<< "$LINE"; then pass "2. that line does not contain the number"
 else fail "2. THE NUMBER IS IN THE LOG: $(printf '%s' "$LINE" | sed 's/^ *//')"; fi
 
 if printf "%s" "$LINE" | grep -qF "$TAIL"; then pass "3. it keeps the last four digits, so the event can still be found"
