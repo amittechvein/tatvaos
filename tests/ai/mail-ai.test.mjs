@@ -4,7 +4,9 @@
 //
 //  Uses a FAKE provider, never a real key:
 //    - the API with Ai__BaseUrl=http://127.0.0.1:5199/v1 and any
-//      Ai__ApiKey/Model/DataLocation;
+//      Ai__ApiKey/Model/DataLocation, and Ai__Vendor=OpenAI (from 30 Sept
+//      2026 a host the gateway does not know must name its vendor, or AI
+//      stays unconfigured; the disclosure checks expect "OpenAI");
 //    - tests/ai/fake-ai-mail.mjs running on :5199 (node tests/ai/fake-ai-mail.mjs). It answers "REWRITTEN: <INPUT>" and
 //      keeps the last request it received at GET /last — the independent
 //      witness for WHAT WAS SENT — and a count at GET /hits, the witness that
@@ -83,7 +85,9 @@ const DRAFT = 'hi priya, can we move the review to 3 oct at 4pm? thanks';
 const settingsNow = async () => Object.fromEntries((await call('GET', '/admin/settings')).body
   .filter((i) => i.key.startsWith('ai.')).map((i) => [i.key, i.value ?? '']));
 const found = await settingsNow();
-await call('PUT', '/admin/settings', { 'ai.paused': 'false', 'ai.limit.per_person_per_hour': '', 'ai.limit.org_monthly_tokens': '' });
+// ai.mail.organisations: EMPTY means NOBODY since 29 Sept 2026 (Mr. Singh),
+// so the run opens it with "all" and step 10 narrows it; put back at the end.
+await call('PUT', '/admin/settings', { 'ai.paused': 'false', 'ai.limit.per_person_per_hour': '', 'ai.limit.org_monthly_tokens': '', 'ai.mail.organisations': 'all' });
 
 try {
   // ── 1. Both off ───────────────────────────────────────────────────────────
@@ -104,7 +108,8 @@ try {
     put.status === 200 && put.body.enabled === true && put.body.mailEnabled === false, JSON.stringify(put.body));
   const org = (await call('GET', '/org/ai')).body;
   check('GET /org/ai reports mailEnabled false and a mail disclosure naming the place',
-    org.mailEnabled === false && typeof org.mailDisclosure === 'string' && org.mailDisclosure.includes('when a person opens it') && org.mailDisclosure.includes('Nothing is sent in the background'),
+    org.mailEnabled === false && typeof org.mailDisclosure === 'string' && org.mailDisclosure.includes('when a person opens it') && org.mailDisclosure.includes('sent to OpenAI, in ')
+      && org.mailDisclosure.includes('each has its own switch below') && org.mailDisclosure.includes('attachments and junk mail are never sent'),
     JSON.stringify({ mailEnabled: org.mailEnabled, mailDisclosure: org.mailDisclosure }));
   s = await status();
   check('mail off: status says unavailable because of Mail', s.body.available === false && s.body.reason === 'mail', JSON.stringify(s.body));
@@ -214,7 +219,22 @@ try {
   r = await suggest(ids.normal);
   check('suggestions with Mail AI off: skipped "off", nothing sent', r.body.skipped === 'off' && r.body.suggestions?.length === 0 && (await hits()) === h0, JSON.stringify(r.body));
 
+  // Turning Mail AI on starts only Help me write (Mr. Singh, 30 Sept 2026):
+  // suggested replies send someone else's email on open, so an administrator
+  // turns them on deliberately - even if the stored value said on.
+  spawnSync('wsl', ['-u', 'postgres', '-e', 'psql', '-d', DB, '-Atc',
+    "update core.tenants set mail_ai_suggest = true where id='11111111-1111-1111-1111-111111111111'"]);
   await setAi({ enabled: true, mail: true });
+  {
+    const f = (await call('GET', '/org/ai')).body.mailFeatures;
+    check('Mail AI turned on: Help me write on, suggested replies and Summarise off (the published default)',
+      f?.rewrite === true && f?.suggest === false && f?.summary === false, JSON.stringify(f));
+    h0 = await hits();
+    r = await suggest(ids.normal);
+    check('…so no email is sent for suggestions until an administrator turns them on',
+      r.body.skipped === 'off' && (await hits()) === h0, JSON.stringify(r.body));
+  }
+  await setAi({ mailFeatures: { suggest: true } });
   h0 = await hits();
   r = await suggest(ids.normal);
   check('a normal message gets three suggestions', JSON.stringify(r.body.suggestions) === JSON.stringify(
@@ -389,8 +409,9 @@ try {
   check('the organisation type is back as found', psql(`select type from core.tenants where id='${TENANT}'`) === typeWas, typeWas);
 
   // ── 10. Mail AI held to a list of organisations (Mr. Singh, 25 Sept) ──────
-  //  ai.mail.organisations: empty = everyone; ids = only those; nothing that
-  //  parses = nobody. Checked in the gateway, so every mail.* feature obeys.
+  //  ai.mail.organisations: empty = NOBODY (since 29 Sept); "all" =
+  //  everyone; ids = only those; nothing that parses = nobody. Checked in
+  //  the gateway, so every mail.* feature obeys.
   {
     const ORG = '11111111-1111-1111-1111-111111111111';
     const gate = (v) => call('PUT', '/admin/settings', { 'ai.mail.organisations': v });
@@ -429,8 +450,16 @@ try {
     check('a list where NOTHING parses lets nobody in (a typo does not open the gate)',
       (await call('GET', '/org/ai')).body.mailOffered === false && typeof r.body.error === 'string' && (await hits()) === h0, JSON.stringify(r.body));
 
+    // EMPTY MEANS NONE (Mr. Singh, 29 Sept 2026). Until then this step said
+    // "an empty list: every organisation may" — the rule he ruled against.
     await gate('');
-    check('an empty list: every organisation may', (await call('GET', '/org/ai')).body.mailOffered === true);
+    h0 = await hits();
+    r = await rewrite(DRAFT);
+    check('an empty list: NO organisation may, and nothing is sent',
+      (await call('GET', '/org/ai')).body.mailOffered === false && typeof r.body.error === 'string' && (await hits()) === h0,
+      JSON.stringify(r.body));
+    await gate('all');
+    check('"all": every organisation may', (await call('GET', '/org/ai')).body.mailOffered === true);
     r = await setAi({ mail: false });
     check('…and switching Mail AI off works whatever the list says', r.status === 200 && r.body.mailEnabled === false, JSON.stringify(r.body));
   }
@@ -447,8 +476,9 @@ try {
     // feature by hand must not be able to hide a wrong default (found 26
     // Sept: a browser check left Summarise on, and four checks read that).
     const def = (col) => psql(`select column_default from information_schema.columns where table_schema='core' and table_name='tenants' and column_name='${col}'`);
-    check('defaults: Summarise OFF, Help me write and suggestions ON',
-      def('mail_ai_summary') === 'false' && def('mail_ai_rewrite') === 'true' && def('mail_ai_suggest') === 'true',
+    // Suggested replies default OFF from 30 Sept 2026 (Mr. Singh).
+    check('defaults: Help me write ON, suggestions and Summarise OFF',
+      def('mail_ai_summary') === 'false' && def('mail_ai_rewrite') === 'true' && def('mail_ai_suggest') === 'false',
       `${def('mail_ai_summary')} ${def('mail_ai_rewrite')} ${def('mail_ai_suggest')}`);
     await setAi({ enabled: true, mail: true, mailTriage: false, mailFeatures: { rewrite: true, suggest: true, summary: false } });
 
@@ -456,7 +486,7 @@ try {
     check('Summarise off, Help me write and suggestions on (as set)',
       org.mailFeatures?.summary === false && org.mailFeatures?.rewrite === true && org.mailFeatures?.suggest === true, JSON.stringify(org.mailFeatures));
     check('each feature says what it sends', typeof org.mailFeatureDisclosure?.summary === 'string'
-      && org.mailFeatureDisclosure.summary.includes('whole conversation'), JSON.stringify(org.mailFeatureDisclosure));
+      && org.mailFeatureDisclosure.summary.includes('each email in a conversation'), JSON.stringify(org.mailFeatureDisclosure));
     s = await ownerCall('GET', '/mail/ai/status');
     check('status: summary false, rewrite and suggest true', s.body.summary === false && s.body.rewrite === true && s.body.suggest === true, JSON.stringify(s.body));
     h0 = await hits();
@@ -504,7 +534,15 @@ try {
     check('not on the Mail AI list: switching a feature ON is refused (400)', r.status === 400, JSON.stringify(r.body));
     r = await setAi({ mailFeatures: { summary: false } });
     check('…switching one OFF works', r.status === 200 && r.body.mailFeatures?.summary === false, JSON.stringify(r.body));
+    // Empty means NOBODY now (Mr. Singh, 29 Sept 2026): cleared, Techvein
+    // itself is refused; "all" opens it again for the steps that follow.
     await call('PUT', '/admin/settings', { 'ai.mail.organisations': '' });
+    r = await setAi({ mailFeatures: { summary: true } });
+    check('emptied: nobody, Techvein included (400)', r.status === 400, JSON.stringify(r.body));
+    await call('PUT', '/admin/settings', { 'ai.mail.organisations': 'all' });
+    r = await setAi({ mailFeatures: { summary: true } });
+    check('"all": every organisation, Techvein included', r.status === 200, JSON.stringify(r.body));
+    await setAi({ mailFeatures: { summary: false } });
   }
 
   // ── 12. AI credits by plan (26 Sept 2026) ────────────────────────────────

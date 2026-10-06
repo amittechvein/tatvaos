@@ -36,6 +36,7 @@ import * as SecureStore from 'expo-secure-store';
 import {
   getMessage, setRead, setFlag, deleteMessage, attachmentUrl, senderLabel, addressList,
   threadMessages, send, quoted, replySubject, forwardSubject, replyAllRecipients, forwardHeader, signatureFor, whenLabel,
+  otherMessages, replyRecipients,
 } from '../lib/mail';
 import { htmlToText } from '../lib/mailHtml';
 import { buildDocument } from '../lib/mailHtml';
@@ -93,7 +94,7 @@ export default function MailMessage({
         setMsg(m);
         if (m?.threadId) {
           threadMessages(token, m.threadId, mailboxId)
-            .then((rows) => { if (!gone.current) setThread(rows.filter((r) => r.id !== m.id)); })
+            .then((rows) => { if (!gone.current) setThread(otherMessages(rows, m.id)); })
             .catch((e) => log(`thread failed: ${e?.message ?? e}`));
         } else {
           setThread([]);
@@ -314,7 +315,7 @@ export default function MailMessage({
   // at send time, under what was typed, so switching modes never doubles it.
   const recipients = !msg ? { to: '', cc: '' }
     : mode === 'replyAll' ? replyAllRecipients(msg, myAddress)
-    : mode === 'reply' ? { to: msg.from?.email ?? '', cc: '' }
+    : mode === 'reply' ? replyRecipients(msg, myAddress)
     : { to: fwdTo, cc: '' };
 
   const bodyToSend = () => {

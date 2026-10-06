@@ -1,0 +1,32 @@
+# ============================================================================
+#  TatvaOS Bugs — bug.tatvaos.com
+# ============================================================================
+#
+#  Techvein's internal bug and feature tracker (apps/bugs). A separate app in
+#  its own compose project; Caddy is its only door.
+#
+#  The host is written out literally, NOT as {$BUG_DOMAIN}: a variable missing
+#  from the caddy service's environment list arrives as "" and takes EVERY
+#  site down (27 Aug). A literal cannot be missing.
+#
+#  If the tatvaos-bugs container is not running, this block answers 502 and
+#  nothing else is affected.
+# ============================================================================
+
+bug.tatvaos.com {
+    encode zstd gzip
+
+    # Screen recordings: allow uploads up to the app's own 100 MB limit.
+    request_body {
+        max_size 110MB
+    }
+
+    reverse_proxy bugs:3000
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}
