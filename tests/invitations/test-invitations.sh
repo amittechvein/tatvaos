@@ -119,8 +119,8 @@ n=$(mailpit_count "$R1")
 raw=$(mailpit_for "$R1")
 T1=$(printf '%s' "$raw" | token_from)
 [ -n "$T1" ] && pass "link carries the token in the fragment (/welcome#t=)" || fail "no /welcome#t= link in the mail"
-printf '%s' "$raw" | grep -qi 'welcome?t=' && fail "token also in a query string" || pass "token is NOT in a query string"
-printf '%s' "$raw" | grep -qi 'temporary password' && fail "mail mentions a temporary password" || pass "no temporary password in the mail"
+grep -qi 'welcome?t=' <<< "$raw" && fail "token also in a query string" || pass "token is NOT in a query string"
+grep -qi 'temporary password' <<< "$raw" && fail "mail mentions a temporary password" || pass "no temporary password in the mail"
 printf '%s' "$raw" | grep -q "$P1@techvein.local" && pass "mail names the new sign-in address" || fail "sign-in address missing from the mail"
 
 # the people list

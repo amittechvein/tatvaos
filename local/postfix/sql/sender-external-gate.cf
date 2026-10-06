@@ -30,14 +30,17 @@ user     = tatvaos_mailedge
 password = dev_mail_pw
 dbname   = tatvaos_mail
 
-# NOT EXISTS against the view rather than a join, so a sender we have never
-# heard of returns nothing and falls through to the normal unknown-sender
-# handling — rather than being silently restricted, which would look like an
-# unexplained delivery failure.
-query = SELECT 'internal_only'
-        FROM   mail.mailboxes m
-        WHERE  m.address = '%s'
-          AND  NOT EXISTS (
-                   SELECT 1 FROM mail.senders_allowed_external s
-                    WHERE  s.address = m.address
-               )
+# The decision lives in ONE place, mail.sender_gate_class() (migration
+# 20261001-mail-sender-gate-bounce.sql), so this file and the database cannot
+# disagree. It answers for a mailbox exactly as the query here used to, and
+# ALSO for the send API's bounce addresses: until 1 Oct 2026 this file looked
+# the envelope sender up among mailboxes only, a bounce address is not one,
+# and so the send API's bounce-tracked mail passed this gate unchecked. A
+# sender that is neither still returns nothing and falls through to the normal
+# unknown-sender handling, as before. A bounce-shaped address with no send
+# behind it is refused - see the function for why it fails closed.
+#
+# The mail edge has EXECUTE on that function and no grant on the tables it reads.
+# tests/mail-api/test-bounce-gate.sh runs this exact query text.
+query = SELECT c FROM (SELECT mail.sender_gate_class('%s') AS c) gate
+        WHERE  c IS NOT NULL

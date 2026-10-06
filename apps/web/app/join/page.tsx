@@ -354,7 +354,7 @@ export default function JoinPage() {
           <PasswordStrength value={password} />
           {numberOnWorkAccount && (
             <Alert tone="warn" className="mt-4">
-              This number is already used for sign-in on a work account, so it can't recover this one. Add a recovery email.
+              This number is already used for sign-in on a work account, so it can&apos;t recover this one. Add a recovery email.
             </Alert>
           )}
           <Field label="Recovery email" className="mt-4"
