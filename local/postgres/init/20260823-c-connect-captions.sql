@@ -131,28 +131,10 @@ END $$;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON connect.caption_lines TO tatvaos_app;
 
--- ============================================================================
---  Does this meeting have captions? Asked by the notes worker BEFORE it spends
---  anything on transcription.
---
---  SECURITY DEFINER and ids only, the same shape as every other queue in this
---  module: the worker runs with no tenant, takes an id, enters the tenant, and
---  does the ordinary thing under the policy.
--- ============================================================================
-CREATE OR REPLACE FUNCTION connect.meetings_with_captions(p_limit integer DEFAULT 10)
-RETURNS TABLE (meeting_id uuid)
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = connect, core, pg_temp
-AS $$
-    SELECT DISTINCT c.meeting_id
-      FROM connect.caption_lines c
-     LIMIT LEAST(GREATEST(COALESCE(p_limit, 10), 1), 50);
-$$;
-
-REVOKE ALL ON FUNCTION connect.meetings_with_captions(integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION connect.meetings_with_captions(integer) TO tatvaos_app;
+-- connect.meetings_with_captions was REMOVED on 28 Sept 2026: nothing called it, and a definer
+-- nothing calls is only a way past every isolation layer (decision 0007's
+-- definer review). 20260928-e-connect-drop-unused-definers.sql drops it
+-- from databases that still have it. Do not bring it back without a caller.
 
 DO $$
 BEGIN

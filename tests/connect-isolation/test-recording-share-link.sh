@@ -39,16 +39,20 @@ SCRATCH="$ROOT/.tmp/share-walk-$$"
 mkdir -p "$SCRATCH"
 LOG="$SCRATCH/api.log"
 
+# TATVAOS_PG_DB: the database, tatvaos_mail unless set. Set it to run against a
+# fresh database of your own when other sessions' APIs share tatvaos_mail
+# (their workers take this test's rows; found 1 Oct 2026).
+PGDB="${TATVAOS_PG_DB:-tatvaos_mail}"
 WSL_KEEPALIVE=""
 if [ -z "${TATVAOS_PSQL:-}" ]; then
     if command -v wsl >/dev/null 2>&1; then
         wsl -e sleep 3600 >/dev/null 2>&1 &
         WSL_KEEPALIVE=$!
         sleep 2
-        TATVAOS_PSQL="wsl -u postgres -e psql -d tatvaos_mail -Atc"
+        TATVAOS_PSQL="wsl -u postgres -e psql -d $PGDB -Atc"
         TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-$(wsl hostname -I | tr -d ' \r\n')}"
     else
-        TATVAOS_PSQL="docker exec tv-postgres psql -U postgres -d tatvaos_mail -Atc"
+        TATVAOS_PSQL="docker exec tv-postgres psql -U postgres -d $PGDB -Atc"
         TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-localhost}"
     fi
 fi
@@ -101,7 +105,7 @@ signin() {
 
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long"
 export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=$PGDB;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
 export Smtp__Host=localhost Smtp__Port=5870
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 
@@ -127,6 +131,9 @@ step "0. The database answers ($TATVAOS_PG_HOST)"
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
 [ -n "$(PG "SELECT 1")" ] || { fail "psql does not answer"; exit 1; }
 pass "psql answers"
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 
 step "1. Start the API"
 LK_KEY="testkey"; LK_SECRET="test-secret-at-least-32-characters-long"
@@ -138,7 +145,7 @@ export Connect__RecordingSharingTestTenants="11111111-1111-1111-1111-11111111111
 # sets it); JWT_SIGNING_KEY above is what token issuing reads. Test value.
 export Jwt__SigningKey="dev-only-key-at-least-32-characters-long"
 if [ "${MUTATE_BYPASS_RLS:-0}" = "1" ]; then
-    export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=postgres;Password=${TATVAOS_SUPER_PW:?set TATVAOS_SUPER_PW to the LOCAL postgres password};Pooling=true"
+    export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=$PGDB;Username=postgres;Password=${TATVAOS_SUPER_PW:?set TATVAOS_SUPER_PW to the LOCAL postgres password};Pooling=true"
     printf "  *** RLS BYPASSED: only the EF filter keeps another organisation's failure rows out of step 4. ***\n"
 fi
 dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
@@ -152,7 +159,6 @@ anon() { curl -s -w "\n%{http_code}" -X POST "$API/api/connect/shared/$1" -H "Co
 
 step "2. A host shares a ready recording as a password link"
 PG "UPDATE core.users SET role='org_owner' WHERE email='amit@techvein.local' AND role='owner'" >/dev/null
-PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
 HOST=$(signin "+919999900001")
 [ -n "$HOST" ] && pass "the host signed in" || { fail "host sign-in failed"; exit 1; }
 r=$(call POST "/api/connect/meetings" "$HOST" "{\"title\":\"Share walk $RUN\",\"kind\":\"instant\",\"waitingRoom\":\"off\"}")
