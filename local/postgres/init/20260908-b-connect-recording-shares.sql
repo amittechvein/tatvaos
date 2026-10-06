@@ -436,42 +436,10 @@ COMMENT ON TABLE connect.recording_access_log IS
 
 DROP FUNCTION IF EXISTS connect.share_allows_user(uuid, uuid, uuid);
 
-CREATE OR REPLACE FUNCTION connect.share_for_user(
-    p_recording_id uuid,
-    p_user_id      uuid,
-    p_user_tenant  uuid)
-RETURNS uuid
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = connect, pg_catalog
-AS $$
-    SELECT s.id
-      FROM connect.recording_shares s
-     WHERE s.recording_id = p_recording_id
-       AND s.revoked_at IS NULL
-       AND (s.expires_at IS NULL OR s.expires_at > now())
-       AND (
-             -- Same organisation as the recording.
-             (s.level = 'organisation' AND s.tenant_id = p_user_tenant)
-             -- Or named, in any organisation.
-          OR (s.level = 'named' AND EXISTS (
-                SELECT 1 FROM connect.recording_share_grants g
-                 WHERE g.share_id = s.id
-                   AND g.subject_user_id = p_user_id
-                   AND g.revoked_at IS NULL))
-           )
-     -- Narrower first: 'named' beats 'organisation'.
-     ORDER BY CASE s.level WHEN 'named' THEN 0 ELSE 1 END
-     LIMIT 1;
-$$;
-
-COMMENT ON FUNCTION connect.share_for_user(uuid, uuid, uuid) IS
-    'WHICH live share lets this signed-in user read this recording, or NULL. '
-    'Reads past RLS deliberately and in one place, because named grants may '
-    'cross organisations. Never answers the baseline question — that is '
-    'SeenMeetingAsync. Returns the narrowest matching share so the audit row '
-    'records the grant somebody actually chose.';
+-- connect.share_for_user was REMOVED on 28 Sept 2026: nothing called it, and a definer
+-- nothing calls is only a way past every isolation layer (decision 0007's
+-- definer review). 20260928-e-connect-drop-unused-definers.sql drops it
+-- from databases that still have it. Do not bring it back without a caller.
 
 
 -- ============================================================================

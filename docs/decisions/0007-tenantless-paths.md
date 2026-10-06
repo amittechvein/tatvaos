@@ -29,12 +29,12 @@ syncing leaves RLS blind. Several paths below have been bitten by exactly that.
 | `GET /api/connect/g/wait/{token}` (waiting room poll) | a parked guest or colleague | `connect.peek_lobby_request()`; on admission `connect.claim_lobby_admission()` → `EnterAnonymousScope(claimed.TenantId)` + `SyncTenantAsync` | lobby_requests, participants, meetings | `peek_lobby_request`, `claim_lobby_admission` | `tests/connect-isolation` step 3 |
 | `POST /api/connect/webhooks/livekit`: room and participant events | LiveKit, signed | `connect.webhook_meeting_tenant(meetingId)` from the room name `m-{id}` → `EnterAnonymousScope(…, "system")` + `SyncTenantAsync` | meeting_events, meetings, participants | `webhook_meeting_tenant`, `recording_allowed`, `storage_headroom` (auto-record) | `tests/connect-isolation` step 2 |
 | same, egress events (the recording callback) | LiveKit egress, signed | same, the room from `egressInfo.roomName` | recordings, meeting_notes, meetings | `webhook_meeting_tenant`, `reconcile_recording_storage` | `tests/connect-isolation` step 2b |
-| same, screen-share track events | LiveKit, signed | same | meetings | `webhook_meeting_tenant` | *read* |
-| `GET /api/connect/recordings/file` (ticketed download) | a browser holding a signed ticket | the ticket's claim → `EnterAnonymousScope(claim.TenantId, "system")` | meetings, participants, recordings | none | *read* |
+| same, screen-share track events | LiveKit, signed | same. Single-sharer meetings only; then asks LiveKit who is present | meetings, participants | `webhook_meeting_tenant` | `tests/connect-isolation/test-ticket-and-screenshare.sh` (walked 28 Sept) |
+| `GET /api/connect/recordings/file` (ticketed download) | a browser holding a signed ticket | the ticket's claim → `EnterAnonymousScope(claim.TenantId, "system")` + `SyncTenantAsync`. The tenant is the ONLY thing trusted; participant/organiser (or the share, via `share_still_allows`) is re-checked on every range request | meetings, participants, recordings | `share_still_allows` (share tickets) | `tests/connect-isolation/test-ticket-and-screenshare.sh` (walked 28 Sept): correctly signed tickets naming another organisation, a non-participant or another meeting are refused; a removed participant's ticket stops working |
 | `POST /api/connect/shared/{token}` (recording share link) | anyone holding a link | `connect.resolve_share_token()` → `EnterAnonymousScope(row.TenantId, "guest")` + `SyncTenantAsync`, before any EF read. Password failures are **counted and checked through definer functions** (`record_share_password_failure`, `share_password_paused_until`) | recordings, meetings, recording_shares (the password hash, after scoping) | `resolve_share_token`, `record_share_password_failure`, `share_password_paused_until`, `log_recording_access` | `tests/connect-isolation/test-recording-share-link.sh` (walked 28 Sept) |
 | `POST /api/connect/shared/renew` (playback ticket) | a holder of a signed ticket | none needed: no EF read. `connect.share_still_allows()` answers | none | `share_still_allows` | same test |
 | Meetings API `/api/v1/org/meetings…` | a customer's software, organisation key | `OrgApiAuth` → `EnterAnonymousScope(keyTenantId, "org_api")` + `SyncTenantAsync` | meetings | none | `tests/orgapi` (123), paging-promises (20, and 20 with RLS bypassed) |
-| `ConnectNotesWorker` (transcription, notes, minutes email, retention, stuck recordings, invitation sweep) | the API process, on a timer | a definer function lists work across organisations (`pending_notes`, `pending_transcription`, `pending_minutes_email`, `expired_recordings`, `stuck_recordings`, `notes_tenant`, `recording_tenant`), then `EnterAnonymousScope(tenantId, "system")` per item | meetings, participants, recordings, transcripts, caption_lines, meeting_notes | the seven named, plus `attendance`, `reconcile_recording_storage`, `sweep_meeting_invitations`, `webhook_meeting_tenant` | **read only. No suite drives the worker.** This is the largest gap in the list |
+| `ConnectNotesWorker` (transcription, notes, minutes email, retention, stuck recordings, invitation sweep) | the API process, on a timer | a definer function lists work across organisations (`pending_notes`, `pending_transcription`, `pending_minutes_email`, `expired_recordings`, `stuck_recordings`, `notes_tenant`, `recording_tenant`), then `EnterAnonymousScope(tenantId, "system")` per item | meetings, participants, recordings, transcripts, caption_lines, meeting_notes | the seven named, plus `attendance`, `reconcile_recording_storage`, `sweep_meeting_invitations`, `webhook_meeting_tenant` | notes + minutes email: `tests/connect-isolation/test-minutes-worker.sh` (28 Sept). Transcription, retention and stuck-recording repair: **read only** (they need a media server or a transcription provider) |
 
 Every read of `ConnectMeetings` (26 sites, 8 files) was checked before PR
 288's filter went in. The table in PR 288's description lists them.
@@ -44,56 +44,95 @@ Every read of `ConnectMeetings` (26 sites, 8 files) was checked before PR
 The step-two column follows the ruling: "the child tables get a `tenant_id`
 column rather than a join through the meeting".
 
-| Table | `tenant_id` | EF filter | RLS forced | Step two |
+| Table | `tenant_id` | EF filter | RLS policy | Since |
 |---|---|---|---|---|
-| meetings | yes | **yes (PR 288)** | yes | done in step one |
-| meeting_invitations | yes | no | yes | filter only: the column exists |
-| recording_shares | yes | no | yes | filter only |
-| recording_share_grants | yes | no | yes | filter only |
-| recording_access_log | yes | no | yes | filter only |
-| tenant_settings | yes | no | yes | filter only |
-| participants | **no** | no | yes | add `tenant_id`, then the filter |
-| lobby_requests | **no** | no | yes | add, then filter |
-| meeting_events | **no** | no | yes | add, then filter |
-| meeting_chat | **no** | no | yes | add, then filter (high volume: the ruling's reason) |
-| caption_lines | **no** | no | yes | add, then filter (high volume) |
-| meeting_blocks | **no** | no | yes | add, then filter |
-| meeting_notes | **no** | no | yes | add, then filter |
-| recordings | **no** | no | yes | add, then filter |
-| transcripts | **no** | no | yes | add, then filter |
+| meetings | yes | yes | tenant_id | step one (PR 288) |
+| meeting_invitations, recording_shares, recording_share_grants, recording_access_log, tenant_settings | yes (already had it) | **yes** | tenant_id | step two (28 Sept) |
+| recording_share_password_failures | yes | **yes** | tenant_id | walked and filtered 28 Sept (PR 288) |
+| participants, lobby_requests, meeting_events, meeting_chat, caption_lines, meeting_blocks, meeting_notes, recordings, transcripts | **added 28 Sept**, set by a trigger from the meeting | **yes** | **tenant_id** (was a per-row join through the meeting) | step two (`20260928-connect-child-tenant-id.sql`) |
+
+Step two gave the nine tables without a `tenant_id` their own column. **Nine, not
+the "ten" this list said on 25 Sept.** The five that already had one got the EF
+filter only. The trigger ignores whatever a writer supplies and takes the
+meeting's `tenant_id`; a writer who cannot see the meeting gets NULL and is
+refused. `tests/tenant-filters` now lists no Connect entity among its gaps.
 
 "RLS forced" was read from `pg_class` on the local database built from this
 branch's init files. Production was not read.
 
-## 3. Definer functions in `connect`
+## 3. Definer functions in `connect`: reviewed 28 September
 
 These run as their owner, so **neither RLS nor any EF filter applies inside
-them.** Each is a deliberate hole, and its body is the only guard. There are 24
-on the local database:
+them.** The body is the only guard. There were **30** on 28 Sept, not the 24 this
+list first counted: `main` added six with recording sharing. The review asked,
+for each: what it returns, who can call it, where its input comes from, and
+whether a caller could get another organisation's rows out of it.
 
-`claim_lobby_admission`, `expired_recordings`, `log_recording_access`,
-`meeting_chat_lines`, `meetings_with_captions`, `minutes_recipients`,
-`minutes_unreachable`, `notes_tenant`, `peek_lobby_request`,
-`pending_minutes_email`, `pending_notes`, `pending_transcription`,
-`reconcile_recording_storage`, `recording_allowed`, `recording_bytes`,
-`recording_retention_days`, `recording_tenant`, `resolve_meeting_code`,
-`resolve_share_token`, `share_for_user`, `storage_headroom`, `stuck_recordings`,
-`sweep_meeting_invitations`, `webhook_meeting_tenant`.
+**Across all 30:**
+- **Every body names its tables with their schema** (`connect.…`, `core.…`).
+  So none could be hijacked by a temporary table, even the 11 that left
+  `pg_temp` off their search path, which Postgres then searches first.
+- **Every input that reaches a function returning content** comes from one
+  of four places:
+  - a signed or secret token;
+  - the session's own user or organisation;
+  - an id the worker got from another definer;
+  - an id the caller already proved it may see, through a filtered read.
+- **`20260928-d-connect-definer-review.sql`** makes three things true by
+  construction, and the isolation suite checks all three:
+  - every connect definer searches `pg_catalog` first and `pg_temp` last;
+  - none is executable by `PUBLIC` (one was);
+  - the two attendee functions answer only for the caller's own organisation.
+  - Red on a database without the file, green on a fresh database after every
+    file ran twice.
 
-**Not yet reviewed in this inventory:** what each one returns, and whether it
-could return another organisation's rows to its caller. The 25 Sept audit
-(Hire lane, PR 275) checked only that each pins `search_path`; eight Connect
-functions omit `pg_temp` and were assigned to this lane.
+| Function | Returns | Input comes from | Verdict |
+|---|---|---|---|
+| `resolve_meeting_code` | a meeting's id, org, title, state | the meeting code in a guest link (a secret) | by design: the code is the invitation |
+| `peek_lobby_request`, `claim_lobby_admission` | a lobby request, by token hash | the wait token (secret) | by design; claim is single-use |
+| `resolve_share_token` | a share and its org | a share link token (secret) | by design; only password/public levels, only live shares |
+| `share_access_for_user` | which share lets a user view a recording | the session's user id | safe: the reader's org is read from `core.users`, not passed |
+| `share_still_allows`, `share_is_live`, `share_password_paused_until`, `record_share_password_failure` | yes/no, a time, a counted failure | a share id held by a signed ticket or resolved from a token | safe: share ids are unguessable, and each answer is about that share only |
+| `log_recording_access` | writes one access row | a share id plus the session's user and org | safe: tenant taken from the share row |
+| `webhook_meeting_tenant`, `recording_tenant`, `notes_tenant` | only an org id | the LiveKit room name (signed webhook) or the worker's own list | safe: an org id for an unguessable id, with no content |
+| `pending_notes`, `pending_transcription`, `pending_minutes_email`, `expired_recordings`, `stuck_recordings` | ids of work across all orgs | the worker, on a timer | by design: the worker's one cross-org question; it enters each org before reading content |
+| `sweep_meeting_invitations`, `sweep_share_password_failures` | a count of rows deleted | the worker | by design: retention |
+| `reconcile_recording_storage`, `storage_headroom`, `recording_allowed`, `recording_retention_days` | numbers and flags for one org | the org the request or worker is acting for | safe. `recording_retention_days` **was executable by PUBLIC**; revoked |
+| `minutes_recipients` | **attendee emails and names** for a meeting | the minutes routes (after a filtered "did you see this meeting" check) and the worker (after entering the org) | callers were safe; **the function answered any org's meeting to anyone who could call it.** Now it answers only for the caller's current org. Red before (Techvein got a School attendee), green after |
+| `minutes_unreachable` | a count for a meeting | as above | as above: Techvein got a School count before, 0 after |
+| `meeting_chat_lines` | **any meeting's chat** | **nothing calls it** | **unused, and the widest of all. Dropped** in `20260928-e` (awaiting Mr. Singh's ruling; not additive) |
+| `meetings_with_captions`, `recording_bytes`, `share_for_user` | ids, a byte count, a share id | **nothing calls them** | unused; `share_for_user` also ignored its third argument. **Dropped** in `20260928-e`, same ruling pending |
+
+**What would prove this review wrong:**
+- a caller I did not find that passes a user-chosen id to a content function;
+- a query run by hand on the server that relies on `recording_retention_days`
+  being PUBLIC;
+- a definer created after this date without the pattern. The isolation
+  suite now fails on that.
 
 ## 4. Open items
 
-1. **Drive `ConnectNotesWorker` in a test.** It is the widest tenantless path
-   and nothing runs it.
-2. **Walk the ticketed download and the screen-share event.**
-3. **Review each definer function's body** against section 3's question.
-4. **Step two:** `tenant_id` on the ten child tables, then filters. The
-   enforcement test (PR 288) lists them as its only allowed exceptions, so the
-   list can only shrink.
+1. **Drive `ConnectNotesWorker` in a test: done 28 Sept.**
+   `tests/connect-isolation/test-minutes-worker.sh` runs the real worker with an
+   ended meeting in two organisations: notes written for both, each with its
+   own `tenant_id`, and minutes mailed to each attendee once. Calibrated: with
+   the notes writer's `EnterAnonymousScope` removed, it goes red, 7 of 14
+   ("Tenant context was not resolved", "Connect notes sweep failed").
+2. **Walk the ticketed download and the screen-share event: done 28 Sept.**
+   `tests/connect-isolation/test-ticket-and-screenshare.sh`, 32 checks, both
+   paths now in section 1. Calibrated: participant re-check removed, 2 red;
+   the webhook lookup entering the wrong organisation, 2 more red.
+   Found on the way, nothing to fix: the ticket's key (`Jwt:SigningKey`) also
+   signs access tokens and MFA challenges, with no label separating them. They
+   cannot be confused today (a token always contains `.`, a challenge starts
+   `mfa-challenge:`, a ticket body can contain neither), but that is a property
+   of three formats, not a design; a fourth user of the key should add a prefix.
+   And `SyncTenantAsync` in the screen-share handler is not load-bearing today
+   (EF reopens the connection after the lookup; measured), so its comment
+   overstates it. Left in as a safety net.
+3. **Review each definer function's body: done 28 Sept** (section 3). Open:
+   the four unused ones are dropped in `20260928-e`; merging that is Mr. Singh's call.
+4. **Step two: done 28 Sept** (see section 2).
 5. **`core.departments`** (the ruling's first addition): policy on, the mail
    edge reads it through a definer function. Not Connect, but absorbed by 0007.
    It is its own migration PR.
