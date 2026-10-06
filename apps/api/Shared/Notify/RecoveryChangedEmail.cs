@@ -44,7 +44,14 @@ public static class RecoveryChangedEmail
     /// <param name="baseUrl">The console origin, e.g. https://core.tatvaos.com.</param>
     /// <param name="what">One sentence saying what changed. Must already be masked.</param>
     /// <param name="whenUtc">When it changed; rendered in IST for the reader.</param>
-    public static string Html(string displayName, string baseUrl, string what, DateTimeOffset whenUtc)
+    /// <param name="notMeUrl">
+    /// Decision 0009: when an ADMINISTRATOR changed the address, the person gets
+    /// a link that undoes it (valid 30 days, reverts only, never signs anyone
+    /// in). Given, it replaces the change-your-password advice below; the
+    /// person did not do this, so "if it was you" does not apply.
+    /// </param>
+    public static string Html(string displayName, string baseUrl, string what, DateTimeOffset whenUtc,
+                              string? notMeUrl = null)
     {
         var name = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(displayName) ? "there" : displayName.Split(' ')[0]);
         var change = WebUtility.HtmlEncode(what);
@@ -97,14 +104,30 @@ public static class RecoveryChangedEmail
               </p>
             </td>
           </tr>
-          <tr>
+          {(notMeUrl is null ? "" : $@"<tr>
+            <td style=""padding:18px 32px 30px;"">
+              <p style=""margin:0 0 16px;font-size:15px;line-height:1.6;color:{Body};"">
+                <strong style=""color:{Ink};"">If you did not ask for this,</strong> undo it. The link
+                works for 30 days, puts your previous recovery email back, and does not sign anyone in.
+              </p>
+              <table role=""presentation"" cellpadding=""0"" cellspacing=""0""><tr>
+                <td style=""border-radius:10px;background:{Green};"">
+                  <a href=""{WebUtility.HtmlEncode(notMeUrl)}""
+                     style=""display:inline-block;padding:12px 22px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px;"">
+                    This was not me
+                  </a>
+                </td>
+              </tr></table>
+            </td>
+          </tr>")}
+          {(notMeUrl is not null ? "" : $@"<tr>
             <td style=""padding:18px 32px 8px;"">
               <p style=""margin:0;font-size:15px;line-height:1.6;color:{Body};"">
                 <strong style=""color:{Ink};"">If this was you,</strong> there is nothing to do.
               </p>
             </td>
-          </tr>
-          <tr>
+          </tr>")}
+          {(notMeUrl is not null ? "" : $@"<tr>
             <td style=""padding:10px 32px 30px;"">
               <p style=""margin:0 0 16px;font-size:15px;line-height:1.6;color:{Body};"">
                 <strong style=""color:{Ink};"">If it was not you,</strong> someone may be using your
@@ -122,7 +145,7 @@ public static class RecoveryChangedEmail
                     Review recovery settings
                   </a>
                 </td>
-              </tr></table>
+              </tr>")}</table>
             </td>
           </tr>
           <tr>

@@ -34,6 +34,12 @@ export interface OrgRow {
 export interface PlanRow {
   id: string;
   name: string;
+  /**
+   * 'personal' (20260926-z-personal-plans.sql): held by one person in the
+   * personal house, limits ENFORCED. Never offered to an organisation — the
+   * API refuses it too.
+   */
+  audience?: 'organisation' | 'personal';
   maxUsers: number | null;
   storageModel: string;
   perUserQuotaBytes: number | null;
@@ -42,6 +48,9 @@ export interface PlanRow {
   includedProducts: string[];
   pricePerUserMonthly: number | null;
   priceMonthly: number | null;
+  /** Yearly prices (billing, 26 Sept 2026). null = 12 x monthly. */
+  pricePerUserYearly?: number | null;
+  priceYearly?: number | null;
   /** AI credits (26 Sept 2026): per user × users, or one pool. Null amount = no limit. */
   aiCreditModel?: string;
   aiCreditsPerUser?: number | null;
@@ -113,6 +122,8 @@ export interface UpsertPlanBody {
   includedProducts?: string[];
   pricePerUserMonthly?: number | null;
   priceMonthly?: number | null;
+  pricePerUserYearly?: number | null;
+  priceYearly?: number | null;
   aiCreditModel?: 'per_user' | 'pooled';
   aiCreditsPerUser?: number | null;
   aiCreditsPooled?: number | null;

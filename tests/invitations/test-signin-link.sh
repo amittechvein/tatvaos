@@ -95,6 +95,9 @@ printf "\n  Sign-in link - asserting the %s behaviour\n  tree under test: %s\n" 
 
 step "0. Start the API, sign in the owner, give the colleague a password and a session"
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long" ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
 export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
 export Smtp__Host=localhost Smtp__Port=5870

@@ -10,6 +10,7 @@ import { mailApi } from '@/lib/mail';
 import { linkApi } from '@/lib/space';
 import { fetchMyStorage } from '@/lib/myStorage';
 import { cleanPastedHtml } from '@/lib/pasteHtml';
+import { replyRecipients } from '@/lib/replyRecipients';
 import { cleanSignatureHtml } from '@/lib/signatureHtml';
 import { splitPlainDraft, textToHtml, typedRange, typedText } from '@/lib/mailAi';
 import { HelpMeWriteButton, HelpMeWritePanel, useMailAiAvailable } from './HelpMeWrite';
@@ -208,15 +209,6 @@ export interface ComposerSignature {
   enabled: boolean;
   /** Separate from `enabled` — most people don't want it on every reply. */
   includeOnReply: boolean;
-}
-
-/** Recipients of the original, minus the current mailbox, for reply-all. */
-function replyAllCc(original: Message | null | undefined, self: string): string {
-  if (!original) return '';
-  const others = [...(original.to ?? []), ...(original.cc ?? [])]
-    .map((a) => a.email)
-    .filter((e) => e && e.toLowerCase() !== self.toLowerCase() && e.toLowerCase() !== original.from.email.toLowerCase());
-  return [...new Set(others)].join(', ');
 }
 
 // ── THE QUOTED ORIGINAL ──────────────────────────────────────────────────
@@ -430,8 +422,12 @@ export function Composer({
   /** The plain-text signature last put into the body, to swap on a mailbox switch. */
   const seededPlainSig = useRef('');
 
-  const [to, setTo] = useState(mode === 'forward' ? '' : replyTo ? replyTo.from.email : '');
-  const initialCc = mode === 'replyAll' ? replyAllCc(replyTo, selfAddress) : '';
+  // Who it goes to is decided in lib/replyRecipients, not here: answering a
+  // message you SENT used to put you in To, and the copy that came back made
+  // the conversation show one mail twice (28 Sept 2026 — see that file).
+  const initial = replyRecipients(replyTo, mode, selfAddress);
+  const [to, setTo] = useState(initial.to);
+  const initialCc = initial.cc;
   const [cc, setCc] = useState(initialCc);
   const [showCc, setShowCc] = useState(initialCc.length > 0);
 
@@ -499,8 +495,9 @@ export function Composer({
     if (seenMode.current === mode) return;
     seenMode.current = mode;
 
-    setTo(mode === 'forward' ? '' : replyTo ? replyTo.from.email : '');
-    const nextCc = mode === 'replyAll' ? replyAllCc(replyTo, selfAddress) : '';
+    const next = replyRecipients(replyTo, mode, selfAddress);
+    setTo(next.to);
+    const nextCc = next.cc;
     setCc(nextCc);
     // Opened when there is something to show; left open otherwise, because
     // collapsing a row somebody has just been typing in is its own surprise.

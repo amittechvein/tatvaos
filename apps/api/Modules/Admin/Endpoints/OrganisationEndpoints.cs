@@ -21,7 +21,7 @@ public static class OrganisationEndpoints
     public static void MapOrganisationEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/admin/organisations")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
 
         // The sales queue. Not a report — a work list.
@@ -37,7 +37,7 @@ public static class OrganisationEndpoints
         // Plans are platform-wide reference data, not tenant data — no RLS,
         // no scope switch, just the catalogue the change-plan dialog offers.
         var plans = app.MapGroup("/api/admin/plans")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         plans.MapGet("/", PlansAsync);
         plans.MapPost("/", CreatePlanAsync);
@@ -53,7 +53,7 @@ public static class OrganisationEndpoints
         // does, drifts again. Read-only on purpose: the catalogue is changed
         // by a migration, not by an operator.
         var products = app.MapGroup("/api/admin/products")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         products.MapGet("/", ProductsAsync);
     }
@@ -78,10 +78,11 @@ public static class OrganisationEndpoints
             .ToLookup(l => l.PlanId);
         return Results.Ok(plans.Select(p => new
         {
-            p.Id, p.Name, p.MaxUsers, p.StorageModel,
+            p.Id, p.Name, p.Audience, p.MaxUsers, p.StorageModel,
             p.PerUserQuotaBytes, p.PooledStorageBytes, p.MaxDomains,
             p.IncludedProducts, p.PricePerUserMonthly, p.PriceMonthly,
             p.AiCreditModel, p.AiCreditsPerUser, p.AiCreditsPooled,
+            p.PricePerUserYearly, p.PriceYearly,
             // null = every feature of the included modules (see PlanEntitlements).
             p.IncludedFeatures,
             featureLimits = limits[p.Id].ToDictionary(l => l.FeatureCode, l => l.LimitValue),
@@ -99,6 +100,8 @@ public static class OrganisationEndpoints
             return "A pooled plan needs a pool size.";
         if (req.AiCreditModel is not (null or "per_user" or "pooled"))
             return "AI credit model must be 'per_user' or 'pooled'.";
+        if (req.PricePerUserYearly is < 0 || req.PriceYearly is < 0)
+            return "Yearly prices cannot be negative. Leave empty for twelve times the monthly price.";
         if (req.AiCreditsPerUser is < 0 || req.AiCreditsPooled is < 0)
             return "AI credits cannot be negative. Leave it empty for no limit, or 0 for none.";
         return null;
@@ -140,10 +143,18 @@ public static class OrganisationEndpoints
         UpsertPlanRequest req, AppDbContext db, AuditWriter audit, CancellationToken ct)
     {
         if (ValidatePlan(req) is string err) return Results.BadRequest(new { error = err });
+        // Three personal plans, editable; a new one is a code change until there
+        // is a reason (Mr. Singh on PR 313, 28 Sept 2026). The form never sends
+        // "personal"; this refuses a direct request that does.
+        if (req.Audience == "personal")
+            return Results.BadRequest(new { error = "Personal plans are Free, Basic and Premium. Edit those; new personal plans are not created here." });
 
         var plan = new Plan
         {
             Name = req.Name.Trim(),
+            // Chosen once, at creation. Moving a plan between audiences would
+            // strand whoever is on it on a plan of the wrong kind.
+            Audience = "organisation",
             MaxUsers = req.MaxUsers,
             StorageModel = req.StorageModel,
             PerUserQuotaBytes = req.StorageModel == "per_user" ? req.PerUserQuotaBytes : null,
@@ -152,6 +163,8 @@ public static class OrganisationEndpoints
             IncludedProducts = req.IncludedProducts ?? ["mail"],
             PricePerUserMonthly = req.PricePerUserMonthly,
             PriceMonthly = req.PriceMonthly,
+            PricePerUserYearly = req.PricePerUserMonthly is null ? null : req.PricePerUserYearly,
+            PriceYearly = req.PriceMonthly is null ? null : req.PriceYearly,
         };
         ApplyAiCredits(plan, req);
         db.Plans.Add(plan);
@@ -191,6 +204,8 @@ public static class OrganisationEndpoints
         if (req.IncludedProducts is not null) plan.IncludedProducts = req.IncludedProducts;
         plan.PricePerUserMonthly = req.PricePerUserMonthly;
         plan.PriceMonthly = req.PriceMonthly;
+        plan.PricePerUserYearly = req.PricePerUserMonthly is null ? null : req.PricePerUserYearly;
+        plan.PriceYearly = req.PriceMonthly is null ? null : req.PriceYearly;
         ApplyAiCredits(plan, req);
         if (await ApplyFeaturesAsync(db, plan, req, ct) is string ferr)
             return Results.BadRequest(new { error = ferr });
@@ -220,6 +235,12 @@ public static class OrganisationEndpoints
     {
         var plan = await db.Plans.FirstOrDefaultAsync(p => p.Id == id, ct);
         if (plan is null) return Results.NotFound();
+
+        // Personal Free has no subscriptions by design — everyone in the house
+        // without a row is on it (EffectiveSettings) — so the in-use check
+        // below would pass and delete the plan half the platform stands on.
+        if (id == TatvaOS.Api.Shared.Plans.EffectiveSettings.PersonalFreePlanId)
+            return Results.BadRequest(new { error = "Personal Free is where every personal account without a plan sits. Edit it; it cannot be deleted." });
 
         // Refuse to delete a plan any organisation is on — that would orphan
         // their subscription's foreign key. The operator moves them first.
@@ -257,11 +278,18 @@ public static class OrganisationEndpoints
 
         var plan = await db.Plans.AsNoTracking().FirstOrDefaultAsync(p => p.Id == req.PlanId, ct);
         if (plan is null) return Results.BadRequest(new { error = "Unknown plan." });
+        // Personal plans belong to people, and the house's people each hold
+        // their own (PersonalPlanEndpoints). Neither crosses over.
+        if (plan.Audience != "organisation")
+            return Results.BadRequest(new { error = "That is a personal plan. An organisation needs an organisation plan." });
+        if (org.Kind == TatvaOS.Api.Modules.Personal.PersonalHouse.KindPersonalHouse)
+            return Results.BadRequest(new { error = "Personal accounts each have their own plan. Change it on the person, not the house." });
 
         tenant.EnterPlatformScope(org.Id, CurrentUserId(http));
         await db.SyncTenantAsync(ct);
 
-        var sub = await db.Subscriptions.OrderByDescending(s => s.StartedAt).FirstOrDefaultAsync(ct);
+        var sub = await db.Subscriptions.Where(s => s.UserId == null)
+            .OrderByDescending(s => s.StartedAt).FirstOrDefaultAsync(ct);
         object before;
         if (sub is null)
         {
@@ -384,6 +412,7 @@ public static class OrganisationEndpoints
                 .FirstOrDefaultAsync(ct);
             var domainCount = await db.Domains.CountAsync(ct);
             var sub = await db.Subscriptions.AsNoTracking()
+                .Where(s => s.UserId == null)
                 .OrderByDescending(s => s.StartedAt)
                 .Select(s => new { s.PlanId, s.Status, s.Seats })
                 .FirstOrDefaultAsync(ct);
@@ -416,6 +445,7 @@ public static class OrganisationEndpoints
         var domain = await db.Domains.AsNoTracking()
             .Where(d => d.Type == "primary").Select(d => d.Fqdn).FirstOrDefaultAsync(ct);
         var sub = await db.Subscriptions.AsNoTracking()
+            .Where(s => s.UserId == null)
             .OrderByDescending(s => s.StartedAt)
             .Select(s => new { s.PlanId, s.Status, s.Seats, PlanName = s.Plan!.Name })
             .FirstOrDefaultAsync(ct);
@@ -465,7 +495,7 @@ public static class OrganisationEndpoints
         if (await db.Domains.IgnoreQueryFilters().AnyAsync(d => d.Fqdn == fqdn, ct))
             return Results.Conflict(new { error = $"The domain {fqdn} is already registered on this platform." });
 
-        if (!await db.Plans.AnyAsync(p => p.Id == req.PlanId, ct))
+        if (!await db.Plans.AnyAsync(p => p.Id == req.PlanId && p.Audience == "organisation", ct))
             return Results.BadRequest(new { error = "Unknown plan." });
 
         // The tenant row is now identity and contact details only. Commercial
@@ -693,7 +723,7 @@ public static class OrganisationEndpoints
     // ------------------------------------------------------------------
 
     private static Guid CurrentUserId(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var id) ? id : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 
     /// <summary>
     /// Turns "ABC School & Co." into abcschool.tatvaos.com, adding a numeric
