@@ -143,31 +143,37 @@ The record Amit asked for. A script is switched on in `CHECKED_SCRIPTS` (`apps/r
 | Latin | English | (always on) | | |
 | Devanagari | Hindi, Marathi | *pending: the gate's sample goes to a reader* | | |
 
-## 10. Before switch-on: the render pool is shared with Docs saves
+## 10. Before switch-on: what PDFs and spreadsheets do to Docs saves in the same container
 
-**Mr. Singh, 6 Oct 2026.** No live risk today. But it's invisible until switch-on day, so it's a switch-on item for **both** Sheets and PDF.
+**Mr. Singh, 6–7 Oct 2026.** No live risk today: Sheets is off and nothing calls `/render/pdf`. But it's invisible until the day it isn't, so it's a switch-on item for **both** Sheets and PDF.
 
-**The facts** (`apps/render/src/server.mjs`):
-- **Two workers by default** (`RENDER_WORKERS ?? 2`, capped at 4).
-- **One FIFO queue**, with no priority.
-- **A 10 s limit per job**, in a container capped at **512 MB and one CPU**.
-- **The API waits 12 s for any render** (`DocsRenderClient.Timeout`).
+*First written 6 Oct as a worker-pool question. Corrected 7 Oct by Mr. Singh, reading the 370/390 resolution: the pool isn't the main constraint. The PDF path is.*
 
-Today the pool does one job, Docs saves for Techvein. After the Sheets build (PRs 390-391) and the PDF engine (PR 370) it does three: document saves, spreadsheet builds and PDFs. All three share the same workers.
+**The facts, read from the code and compose on 7 Oct:**
+- **Render workers:** 2 by default (`RENDER_WORKERS ?? 2`, capped at 4), one FIFO queue, no priority, a 10 s limit per job. The API waits 12 s for any render (`DocsRenderClient.Timeout`).
+- **A PDF holds a worker only for its render phase.** The worker goes back to the pool (`server.mjs`, `idle.push(w)`) *before* Typst starts.
+- **Typst then runs as a child process of the server, with nothing limiting how many run at once.** N simultaneous PDF requests means N Typst processes.
+- **Each PDF job writes into a folder under `/tmp`:** its document and up to **500 pictures** per request (`render-pdf.mjs`, `mkdtemp`). In the container `/tmp` is a **16 MB tmpfs**, and tmpfs pages count against the container's memory.
+- **The container's limits:** 512 MB of memory, one CPU, **64 processes and threads** (`pids_limit`). Node's main thread, its worker threads and every Typst process with its own threads all count against the 64.
 
-**The failure it allows:** two PDF builds arriving together hold both workers for up to 10 s each. A Techvein document save queues behind them until the API's 12 s wait runs out, and the person is told their document couldn't be saved. Nothing is broken; the queue doesn't know which of its three customers is the live one.
+**The exposure, in order of harm:**
+1. **Out of memory:** many Typst processes, fonts loaded in each, pictures in `/tmp`, all inside 512 MB. If the container is killed for memory, **it takes Techvein's Docs saves down with it**: every save fails until it restarts.
+2. **`/tmp` full:** a few picture-heavy PDFs at once fill 16 MB. Every PDF in flight fails together (`pdf_failed`).
+3. **The process cap:** if Typst's threads reach the 64, a render worker killed by the 10 s limit may not be replaceable. **The pool would shrink for good** until a restart. *A hypothesis to measure, not a finding.*
+4. **Queueing**, the original concern: long spreadsheet builds (and PDF renders) hold both workers, and a document save waits past the API's 12 s.
 
-**Before Sheets or PDF is switched on:**
-1. **Measured, not reasoned:** what happens to a Docs save when both workers are busy.
-   - In the hardened container (`tests/docs-render/container-test.sh`'s compose), with its real limits.
-   - The longest jobs each kind can produce are held in both workers: a PDF of the largest gate document, a 20,000-cell sheet.
-   - Then a document save is sent, and its time to answer is recorded.
-   - Repeated at `RENDER_WORKERS` 2, 3 and 4, with the container's memory peak each time (512 MB is part of the same question).
-2. **Then one of:**
-   - a larger pool;
-   - a separate pool, or priority, for document saves;
-   - or a number showing the pool is big enough for real use.
+**Before Sheets or PDF is switched on, measured, not reasoned,** in the hardened container (`tests/docs-render/container-test.sh`'s compose, its real limits):
+1. **Concurrent PDF builds, 2, 5 and 10 at once, with pictures** (the largest gate document, and one near the 500-picture cap). For each: the container's **peak memory**, `/tmp`'s peak use, the peak process/thread count, and every request's answer.
+2. **A Docs save sent while that's happening:** its time to answer and its result.
+3. **A worker killed by the 10 s limit while Typst processes are running:** does its replacement start? (The process-cap hypothesis.)
+4. **Both workers busy with the longest jobs** (a 20,000-cell sheet, a PDF render), then a Docs save, at `RENDER_WORKERS` 2, 3 and 4: its time to answer.
 
-   Ruled by Mr. Singh. Amit if it needs more capacity (cost).
+**Then decide:**
+- **what limits how many Typst processes run together**, and **what a request gets when it hits that limit** (a clear "busy, try again" rather than the container dying);
+- the pool size, or a separate pool or priority for document saves;
+- `/tmp`'s size, against the 500-picture cap;
+- whether 512 MB / 64 processes stays.
+
+Mr. Singh's instinct is a small semaphore and a queue in `buildPdf`, so the eleventh request waits instead of the container dying. **Measure before building it.** Rulings: Mr. Singh. Anything needing more capacity (cost): Amit.
 
 It sits on the switch-on checklist beside the AI-lists line and the personal-table audit.
