@@ -53,7 +53,16 @@ public static class MyStorageEndpoints
         // No explicit allowance means inherit — department, then organisation.
         // Resolved here rather than in SQL because that inheritance already
         // lives in StorageAllocator and two copies of it would disagree.
-        var quota = user.StorageQuotaBytes
+        //
+        // The allowance itself comes from core.user_storage() — the same
+        // function the mail edge and Space enforce against — so this page
+        // cannot show one number while a different one is enforced. For an
+        // organisation it returns storage_quota_bytes, as before; for a
+        // personal account, their plan's (20260926-zzz-personal-limits.sql).
+        var enforced = await db.Database
+            .SqlQuery<long?>($"SELECT quota_bytes AS \"Value\" FROM core.user_storage({uid})")
+            .FirstOrDefaultAsync(ct);
+        var quota = enforced
                     ?? await storage.ResolveQuotaAsync(tenant.TenantId, user.DepartmentId, null, "mail", ct);
 
         var used = rows.Sum(r => r.UsedBytes);

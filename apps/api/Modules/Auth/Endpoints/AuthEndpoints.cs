@@ -1334,6 +1334,11 @@ public static class AuthEndpoints
         {
             user = Describe(user),
             organisation = org is null ? null : new { org.Id, org.Name, org.Type, org.Status },
+            // A personal account (build plan §4.1): the web shows Mail,
+            // Calendar, Connect, Space and Account — no organisation screens.
+            // The server refuses those regardless (PersonalGuard); this only
+            // stops the app offering them.
+            personal = org?.Kind == TatvaOS.Api.Modules.Personal.PersonalHouse.KindPersonalHouse,
             products,
             mailboxAddress = mailbox,
         });

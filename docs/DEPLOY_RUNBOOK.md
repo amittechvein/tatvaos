@@ -211,6 +211,38 @@ the checkout needs the same `umask 077`.
 
 ---
 
+## Files on the server that git does not know about
+
+The production checkout (`/srv/tatvaos-production`) holds files that are in no
+commit. A deploy leaves them alone, because `git` never touches an untracked
+file. **That is the only thing protecting them**: nothing in the repository
+knows they exist, so a person tidying the checkout, or a `git clean`, would
+remove them without warning. **Never run `git clean` on the server.**
+
+Listed 4 Oct 2026 (Mr. Singh, on PR 394), from `git status --porcelain
+--untracked-files=all` on the checkout:
+
+| File | What it is | If it is removed |
+|---|---|---|
+| `infra/docker/caddy/conf.d/bug.caddy` | **The bug tracker's door**, `bug.tatvaos.com`. Caddy loads every file in `conf.d`, this one included; the bug tracker has its own container and deploy script, outside this repository | `bug.tatvaos.com` stops answering at the next Caddy reload or deploy. It looks like clutter in a folder of tracked doors. **It is not** |
+| `.environment` | The word `production`. `deploy.sh` reads it and refuses to run when it disagrees with the environment named (`docs/setup/08-cloud-environments.md`) | `deploy.sh` loses its wrong-environment check |
+| `infra/docker/.env` | Every production secret (the section above). Ignored by git on purpose | Production does not start |
+| `infra/docker/.env.before-<reason>-<time>` | Dated copies taken before each change to `.env` (the section above) | Nothing breaks. They are removed by a person after seven days, saying which ones |
+| `backups/pre-deploy-*.sql.gz.enc` | Encrypted database copies, one per deploy, kept `BACKUP_KEEP_DAYS` (`docs/runbooks/backup-and-restore.md`) | The rollback copies for recent deploys are lost |
+| `.disk-alert-state` | `infra/scripts/disk-alert.sh`'s memory of what it last reported | The next run reports again; harmless |
+
+**Before tidying anything on the server**, list the untracked files and check
+each name against this table. A file that is **not** in the table is a
+question for its owner, never rubbish, and once answered it belongs in the
+table:
+
+```bash
+cd /srv/tatvaos-production
+git status --porcelain --untracked-files=all | grep '^??'
+```
+
+---
+
 ## What each guard actually catches
 
 | Guard | Catches | Does NOT catch |

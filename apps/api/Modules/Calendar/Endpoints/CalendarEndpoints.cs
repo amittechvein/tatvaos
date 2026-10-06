@@ -85,7 +85,8 @@ public static class CalendarEndpoints
     public sealed record CreateCalendarRequest(string? Name, string? Colour, string? Kind, string? Timezone);
 
     private static async Task<IResult> CreateCalendarAsync(
-        CreateCalendarRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        CreateCalendarRequest req, AppDbContext db, TenantContext tenant,
+        TatvaOS.Api.Modules.Personal.PersonalHouse houses, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
 
@@ -96,6 +97,13 @@ public static class CalendarEndpoints
         var kind = (req.Kind ?? "personal").Trim().ToLowerInvariant();
         if (kind is not ("personal" or "organisation" or "resource"))
             return Results.BadRequest(new { error = "Unknown calendar type." });
+
+        // Personal accounts (build plan §6, §4.4): an organisation calendar
+        // appears for EVERYONE in the tenant and a resource calendar is
+        // writable by everyone — in the personal house, every stranger. Their
+        // own calendars only.
+        if (kind != "personal" && await houses.IsPersonalHouseAsync(tenant.TenantId, ct))
+            return Results.Json(new { error = TatvaOS.Api.Modules.Personal.PersonalGuard.Sentence }, statusCode: 403);
 
         var cal = new CalendarCalendar
         {
@@ -264,9 +272,11 @@ public static class CalendarEndpoints
         CreateEventRequest req, AppDbContext db, TenantContext tenant,
         AuditWriter audit, IConfiguration config,
         TatvaOS.Api.Modules.Family.ContactAutoSave autoSave,
+        TatvaOS.Api.Modules.Personal.PersonalHouse houses,
         ILoggerFactory logFactory, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+        var personal = await houses.IsPersonalHouseAsync(tenant.TenantId, ct);
 
         var title = (req.Title ?? "").Trim();
         if (title.Length is < 1 or > 300)
@@ -325,8 +335,15 @@ public static class CalendarEndpoints
             // A colleague is matched to their account so their response can
             // come from the app; anyone else is an address and will need an
             // emailed invitation.
+            //
+            // Not in the personal house (§6): another personal account is a
+            // stranger, not a colleague, and matching them would hand the
+            // organiser that stranger's display name (read back from the
+            // event) for any address they type. They are an address like any
+            // other, invited by email. The organiser themself still matches.
             var colleague = await db.Users.AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Email == email && u.Status == "active", ct);
+                .FirstOrDefaultAsync(u => u.Email == email && u.Status == "active"
+                                          && (!personal || u.Id == uid), ct);
 
             db.CalendarAttendees.Add(new CalendarAttendee
             {

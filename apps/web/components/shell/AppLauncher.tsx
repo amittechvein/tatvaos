@@ -19,6 +19,8 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { RAIL_PRODUCTS } from '@/lib/nav';
+import { useAuth } from '@/lib/auth';
+import { usePersonal } from '@/lib/personal';
 import { AnchoredPopover } from '@/components/ui/AnchoredPopover';
 import { HEADER_LINK } from './Topbar';
 
@@ -37,7 +39,14 @@ export function AppLauncher() {
   // "administer the platform" is a different kind of destination from "read
   // your mail", and mixing them makes the grid harder to scan.
   const products = RAIL_PRODUCTS.filter((p) => p.code !== 'platform' && p.code !== 'core');
-  const consoles = RAIL_PRODUCTS.filter((p) => p.code === 'platform' || p.code === 'core');
+  // A personal account has no organisation to administer (build plan §4.1):
+  // no console tiles at all — Core or Platform. The server refuses those routes anyway
+  // (PersonalGuard); this only stops the launcher offering them.
+  const { authedFetch, user } = useAuth();
+  const personal = usePersonal(authedFetch, user?.id);
+  const consoles = personal === true
+    ? []
+    : RAIL_PRODUCTS.filter((p) => p.code === 'platform' || p.code === 'core');
 
   return (
     <>
