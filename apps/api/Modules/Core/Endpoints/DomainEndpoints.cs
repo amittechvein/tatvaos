@@ -289,7 +289,7 @@ public static class DomainEndpoints
 
     // ------------------------------------------------------------------
     private static async Task<IResult> RemoveAsync(
-        Guid id, AppDbContext db, AuditWriter audit, CancellationToken ct)
+        Guid id, AppDbContext db, AuditWriter audit, DkimKeyService dkimKeys, CancellationToken ct)
     {
         var d = await db.Domains.FirstOrDefaultAsync(x => x.Id == id, ct);
         if (d is null) return Results.NotFound();
@@ -312,8 +312,14 @@ public static class DomainEndpoints
                         "deleting the domain would delete their mail.",
             });
 
+        var fqdn = d.Fqdn;
         db.Domains.Remove(d);
         await db.SaveChangesAsync(ct);
+
+        // The row is gone; the signer reads FILES. Without this the platform
+        // keeps signing mail for a domain it no longer knows about, across
+        // every restart and deploy (24 Sept 2026 — see DkimKeyService).
+        dkimKeys.ForgetKeys(fqdn);
         await audit.WriteAsync("domain.removed", "domain", id.ToString(),
             before: new { d.Fqdn }, ct: ct);
 
