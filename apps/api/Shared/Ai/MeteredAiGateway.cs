@@ -71,6 +71,7 @@ public sealed class MeteredAiGateway(
     public bool IsConfigured => inner.IsConfigured;
     public string Model => inner.Model;
     public string? DataLocation => inner.DataLocation;
+    public string? Vendor => inner.Vendor;
     public Task<bool> EnabledForTenantAsync(CancellationToken ct) => inner.EnabledForTenantAsync(ct);
 
     /// <summary>The limits in force. NULL means no limit; 0 means none allowed.</summary>
@@ -163,6 +164,16 @@ public sealed class MeteredAiGateway(
         if (!inner.IsConfigured || !tenant.HasTenant || !await inner.EnabledForTenantAsync(ct))
             return await inner.CompleteAsync(instruction, input, ct, feature);
 
+        // 1a. Is this feature offered to this organisation at all (AiGate,
+        //     30 Sept 2026)? Every label has a list; one without is refused.
+        //     Before the product switches, so a feature shipped ahead of its
+        //     disclosure is refused here whatever an administrator switched on.
+        if (!await AiGate.AllowedAsync(db, tenant.TenantId, feature, log, ct))
+            return AiResult.Failed(AiGate.RefusalFor(feature));
+
+        // 1a-bis (merged 6 Oct 2026, round one): the AiGate above applies to the
+        //     personal house too, so personal AI minutes are refused until the house
+        //     is on the feature lists - a launch step, and it fails closed.
         // 1a. A PERSONAL account (build plan §4.5, §5): consent was the
         //     person's own switch (OpenAiGateway). Here, what their PLAN allows:
         //     AI meeting minutes only, on Premium or during their trial. Mail

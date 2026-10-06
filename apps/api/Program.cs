@@ -18,6 +18,7 @@ using TatvaOS.Api.Modules.Space.Endpoints;
 using TatvaOS.Api.Modules.Calendar.Endpoints;
 using TatvaOS.Api.Modules.Connect.Endpoints;
 using TatvaOS.Api.Modules.Personal;
+using TatvaOS.Api.Modules.Docs;
 using TatvaOS.Api.Workers;
 using TatvaOS.Api.Shared.Auth.Oidc;
 using TatvaOS.Api.Shared.Ai;
@@ -93,17 +94,10 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
     {
-        o.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidAudience = builder.Configuration["Jwt:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-            ClockSkew = TimeSpan.FromSeconds(30),
-        };
+        // Defined once, in TokenIssuer, with the access-token TYPE check
+        // (typ at+jwt) that keeps other tokens signed with this key out.
+        o.TokenValidationParameters = TatvaOS.Api.Shared.Auth.TokenIssuer.ValidationParameters(
+            jwtKey, builder.Configuration["Jwt:Issuer"], builder.Configuration["Jwt:Audience"]);
     });
 
 builder.Services.AddAuthorizationBuilder()
@@ -386,6 +380,19 @@ builder.Services.AddScoped<IAiGateway, MeteredAiGateway>();
 // message does not send it to the AI provider again (MailAiEndpoints).
 builder.Services.AddMemoryCache();
 
+// Docs' live rooms. SINGLETON on purpose — the rooms ARE the shared state
+// every open editor of a document must find; it creates its own scopes for
+// database work (see DocsLiveHub's header, and its single-process note).
+builder.Services.AddSingleton<DocsLiveHub>();
+// Makes "exactly one API container" loud: only the lock holder serves live
+// editing (DocsInstanceGuard's header; decision 0008's deployment rule).
+builder.Services.AddSingleton<DocsInstanceGuard>();
+// Docs' file is built by the render service (apps/render), never taken from a
+// browser (decision 0011 condition 1). Its own 10 s limit, plus the network.
+builder.Services.AddHttpClient<TatvaOS.Api.Modules.Docs.DocsRenderClient>(c =>
+    c.Timeout = TatvaOS.Api.Modules.Docs.DocsRenderClient.Timeout + TimeSpan.FromSeconds(3));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DocsInstanceGuard>());
+
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to
 // whichever request arrived next.
@@ -404,7 +411,10 @@ builder.Services.AddSingleton<SignupVerifier>();
 // credential saved in the console takes effect on the next request with no
 // cache to invalidate and no restart.
 builder.Services.AddHttpClient();
+builder.Services.AddSingleton<SettingsCrypto>();
 builder.Services.AddScoped<SettingsReader>();
+builder.Services.AddScoped<TatvaOS.Api.Modules.Billing.InvoiceIssuer>();
+builder.Services.AddHttpClient<TatvaOS.Api.Modules.Billing.RazorpayClient>();
 builder.Services.AddScoped<SystemMailer>();
 builder.Services.AddScoped<ISmsSender, SmsSender>();
 
@@ -422,6 +432,10 @@ builder.Services.AddHostedService<StorageReconcileWorker>();
 // REPORTS (never deletes) blobs no row points at. SPACE_FAULT_MATRIX #1 and
 // #3 — both invisible failures on the filesystem Mail also writes to.
 builder.Services.AddHostedService<SpaceBlobSweepWorker>();
+
+// Domain claims unverified for thirty days are abandoned (Mr. Singh, 24 Sept
+// 2026). Daily, never touching a verified or superseded row.
+builder.Services.AddHostedService<DomainClaimSweepWorker>();
 
 // Answers Postfix's quota question at RCPT time — the last moment a refusal
 // still leaves the message with the sender. Starts in observe-only mode and
@@ -454,6 +468,10 @@ builder.Services.AddHostedService<VacationReplyWorker>();
 // Calendar reminders. Polls every minute and records every send, rather than
 // scheduling in-memory timers that a deploy would silently swallow.
 builder.Services.AddHostedService<CalendarReminderWorker>();
+// Decision 0009: ends the 48-hour hold on administrator-set recovery emails.
+// Crosses organisations through a SECURITY DEFINER function (the 0007 worker
+// rule); tests/recovery-admin/test-admin-recovery-email.sh runs it with a hold due.
+builder.Services.AddHostedService<RecoveryHoldWorker>();
 
 // TatvaOS AI sorts new inbox mail (Mail AI step 3). Does nothing unless an
 // organisation has switched sorting on; see the worker's header for its limits.
@@ -830,8 +848,8 @@ else
 //  above read that header themselves and take its LAST entry, which is the
 //  one Caddy appended; this middleware would consume that entry and leave any
 //  client-supplied ones in front of it for the limiters to trust. Audit rows
-//  keep recording Caddy's address as they do today; a real-client-IP change
-//  is its own decision, not a side effect of the provider.
+//  read the same last entry themselves (AuditWriter, through ClientIp) since
+//  29 Sept 2026; before that they recorded Caddy's address.
 //
 //  No known-proxy list, on purpose: the API publishes no port, so the only
 //  thing that can reach it is Caddy on the compose network, whose container
@@ -867,6 +885,11 @@ app.UseAuthorization();
 app.UseMiddleware<PersonalGuard>();
 app.UseRateLimiter();
 
+// Docs' live channel (/api/docs/{id}/live) is the one WebSocket the API
+// serves. The keep-alive ping stops Caddy and home routers from reaping an
+// editor that is open but idle; the browser reconnects if it goes anyway.
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(25) });
+
 // Reads Auth:CookieDomain. Unset locally and on staging (one host serves
 // everything); ".tatvaos.com" in production, so a session started in Core is
 // carried to Mail. See the cookie-domain block in AuthEndpoints.
@@ -878,6 +901,7 @@ app.MapDevOperatorSignIn();
 app.MapMfaEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
+app.MapRecoveryEmailAdminEndpoints();   // decision 0009
 app.MapOidcApplicationEndpoints();
 app.MapOidcEndpoints();
 app.MapDomainEndpoints();
@@ -915,8 +939,12 @@ app.MapMyStorageEndpoints();
 app.MapOrgAiEndpoints();
 // The operator's read of an organisation's AI use (the limits are settings).
 app.MapOrgAiUsageEndpoints();
+// Offering Mail AI to one organisation, and resetting its own Mail AI with it.
+app.MapOrgMailAiOfferEndpoints();
 app.MapOrganisationDetailEndpoints();
 app.MapPlanFeatureEndpoints();
+TatvaOS.Api.Modules.Billing.BillingEndpoints.MapBillingEndpoints(app);
+TatvaOS.Api.Modules.Billing.PaymentEndpoints.MapPaymentEndpoints(app);
 // Calendar. Recurrence is expanded at read time, never stored — see
 // Modules/Calendar/Recurrence.cs.
 app.MapCalendarEndpoints();
@@ -932,6 +960,14 @@ app.MapSpaceEndpoints();
 app.MapSpaceDriveEndpoints();
 app.MapSpaceLinkEndpoints();
 app.MapSpaceThumbnailEndpoints();
+// Docs: collaborative documents, each one a Space file.
+app.MapDocsEndpoints();
+app.MapDocsAdminEndpoints();
+// Sheets' own per-organisation switch, beside Docs' (SheetsSwitch.cs).
+app.MapSheetsAdminEndpoints();
+// Sheets: spreadsheets are Docs files too (DocsFormat.SpreadsheetMimeType);
+// only their AI actions need endpoints of their own.
+app.MapSheetsAiEndpoints();
 
 // Connect. Meetings live in this monolith; only the MEDIA is a separate
 // container. The guest group and the LiveKit webhook are anonymous and
@@ -975,6 +1011,8 @@ app.MapAiStatusEndpoints();
 //  the variables after the first start.
 // ---------------------------------------------------------------------------
 await BootstrapAdmin.EnsureAsync(app.Services, app.Logger);
+// Development-only test switch for the Mail AI offer button (ignored elsewhere, loudly).
+TatvaOS.Api.Shared.Ai.MailAiPrivacyText.ConfigureForTests(app.Environment, app.Configuration, app.Logger);
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }))
    .AllowAnonymous()
@@ -990,6 +1028,13 @@ app.MapGet("/health/db", async (AppDbContext db, CancellationToken ct) =>
 // Fails the boot if PersonalGuard names a route that is not mapped: a rename
 // would otherwise leave its replacement open to every personal account.
 PersonalGuard.Verify(((IEndpointRouteBuilder)app).DataSources);
+
+// Every operator write route must carry its transaction (OperatorWriteTransaction).
+// Logged once the routes exist: a CRITICAL line names any that do not.
+app.Lifetime.ApplicationStarted.Register(() =>
+    TatvaOS.Api.Shared.Data.OperatorWriteTransaction.Report(
+        ((IEndpointRouteBuilder)app).DataSources,
+        app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("OperatorWriteTransaction")));
 
 app.Run();
 

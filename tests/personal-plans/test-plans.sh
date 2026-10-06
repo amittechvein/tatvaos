@@ -56,6 +56,7 @@ same() {
     elif [ "$2" = "$3" ]; then pass "$1"
     else fail "$1 — got [$2], wanted [$3]"; fi
 }
+has() { if [ -n "$2" ] && printf '%s' "$2" | grep -qF -- "$3"; then pass "$1"; else fail "$1 — '$3' not in [$(printf '%s' "$2" | head -c 200)]"; fi; }
 PG() { $PSQL "$1" 2>/dev/null | tr -d '\r'; }
 j() { "$PY" -c "import sys,json; d=json.load(sys.stdin); print($1)" 2>/dev/null | tr -d '\r'; }
 jq_() { printf '%s' "$1" | j "$2"; }
@@ -105,6 +106,18 @@ same "Free: 5 people, 60 min, 50 a day, 20 an hour, 15-day trial" \
      "$(jq_ "$plans" "[p['featureLimits'] for p in d if p['id']=='$FREE'][0]" | "$PY" -c "import sys,ast; l=ast.literal_eval(sys.stdin.read()); print(l['connect.max_participants'], l['connect.max_minutes'], l['mail.daily_recipients'], l['mail.hourly_recipients'], l['ai.trial_days'])")" \
      "5 60 50 20 15"
 same "organisation plans unchanged in number (4) and audience" "$(jq_ "$plans" "len([p for p in d if p.get('audience')=='organisation'])")" "4"
+# Mr. Singh on PR 313: three personal plans, editable; no new ones from the
+# console. The SAME body is sent as an organisation plan first, so the
+# refusal below cannot be some other validation failing.
+PLAN_BODY="{\"name\":\"Probe $RUN\",\"storageModel\":\"pooled\",\"pooledStorageBytes\":1073741824,\"includedProducts\":[\"mail\"],\"aiCreditModel\":\"pooled\",\"audience\":\"%s\"}"
+r=$(req POST /api/admin/plans "$OP" "$(printf "$PLAN_BODY" organisation)")
+if [ "$(status "$r")" -lt 300 ]; then pass "calibration: the same body is accepted as an ORGANISATION plan ($(status "$r"))"
+    PID_=$(jq_ "$(body "$r")" "d.get('id') or d.get('plan',{}).get('id') or ''"); [ -n "$PID_" ] && req DELETE "/api/admin/plans/$PID_" "$OP" >/dev/null
+else fail "calibration: the probe body is not valid even as an organisation plan: $(status "$r") $(body "$r" | head -c 200)"; fi
+r=$(req POST /api/admin/plans "$OP" "$(printf "$PLAN_BODY" personal)")
+same "a NEW personal plan from the console: refused (400)" "$(status "$r")" "400"
+has "…saying the personal plans are Free, Basic and Premium" "$(body "$r")" "Personal plans are Free, Basic and Premium"
+same "…still three personal plans" "$(jq_ "$(body "$(req GET /api/admin/plans "$OP")")" "len([p for p in d if p.get('audience')=='personal'])")" "3"
 
 # ---------------------------------------------------------------------------
 step "2. A new account is on Free, derived, enforced"
