@@ -128,15 +128,19 @@ var BY_DESIGN = new Dictionary<string, Design>
     ["PersonalAiConsent"] = new("Core",
         "No tenant filter - by design, and a tenant filter would be WORSE than none: every personal account "
         + "shares the one house tenant, so it would protect nothing while turning this check green. Scoped "
-        + "instead by the person: every read pins one UserId, enforced by PersonalAiReadsOwnRowOnly",
+        + "instead by the person: every read pins one UserId. PersonalAiReadsOwnRowOnly's real protection is the "
+        + "FILE ALLOWLIST (a new reader fails and a person reads it); its pin test proves a UserId is pinned, NOT "
+        + "that the id came from the session - `a.UserId == req.UserId` would pass. A secondary signal, not a guarantee",
         PersonalAiReadsOwnRowOnly),
-    // PROPOSED by the deployer session, 6 Oct 2026, FOR MR. SINGH'S RULING (arrived
-    // with #326 an hour before this file met it). Not yet his words.
+    // Mr. Singh, 6 Oct 2026: confirmed by design (retired_addresses_one_live is
+    // unique on (address) alone, platform-wide; the row-content endpoint is SuperAdmin only).
     ["RetiredAddress"] = new("Core",
         "No tenant filter - by design: ONE list of held addresses across every organisation and the "
         + "personal house, so that an address retired by one organisation cannot be taken by another. "
-        + "A tenant filter would make IsHeldAsync see only the caller's own holds and let an address be reused. "
-        + "tenant_id records where it came from (nullable, no FK, outlives the tenant). Read only by "
+        + "A tenant filter would make IsHeldAsync see only the caller's own holds and let an address be reused - "
+        + "live mail routing to the wrong company. tenant_id on this table is PROVENANCE, NOT SCOPE: 'the "
+        + "organisation it was retired from', nullable and deliberately without a foreign key so the hold outlives "
+        + "a deleted organisation. Never filter on it: the uniqueness it protects is platform-wide. Read only by "
         + "RetiredAddresses.IsHeldAsync (address -> held?, no row content returned) and /api/admin/retired-addresses (SuperAdmin)"),
 };
 
@@ -285,10 +289,19 @@ static string? FindApi()
 //  UserId (or is the one .Add). A new file using it fails, so a new reader is
 //  read by a person before it lands - an operator list of everyone's consent,
 //  say, would be correct only behind its own check.
+//
+//  WHAT IT PROVES, AND WHAT IT DOES NOT (Mr. Singh, 6 Oct). The protection is
+//  the ALLOWLIST, matched on the path under apps/api (not the bare file name,
+//  so a second OpenAiGateway.cs elsewhere is not waved through). The pin test
+//  only proves a UserId is pinned, not that it came from the session:
+//  `a.UserId == req.UserId` passes it. Treat a green pin as a signal.
+//  THE TWO-LINE WINDOW IS DELIBERATE: the pin is looked for on the matched
+//  line and the next one. A long LINQ chain with `.UserId ==` further down
+//  fails it - put the pin next to the read; do not widen the window.
 // ----------------------------------------------------------------------------
 static string? PersonalAiReadsOwnRowOnly()
 {
-    string[] allowed = ["PersonalAiService.cs", "OpenAiGateway.cs"];
+    string[] allowed = ["Modules/Personal/PersonalAiService.cs", "Shared/Ai/OpenAiGateway.cs"];
     var api = FindApi();
     if (api is null) return "cannot find apps/api from the working directory, so the own-row check did not run";
     var uses = new List<(string File, int No, string Here)>();
@@ -299,7 +312,8 @@ static string? PersonalAiReadsOwnRowOnly()
         var lines = File.ReadAllLines(f);
         for (var i = 0; i < lines.Length; i++)
             if (System.Text.RegularExpressions.Regex.IsMatch(lines[i], @"\.PersonalAi\b"))
-                uses.Add((Path.GetFileName(f), i + 1, lines[i] + " " + (i + 1 < lines.Length ? lines[i + 1] : "")));
+                uses.Add((Path.GetRelativePath(api, f).Replace(Path.DirectorySeparatorChar, '/'), i + 1,
+                          lines[i] + " " + (i + 1 < lines.Length ? lines[i + 1] : "")));
     }
     if (uses.Count == 0) return "found no use of db.PersonalAi at all: the own-row check is looking in the wrong place";
     var outside = uses.Where(u => !allowed.Contains(u.File)).ToList();
