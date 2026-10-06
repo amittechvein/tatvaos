@@ -72,9 +72,17 @@ n=$(q "SELECT count(*) FROM pg_policies
 n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
         WHERE ns.nspname='connect' AND p.prosecdef AND p.proname IN
           ('pending_transcription','pending_notes','stuck_recordings','recording_tenant',
-           'reconcile_recording_storage','storage_headroom','recording_bytes','recording_allowed')")
-[ "${n:-0}" -eq 8 ] && ok "8 SECURITY DEFINER functions for the worker and storage" \
-                    || bad "expected 8, found ${n:-0}"
+           'reconcile_recording_storage','storage_headroom','recording_allowed')")
+[ "${n:-0}" -eq 7 ] && ok "7 SECURITY DEFINER functions for the worker and storage" \
+                    || bad "expected 7, found ${n:-0}"
+# recording_bytes was dropped on 28 Sept 2026 (20260928-e-connect-drop-unused-
+# definers.sql): nothing called it. It must STAY gone - a deploy re-runs every
+# init file, and one still creating it would bring it back silently.
+n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
+        WHERE ns.nspname='connect' AND p.proname IN
+          ('recording_bytes','meeting_chat_lines','meetings_with_captions','share_for_user')")
+[ "${n:-0}" -eq 0 ] && ok "the 4 unused definers dropped on 28 Sept are still gone" \
+                    || bad "${n:-0} of the 4 dropped definers are back - an init file is recreating one"
 
 # Every definer function must pin search_path. Without it a caller can shadow
 # a schema with their own and have the function write somewhere unintended —
@@ -196,9 +204,11 @@ n=$(q "SELECT count(*) FROM information_schema.columns
 n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
         WHERE ns.nspname='connect' AND p.prosecdef AND p.proname IN
           ('pending_minutes_email','notes_tenant','minutes_recipients',
-           'minutes_unreachable','meeting_chat_lines')")
-[ "${n:-0}" -eq 5 ] && ok "5 more definer functions for the minutes worker" \
-                    || bad "expected 5 minutes functions, found ${n:-0}"
+           'minutes_unreachable')")
+# meeting_chat_lines was the fifth until 28 Sept 2026; nothing called it and it
+# was dropped (checked above with the other three).
+[ "${n:-0}" -eq 4 ] && ok "4 more definer functions for the minutes worker" \
+                    || bad "expected 4 minutes functions, found ${n:-0}"
 
 # ── The switch, and whether anybody is actually being emailed. ─────────────
 #
