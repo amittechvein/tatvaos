@@ -41,6 +41,8 @@ import { Badge, Button, Card, Spinner } from '@/components/ui/Kit';
 import { Alert } from '@/components/ui/Page';
 import { RecoveryCard } from '@/components/account/RecoveryCard';
 import { DesktopAlertsCard } from '@/components/account/DesktopAlertsCard';
+import { PlanSection } from '@/components/account/PlanSection';
+import { usePersonal } from '@/lib/personal';
 import { useAuth } from '@/lib/auth';
 import { fetchMyStorage, formatBytes, meterColour, type MyStorage } from '@/lib/myStorage';
 import { Input } from '@/components/ui/Form';
@@ -113,7 +115,7 @@ function when(iso: string): string {
 //  would refetch what is already on screen to draw a different half of it.
 // ---------------------------------------------------------------------------
 
-type SectionId = 'home' | 'personal' | 'security' | 'devices' | 'accounts' | 'storage';
+type SectionId = 'home' | 'personal' | 'security' | 'devices' | 'accounts' | 'storage' | 'plan';
 
 const SECTIONS: {
   id: SectionId; label: string; tint: string; keywords: string; icon: React.ReactNode;
@@ -137,6 +139,12 @@ const SECTIONS: {
     id: 'devices', label: 'Your devices', tint: '#a855f7',
     keywords: 'devices sessions signed in browser sign out everywhere',
     icon: <><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></>,
+  },
+  // Personal accounts only (build plan §4.2); hidden for everyone else below.
+  {
+    id: 'plan', label: 'Plan', tint: '#e8a317',
+    keywords: 'plan free basic premium upgrade ai trial limits meeting',
+    icon: <><path d="M12 3l2.6 5.3 5.9.9-4.3 4.2 1 5.9L12 16.5l-5.2 2.8 1-5.9-4.3-4.2 5.9-.9z" /></>,
   },
   {
     id: 'storage', label: 'Storage', tint: '#4285f4',
@@ -241,12 +249,16 @@ function AccountHub() {
 
   // The search filters the section list — it is a way IN to a section, not a
   // full-text search over settings we do not have that many of yet.
+  // The Plan section is a personal account's; an organisation's plan is its
+  // administrator's business, shown in their console, not here.
+  const personal = usePersonal(authedFetch, user?.id);
   const visible = useMemo(() => {
     const term = q.trim().toLowerCase();
-    if (!term) return SECTIONS;
-    return SECTIONS.filter((s) =>
+    const mine = SECTIONS.filter((s) => s.id !== 'plan' || personal === true);
+    if (!term) return mine;
+    return mine.filter((s) =>
       s.label.toLowerCase().includes(term) || s.keywords.includes(term));
-  }, [q]);
+  }, [q, personal]);
 
   const active = accounts.find((a) => a.active);
   const initial = (user?.displayName ?? '?').charAt(0).toUpperCase();
@@ -433,17 +445,26 @@ function AccountHub() {
                     <InfoRow label="Sign-in email" value={user?.email ?? '—'} />
                     <InfoRow label="Mailbox"
                              value={me?.mailboxAddress ?? 'No mailbox on this account'} />
-                    <InfoRow label="Organisation" value={me?.organisation?.name ?? '—'} />
-                    <InfoRow label="Role"
-                             value={(user?.role ?? '—').replace(/_/g, ' ')} capitalize />
+                    {/* A personal account has no organisation and no role to
+                        show — "TatvaOS Personal" and "employee" would be
+                        internal names, not facts about the person (build plan §4). */}
+                    {personal !== true && (
+                      <>
+                        <InfoRow label="Organisation" value={me?.organisation?.name ?? '—'} />
+                        <InfoRow label="Role"
+                                 value={(user?.role ?? '—').replace(/_/g, ' ')} capitalize />
+                      </>
+                    )}
                     <InfoRow label="Products"
                              value={me?.products?.length ? me.products.join(', ') : '—'}
                              capitalize last />
-                    <Alert tone="info" className="mt-6 mb-0">
-                      Name, email and role are managed by your organisation&apos;s
-                      administrator — ask them for a change. Everything on the
-                      Security page you control yourself.
-                    </Alert>
+                    {personal !== true && (
+                      <Alert tone="info" className="mt-6 mb-0">
+                        Name, email and role are managed by your organisation&apos;s
+                        administrator — ask them for a change. Everything on the
+                        Security page you control yourself.
+                      </Alert>
+                    )}
                   </>
                 )}
               </Card>
@@ -516,6 +537,8 @@ function AccountHub() {
 
             {section === 'storage' && <StorageSection />}
 
+            {section === 'plan' && personal === true && <PlanSection onOpenStorage={() => setSection('storage')} />}
+
             {section === 'accounts' && (
               <Card subtitle="Switch between them from the avatar in the top right — no password needed">
                 {accounts.length <= 1 ? (
@@ -554,7 +577,8 @@ function AccountHub() {
             <hr style={{ marginTop: 64, marginBottom: 16 }} />
             <p className="text-[0.75rem] text-ink-muted text-center mb-0">
               Only you can see your settings.
-              {active?.organisation ? ` Your account is managed by ${active.organisation}.` : ''}
+              {/* A personal account is nobody's to manage but its owner's. */}
+              {active?.organisation && personal !== true ? ` Your account is managed by ${active.organisation}.` : ''}
             </p>
           </div>
         </div>

@@ -211,7 +211,7 @@ if [ "$a" != "$b" ]; then
     echo "        malformed: $b"
 elif [ -z "$a" ]; then
     bad "no answer at all from https://${DOM}/api/connect/g/... — check: docker compose logs api caddy"
-elif ! printf '%s' "$a" | grep -q 'This meeting link does not work'; then
+elif ! grep -q 'This meeting link does not work' <<< "$a"; then
     # Identical answers are necessary but not sufficient: if the route is not
     # registered at all, BOTH get the same generic 404 from the web app and
     # this check would pass while the guest path does not exist.

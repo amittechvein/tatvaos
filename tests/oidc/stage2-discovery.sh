@@ -90,7 +90,7 @@ disc=$(curl -s "$API/.well-known/openid-configuration")
 [ "$(printf '%s' "$disc" | j "d['jwks_uri']")" = "$ISSUER/api/oauth/jwks" ] && pass "discovery: jwks_uri pinned to the issuer" || fail "jwks_uri: $(printf '%s' "$disc" | j "d.get('jwks_uri')")"
 [ "$(printf '%s' "$disc" | j "d['authorization_endpoint']")" = "$ISSUER/oauth/authorize" ] && pass "discovery: authorize pinned to the issuer, at the web page (stage 3)" || fail "authorization_endpoint: $(printf '%s' "$disc" | j "d.get('authorization_endpoint')")"
 [ "$(printf '%s' "$disc" | j "d['token_endpoint']")" = "$ISSUER/api/oauth/token" ] && pass "discovery: token pinned to the issuer" || fail "token_endpoint: $(printf '%s' "$disc" | j "d.get('token_endpoint')")"
-printf '%s' "$disc" | grep -q "localhost" && fail "the request's own host leaked into the document" || pass "discovery: nothing in the document names the request's host"
+grep -q "localhost" <<< "$disc" && fail "the request's own host leaked into the document" || pass "discovery: nothing in the document names the request's host"
 # As Caddy sends it (scheme and host forwarded): same document, byte for byte.
 fwd=$(curl -s -H "X-Forwarded-Proto: https" -H "X-Forwarded-Host: core.tatvaos.com" "$API/.well-known/openid-configuration")
 [ "$fwd" = "$disc" ] && pass "forwarded headers from Caddy: the document is unchanged" || fail "the document differs when Caddy's headers are present"
@@ -100,7 +100,7 @@ fwd=$(curl -s -H "X-Forwarded-Proto: https" -H "X-Forwarded-Host: core.tatvaos.c
 # the URLs from the (spoofed) request.
 evil=$(curl -s -H "X-Forwarded-Proto: https" -H "X-Forwarded-Host: evil.example" "$API/.well-known/openid-configuration")
 [ "$(printf '%s' "$evil" | j "d['issuer']")" = "$ISSUER/" ] && pass "spoofed host: issuer unchanged" || fail "spoofed host moved the issuer: $(printf '%s' "$evil" | j "d.get('issuer')")"
-printf '%s' "$evil" | grep -q "evil.example" && fail "spoofed host appears in the document" || pass "spoofed host: no advertised URL follows it"
+grep -q "evil.example" <<< "$evil" && fail "spoofed host appears in the document" || pass "spoofed host: no advertised URL follows it"
 [ "$evil" = "$disc" ] && pass "spoofed host: the document is unchanged, byte for byte" || fail "the document differs under a spoofed host"
 [ "$(printf '%s' "$disc" | j "'S256' in d.get('code_challenge_methods_supported',[]) and 'plain' not in d.get('code_challenge_methods_supported',[])")" = "True" ] && pass "discovery: PKCE S256 only" || fail "code_challenge_methods_supported: $(printf '%s' "$disc" | j "d.get('code_challenge_methods_supported')")"
 [ "$(printf '%s' "$disc" | j "sorted(d.get('grant_types_supported',[]))")" = "['authorization_code', 'refresh_token']" ] && pass "discovery: code and refresh grants only" || fail "grant_types_supported: $(printf '%s' "$disc" | j "d.get('grant_types_supported')")"
@@ -133,7 +133,7 @@ printf '%s\n' "$out" | grep -q "new signing key" && pass "rotate reports a new a
 # "rotate did not retire <kid>", printed beside output saying it had. One run
 # in 64, and a re-run passes, so it reads as flakiness rather than as a bug.
 printf '%s\n' "$out" | grep -qF -- "$KID1 retired" && pass "rotate names $KID1 as retired" || fail "rotate did not retire $KID1: $out"
-printf '%s\n' "$out" | grep -q "PRIVATE KEY" && fail "rotate printed private material" || pass "rotate printed nothing private"
+grep -q "PRIVATE KEY" <<< "$out" && fail "rotate printed private material" || pass "rotate printed nothing private"
 [ "$(ls "$KEYDIR_BASH" | grep -c '^sig-[0-9]*\.pem$')" = "1" ] && pass "one active signing key file" || fail "active files: $(ls "$KEYDIR_BASH")"
 [ "$(ls "$KEYDIR_BASH" | grep -c '^sig-[0-9]*\.retired-[0-9]*\.pem$')" = "1" ] && pass "one retired signing key file" || fail "retired files: $(ls "$KEYDIR_BASH")"
 

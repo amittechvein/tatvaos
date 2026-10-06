@@ -3,6 +3,7 @@ using TatvaOS.Api.Shared;
 using TatvaOS.Api.Shared.Auth;
 using TatvaOS.Api.Modules.Calendar;
 using TatvaOS.Api.Shared.Data;
+using TatvaOS.Api.Shared.Mail;
 using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Tenancy;
 
@@ -342,6 +343,10 @@ public static class UserEndpoints
             (await db.Mailboxes.IgnoreQueryFilters().AnyAsync(m => m.Address == address, ct) ||
              await db.Aliases.IgnoreQueryFilters().AnyAsync(a => a.Address == address, ct)))
             return Results.Conflict(new { error = $"{address} already exists." });
+        // Used before and retired: the database would refuse it anyway
+        // (20260927-retired-addresses.sql); this is only the sentence.
+        if (await RetiredAddresses.IsHeldAsync(db, address, ct))
+            return Results.Conflict(new { error = RetiredAddresses.Held(address) });
 
         // ---- how this person gets in (decision 0005) ----------------------
         // A typed password is the admin's to hand over and wins outright. With
@@ -805,6 +810,11 @@ public static class UserEndpoints
                 await db.Mailboxes.IgnoreQueryFilters().AnyAsync(m => m.Address == address, ct))
             {
                 skipped.Add(new { address, displayName, reason = "already exists" });
+                continue;
+            }
+            if (await RetiredAddresses.IsHeldAsync(db, address, ct))
+            {
+                skipped.Add(new { address, displayName, reason = "used before and held" });
                 continue;
             }
             // --- password -------------------------------------------------
@@ -1285,6 +1295,12 @@ public static class UserEndpoints
             .ExecuteUpdateAsync(s => s
                 .SetProperty(p => p.RevokedAt, (DateTimeOffset?)DateTimeOffset.UtcNow), ct);
 
+        // Retired BEFORE the forwarding aliases are added: the database
+        // refuses an alias at a retired address unless the retirement names
+        // its target, and this one names the successor.
+        foreach (var mb in mailboxes)
+            await RetiredAddresses.RetireAsync(db, mb.Address, user.TenantId, "user_offboarded", successorBox?.Id, ct);
+
         var forwarded = new List<string>();
         if (successorBox is not null)
         {
@@ -1418,6 +1434,9 @@ public static class UserEndpoints
 
         var mailboxes = await db.Mailboxes.Where(m => m.UserId == id).ToListAsync(ct);
         foreach (var mb in mailboxes) mb.IsActive = false;
+        // Retired: held so nobody is ever handed this person's mail from disk.
+        foreach (var mb in mailboxes)
+            await RetiredAddresses.RetireAsync(db, mb.Address, user.TenantId, "user_deleted", null, ct);
 
         // Product access is revoked rather than deleted, for the same reason
         // the user row survives: "who could reach what, when" must remain
