@@ -132,6 +132,15 @@ public static class MailSender
         AuditWriter audit,
         CancellationToken ct)
     {
+        // A personal account suspended for abuse (build plan §8) can still
+        // sign in and download its data, but sends nothing — checked HERE, the
+        // one path webmail, the send API, calendar and meeting invitations all
+        // take, so no caller can forget it.
+        if (box.UserId is Guid owner && await db.PersonalAccounts.IgnoreQueryFilters().AsNoTracking()
+                .AnyAsync(a => a.UserId == owner && a.SuspendedAt != null, ct))
+            return new SendResult(SendOutcome.Refused, null, null,
+                "This account can't send mail right now. You can still read your mail and download your data.");
+
         // Whether this is somebody else's queue changes the display name and
         // the audit trail. It changes nothing else: the message is built,
         // submitted and filed through exactly the same path either way.

@@ -4,8 +4,9 @@ using Microsoft.AspNetCore.Http;
 namespace TatvaOS.Api.Shared;
 
 /// <summary>
-/// The address a person's request came from, as we show it BACK TO THEM — in
-/// the new-sign-in email and in their own list of signed-in devices.
+/// The address a person's request came from: as we show it BACK TO THEM (the
+/// new-sign-in email, their list of signed-in devices) and as the audit log
+/// records it.
 ///
 /// ─────────────────────────────────────────────────────────────────────────
 ///  WHY NOT Connection.RemoteIpAddress.
@@ -24,8 +25,9 @@ namespace TatvaOS.Api.Shared;
 ///  IPv4 is shown as IPv4. Kestrel listens dual-stack and reports a v4 peer
 ///  as "::ffff:1.2.3.4"; people know their address as "1.2.3.4".
 ///
-///  Deliberately NOT used for audit rows (AuditWriter) — changing what the
-///  audit log records is its own decision (Program.cs, forwarded headers).
+///  ALSO what the audit log records, since 29 Sept 2026 (Mr. Singh). Until
+///  then AuditWriter wrote the connection's address, so every line in
+///  production names Caddy's container. Older lines are not rewritten.
 /// ─────────────────────────────────────────────────────────────────────────
 /// </summary>
 public static class ClientIp

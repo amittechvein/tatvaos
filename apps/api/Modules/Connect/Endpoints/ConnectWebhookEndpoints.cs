@@ -72,11 +72,12 @@ public static class ConnectWebhookEndpoints
         HttpContext http, AppDbContext db, TenantContext tenant,
         LiveKitTokenService tokens, LiveKitEgressClient egress,
         ConnectRecordingOptions recOptions, LiveKitRoomClient rooms,
+        TatvaOS.Api.Shared.Plans.EffectiveSettings plans,
         ILogger<LiveKitTokenService> log, CancellationToken ct)
     {
         try
         {
-            return await HandleAsync(http, db, tenant, tokens, egress, recOptions, rooms, log, ct);
+            return await HandleAsync(http, db, tenant, tokens, egress, recOptions, rooms, plans, log, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -92,6 +93,7 @@ public static class ConnectWebhookEndpoints
         HttpContext http, AppDbContext db, TenantContext tenant,
         LiveKitTokenService tokens, LiveKitEgressClient egress,
         ConnectRecordingOptions recOptions, LiveKitRoomClient rooms,
+        TatvaOS.Api.Shared.Plans.EffectiveSettings plans,
         ILogger<LiveKitTokenService> log, CancellationToken ct)
     {
         if (!tokens.IsConfigured) return Results.StatusCode(503);
@@ -367,7 +369,7 @@ public static class ConnectWebhookEndpoints
         if (saved && kind == "room_started"
             && meeting is { AutoRecord: true, MediaIsReadable: true })
         {
-            await TryAutoRecordAsync(db, egress, recOptions, meeting, meetingTenantId, log, ct);
+            await TryAutoRecordAsync(db, egress, recOptions, meeting, meetingTenantId, plans, log, ct);
         }
         else if (saved && kind == "room_started" && meeting is { AutoRecord: true })
         {
@@ -506,7 +508,7 @@ public static class ConnectWebhookEndpoints
     /// </summary>
     private static async Task TryAutoRecordAsync(
         AppDbContext db, LiveKitEgressClient egress, ConnectRecordingOptions recOptions,
-        ConnectMeeting meeting, Guid tenantId,
+        ConnectMeeting meeting, Guid tenantId, TatvaOS.Api.Shared.Plans.EffectiveSettings plans,
         ILogger<LiveKitTokenService> log, CancellationToken ct)
     {
         try
@@ -517,9 +519,13 @@ public static class ConnectWebhookEndpoints
                 return;
             }
 
-            var allowed = await db.Database
-                .SqlQuery<bool>($"""SELECT connect.recording_allowed({tenantId}) AS "Value" """)
-                .FirstOrDefaultAsync(ct);
+            // A personal host's plan decides, as for the Record button (§4.5).
+            var hostPlan = await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.HostPlanAsync(db, plans, meeting, ct);
+            var allowed = hostPlan is not null
+                ? TatvaOS.Api.Modules.Personal.PersonalMeetingRules.RecordingRefusal(hostPlan) is null
+                : await db.Database
+                    .SqlQuery<bool>($"""SELECT connect.recording_allowed({tenantId}) AS "Value" """)
+                    .FirstOrDefaultAsync(ct);
             if (!allowed)
             {
                 log.LogInformation(

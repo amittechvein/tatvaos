@@ -74,6 +74,16 @@ public interface IAiGateway
     string? DataLocation { get; }
 
     /// <summary>
+    /// WHO the content goes to, as a name for a sentence: "OpenAI". Every
+    /// customer-facing AI sentence names the vendor and the place the same
+    /// way (Mr. Singh, 30 Sept 2026: "the vendor named in the privacy policy
+    /// only"). Guarded like DataLocation: a host the gateway knows supplies
+    /// its own vendor and a contradicting Ai:Vendor is refused; any other
+    /// host must state one. Null when not configured.
+    /// </summary>
+    string? Vendor { get; }
+
+    /// <summary>
     /// May the CURRENT TENANT'S content actually be sent? IsConfigured says
     /// the deployment has a key; this says this organisation consented
     /// (core.tenants.allow_ai — Amit's ruling of 27 Aug 2026, default off).

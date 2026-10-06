@@ -32,6 +32,16 @@ SCHOOL='22222222-2222-2222-2222-222222222222'
 MODE="${TATVAOS_PSQL_MODE:-docker}"
 PGHOST="${PGHOST:-localhost}"
 PGUSER="${PGUSER:-postgres}"
+# SET BUT EMPTY is a lost throwaway database name, not a request for the
+# default. 2 Oct 2026: PGDATABASE=$TDB_NAME with TDB_NAME empty (tdb_create
+# had run in a pipe) sent this whole suite to the SHARED tatvaos_mail, the
+# database rule 13 keeps tests out of. Unset still means tatvaos_mail: CI's
+# service database has that name. tests/lib/throwaway-db-guard-test.sh.
+if [ "${PGDATABASE+set}" = set ] && [ -z "$PGDATABASE" ]; then
+    echo "  PGDATABASE is set but empty - a throwaway database name went missing." >&2
+    echo "  Refusing to fall back to tatvaos_mail, the shared database (rule 13)." >&2
+    exit 2
+fi
 PGDATABASE="${PGDATABASE:-tatvaos_mail}"
 CONTAINER="${TATVAOS_PG_CONTAINER:-tv-postgres}"
 
@@ -302,6 +312,72 @@ done
 run_as postgres "
     DELETE FROM core.locations    WHERE name  LIKE 'iso-loc-%' OR lower(btrim(name))  LIKE 'iso-loc-%';
     DELETE FROM core.designations WHERE title LIKE 'iso-des-%' OR lower(btrim(title)) LIKE 'iso-des-%';" >/dev/null 2>&1
+
+hdr "The two zero-layer tables are isolated (decision 0007: core.departments, calendar.reminder_sends)"
+
+# Until 20260927-d-zero-layer-rls.sql neither had row-level security at all.
+# Measured 24 Sept: Techvein's session could SELECT and UPDATE ABC School's
+# departments. Fixture as postgres, asserted as tatvaos_app, removed at the end.
+run_as postgres "
+    INSERT INTO core.departments (tenant_id, name) VALUES
+        ('$TECHVEIN','iso-dep-techvein'), ('$SCHOOL','iso-dep-school')
+    ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+# Separate batch: one table's fixture failing must not take the other's with it.
+run_as postgres "
+    WITH c AS (INSERT INTO calendar.calendars (tenant_id, name) VALUES
+                 ('$TECHVEIN','iso-rs-cal'), ('$SCHOOL','iso-rs-cal') RETURNING id, tenant_id),
+         e AS (INSERT INTO calendar.events (tenant_id, calendar_id, uid, title, starts_at, ends_at)
+               SELECT tenant_id, id, 'iso-rs-' || tenant_id || '@test', 'iso-rs-event', now(), now() + interval '1 hour'
+                 FROM c RETURNING id, tenant_id),
+         r AS (INSERT INTO calendar.event_reminders (event_id, minutes_before, method)
+               SELECT id, 10, 'email' FROM e RETURNING id, event_id)
+    INSERT INTO calendar.reminder_sends (tenant_id, reminder_id, occurrence_starts_at)
+    SELECT e.tenant_id, r.id, now() FROM r JOIN e ON e.id = r.event_id;" >/dev/null 2>&1
+
+# table:column:the Techvein fixture's predicate
+for spec in "core.departments|name|name = 'iso-dep-techvein'"             "calendar.reminder_sends|occurrence_starts_at|reminder_id IN (SELECT r.id FROM calendar.event_reminders r JOIN calendar.events e ON e.id = r.event_id WHERE e.title = 'iso-rs-event')"; do
+    tbl=${spec%%|*}; rest=${spec#*|}; col=${rest%%|*}; mine=${rest#*|}
+
+    own=$(scalar_as postgres "SELECT count(*) FROM $tbl WHERE tenant_id = '$TECHVEIN' AND ($mine)")
+    seen=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM $tbl WHERE $mine")
+    [ "${own:-0}" -ge 1 ] && [ "${seen:-0}" = "$own" ] && pass "$tbl: Techvein sees its own fixture row(s)"         || fail "$tbl: Techvein sees '${seen}' of its own ${own} fixture row(s) - fixture missing or RLS too strict"
+
+    leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM $tbl WHERE tenant_id = '$SCHOOL'")
+    [ "${leak:-1}" -eq 0 ] && pass "$tbl: Techvein cannot see ABC School's rows"                            || fail "LEAK: $tbl shows $leak ABC School row(s) to Techvein"
+
+    leak=$(as_tenant "$SCHOOL" "SELECT count(*) FROM $tbl WHERE tenant_id = '$TECHVEIN'")
+    [ "${leak:-1}" -eq 0 ] && pass "$tbl: ABC School cannot see Techvein's rows"                            || fail "LEAK: $tbl shows Techvein row(s) to ABC School"
+
+    n=$(no_context "SELECT count(*) FROM $tbl")
+    [ "${n:-1}" -eq 0 ] && pass "$tbl: no tenant context returns zero rows"                         || fail "DANGEROUS: $tbl shows ${n} row(s) with no tenant set"
+
+    empty=$(scalar_as tatvaos_app "SET app.tenant_id = ''; SELECT count(*) FROM $tbl")
+    [ "${empty:-x}" = "0" ] && pass "$tbl: empty tenant string returns zero, does not throw"                             || fail "$tbl: empty app.tenant_id did not return 0 (got '${empty}') - check the nullif()"
+done
+
+# A cross-tenant UPDATE must touch nothing; read back as postgres. Aimed at ONE
+# row: renaming every School department to one name trips the per-organisation
+# unique index and changes nothing even with no RLS at all - a check that could
+# not fail (found by this block's own red run, 27 Sept).
+run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    UPDATE core.departments SET name = 'iso-dep-hijacked' WHERE tenant_id = '$SCHOOL' AND name = 'iso-dep-school';" >/dev/null 2>&1
+hij=$(scalar_as postgres "SELECT count(*) FROM core.departments WHERE name = 'iso-dep-hijacked'")
+[ "${hij:-1}" -eq 0 ] && pass "core.departments: cross-tenant UPDATE changed nothing (it changed 2 on 24 Sept)"                       || fail "LEAK: Techvein renamed an ABC School department"
+
+for forge in "core.departments|INSERT INTO core.departments (tenant_id, name) VALUES ('$SCHOOL', 'iso-dep-forged')"              "calendar.reminder_sends|INSERT INTO calendar.reminder_sends (tenant_id, reminder_id, occurrence_starts_at) SELECT '$SCHOOL', r.id, now() + interval '1 day' FROM calendar.event_reminders r LIMIT 1"; do
+    tbl=${forge%%|*}; sql=${forge#*|}
+    out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN'; $sql;" 2>&1)
+    rc=$?
+    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qi 'row-level security'; then
+        pass "$tbl: cross-tenant INSERT blocked by WITH CHECK"
+    else
+        fail "LEAK: Techvein wrote a $tbl row tagged as ABC School - WITH CHECK is missing ($(printf '%s' "$out" | head -c 120))"
+    fi
+done
+
+run_as postgres "
+    DELETE FROM core.departments WHERE name LIKE 'iso-dep-%';
+    DELETE FROM calendar.calendars WHERE name = 'iso-rs-cal';" >/dev/null 2>&1
 
 hdr "Hire job openings are isolated, and cannot point into another organisation"
 
@@ -674,6 +750,19 @@ else
     pass "mail edge denied on billing"
 fi
 
+# core.departments: granted to the mail edge in 0009 for a recipient lookup
+# that was never built. No Postfix or Dovecot query reads it (local/postfix/sql,
+# local/dovecot/*.ext, and the senders_allowed_external view, checked 30 Sept
+# 2026). "An unused grant is a door nobody watches" (Mr. Singh, reviewing PR
+# 330): revoked by 20260930-revoke-mailedge-departments.sql. With the grant, a
+# SELECT here SUCCEEDS (row security makes it return 0 rows, which is not a
+# denial), so this fails while the grant exists.
+if run_as tatvaos_mailedge "SELECT count(*) FROM core.departments" >/dev/null 2>&1; then
+    fail "mail edge can read departments - revoke that grant"
+else
+    pass "mail edge denied on departments"
+fi
+
 if run_as tatvaos_mailedge "SELECT count(*) FROM mail.mailboxes" >/dev/null 2>&1; then
     pass "mail edge can still read mailboxes (needed for routing)"
 else
@@ -698,6 +787,103 @@ n=$(no_context "SELECT count(*) FROM core.ai_usage")
 [ "${n:-1}" -eq 0 ] && pass "no context sees no AI usage"                     || fail "DANGEROUS: ${n} AI usage row(s) visible with no tenant set"
 run_as postgres "DELETE FROM core.ai_usage WHERE feature = 'isolation.fixture';" >/dev/null 2>&1
 
+# ---------------------------------------------------------------------------
+hdr "Docs documents are isolated, and follow Space's sharing"
+
+# A document is a Space file; docs.* rows are visible exactly when the
+# space.files row is (20260924-docs-schema.sql). So this checks three
+# audiences, not two: the owner (must see), a COLLEAGUE in the same tenant
+# with no share (must not — the tenant test alone would pass them), and the
+# other tenant. Then a share is added and the colleague must start seeing it,
+# which proves the policy defers to Space rather than to the tenant alone.
+# Fixture inserted as postgres and removed at the end, like Connect's.
+DOC='d0c00000-0000-0000-0000-000000000001'
+OWNER='d1111111-1111-1111-1111-111111111111'
+COLLEAGUE='d1111111-1111-1111-1111-111111111112'
+OTHER='d2222222-2222-2222-2222-222222222222'
+run_as postgres "
+    DELETE FROM space.files WHERE id = '$DOC';
+    INSERT INTO space.files (id, tenant_id, created_by_user_id, ownership_type, owner_user_id,
+                             name, mime_type, blob_key, size_bytes)
+    VALUES ('$DOC', '$TECHVEIN', '$OWNER', 'personal', '$OWNER',
+            'Isolation fixture', 'application/vnd.tatvaos.document', 'isolation-test/$DOC', 0);
+    INSERT INTO docs.documents (file_id, tenant_id) VALUES ('$DOC', '$TECHVEIN');
+    INSERT INTO docs.updates (file_id, tenant_id, user_id, data) VALUES ('$DOC', '$TECHVEIN', '$OWNER', '\x01');
+    INSERT INTO docs.comments (file_id, tenant_id, author_user_id, body) VALUES ('$DOC', '$TECHVEIN', '$OWNER', 'fixture');
+    INSERT INTO docs.versions (file_id, tenant_id, state) VALUES ('$DOC', '$TECHVEIN', '\x01');
+" >/dev/null 2>&1
+
+as_person() {
+    scalar_as tatvaos_app "SET app.tenant_id = '$1'; SET app.user_id = '$2'; $3"
+}
+
+for t in documents updates comments versions; do
+    n=$(as_person "$TECHVEIN" "$OWNER" "SELECT count(*) FROM docs.$t WHERE file_id = '$DOC'")
+    [ "${n:-0}" -ge 1 ] && pass "owner sees their own docs.$t row" \
+                        || fail "owner sees nothing in docs.$t - policy too strict or fixture missing"
+    n=$(as_person "$TECHVEIN" "$COLLEAGUE" "SELECT count(*) FROM docs.$t WHERE file_id = '$DOC'")
+    [ "${n:-1}" -eq 0 ] && pass "unshared colleague cannot see docs.$t" \
+                        || fail "LEAK: an unshared colleague sees $n docs.$t row(s)"
+    n=$(as_person "$SCHOOL" "$OTHER" "SELECT count(*) FROM docs.$t WHERE file_id = '$DOC'")
+    [ "${n:-1}" -eq 0 ] && pass "other tenant cannot see docs.$t" \
+                        || fail "LEAK: another tenant sees $n docs.$t row(s)"
+    n=$(no_context "SELECT count(*) FROM docs.$t")
+    [ "${n:-1}" -eq 0 ] && pass "no context sees nothing in docs.$t" \
+                        || fail "DANGEROUS: ${n} docs.$t row(s) visible with no tenant set"
+done
+
+run_as postgres "
+    INSERT INTO space.shares (tenant_id, file_id, shared_by_user_id, shared_with_user_id, permission)
+    VALUES ('$TECHVEIN', '$DOC', '$OWNER', '$COLLEAGUE', 'view');
+" >/dev/null 2>&1
+n=$(as_person "$TECHVEIN" "$COLLEAGUE" "SELECT count(*) FROM docs.updates WHERE file_id = '$DOC'")
+[ "${n:-0}" -ge 1 ] && pass "a Space share lets the colleague see the document's content" \
+                    || fail "a Space share did NOT reach docs.* - the policy is not deferring to Space"
+
+# The switch. Readable by the organisation it belongs to, by nobody else.
+run_as postgres "
+    INSERT INTO docs.tenant_settings (tenant_id, enabled) VALUES ('$TECHVEIN', true)
+    ON CONFLICT (tenant_id) DO NOTHING;
+" >/dev/null 2>&1
+n=$(as_person "$TECHVEIN" "$OWNER" "SELECT count(*) FROM docs.tenant_settings")
+[ "${n:-0}" -ge 1 ] && pass "an organisation sees its own Docs switch" \
+                    || fail "an organisation cannot read its own Docs switch"
+n=$(as_person "$SCHOOL" "$OTHER" "SELECT count(*) FROM docs.tenant_settings WHERE tenant_id = '$TECHVEIN'")
+[ "${n:-1}" -eq 0 ] && pass "another organisation cannot see that switch" \
+                    || fail "LEAK: another tenant sees Techvein's Docs switch"
+# Removed again: Docs is OFF by default, and a test database left with it on
+# would hide that from whatever runs next (tests/docs starts from "off").
+run_as postgres "DELETE FROM docs.tenant_settings WHERE tenant_id = '$TECHVEIN';" >/dev/null 2>&1
+
+# Sheets' own switch (20260925-sheets-switch.sql): the same rules, and one
+# more — another organisation cannot WRITE Techvein's row either (the
+# policy's WITH CHECK), so it cannot switch Sheets on for someone else.
+run_as postgres "
+    INSERT INTO docs.sheets_tenant_settings (tenant_id, enabled) VALUES ('$TECHVEIN', true)
+    ON CONFLICT (tenant_id) DO NOTHING;
+" >/dev/null 2>&1
+n=$(as_person "$TECHVEIN" "$OWNER" "SELECT count(*) FROM docs.sheets_tenant_settings")
+[ "${n:-0}" -ge 1 ] && pass "an organisation sees its own Sheets switch"                     || fail "an organisation cannot read its own Sheets switch"
+n=$(as_person "$SCHOOL" "$OTHER" "SELECT count(*) FROM docs.sheets_tenant_settings WHERE tenant_id = '$TECHVEIN'")
+[ "${n:-1}" -eq 0 ] && pass "another organisation cannot see Techvein's Sheets switch"                     || fail "LEAK: another tenant sees Techvein's Sheets switch"
+run_as postgres "DELETE FROM docs.sheets_tenant_settings WHERE tenant_id = '$TECHVEIN';" >/dev/null 2>&1
+# Calibration: the SAME insert for the school's own row goes through, so the
+# refusal below is the policy speaking, not a statement that could never work.
+as_person "$SCHOOL" "$OTHER" "INSERT INTO docs.sheets_tenant_settings (tenant_id, enabled) VALUES ('$SCHOOL', false)" >/dev/null 2>&1
+n=$(run_as postgres "SELECT count(*) FROM docs.sheets_tenant_settings WHERE tenant_id = '$SCHOOL'" | tail -n1 | tr -d '[:space:]')
+[ "${n:-0}" -eq 1 ] && pass "an organisation's own switch row can be written (calibrates the next check)"                     || fail "the calibration insert failed - the refusal check below proves nothing"
+run_as postgres "DELETE FROM docs.sheets_tenant_settings WHERE tenant_id = '$SCHOOL';" >/dev/null 2>&1
+as_person "$SCHOOL" "$OTHER" "INSERT INTO docs.sheets_tenant_settings (tenant_id, enabled) VALUES ('$TECHVEIN', true)" >/dev/null 2>&1
+n=$(run_as postgres "SELECT count(*) FROM docs.sheets_tenant_settings WHERE tenant_id = '$TECHVEIN'" | tail -n1 | tr -d '[:space:]')
+[ "${n:-1}" -eq 0 ] && pass "another organisation cannot switch Sheets on for Techvein"                     || fail "LEAK: another tenant wrote Techvein's Sheets switch"
+# Off again, as Sheets ships (tests/sheets starts from "off").
+run_as postgres "DELETE FROM docs.sheets_tenant_settings WHERE tenant_id = '$TECHVEIN';" >/dev/null 2>&1
+
+run_as postgres "DELETE FROM space.files WHERE id = '$DOC';" >/dev/null 2>&1
+n=$(run_as postgres "SELECT count(*) FROM docs.updates WHERE file_id = '$DOC'" | tail -n1 | tr -d '[:space:]')
+[ "${n:-1}" -eq 0 ] && pass "purging the Space file removes the document's rows with it" \
+                    || fail "docs.* rows survived their Space file ($n left)"
+
 hdr "Append-only tables refuse rewrites from the app"
 
 # Every schema re-grants the app UPDATE and DELETE on all its tables on every
@@ -716,6 +902,8 @@ for stmt in \
     "DELETE FROM mail.api_keys WHERE false" \
     "DELETE FROM mail.app_passwords WHERE false" \
     "DELETE FROM mail.api_sends WHERE false" \
+    "DELETE FROM mail.api_send_envelopes WHERE false" \
+    "UPDATE mail.api_send_envelopes SET from_address = from_address WHERE false" \
     "DELETE FROM family.contact_audit_logs WHERE false"     "DELETE FROM core.ai_usage WHERE false"     "UPDATE core.ai_usage SET tokens_in = tokens_in WHERE false"     "DELETE FROM core.ai_usage_alerts WHERE false"
 do
     if run_as tatvaos_app "$stmt" >/dev/null 2>&1; then

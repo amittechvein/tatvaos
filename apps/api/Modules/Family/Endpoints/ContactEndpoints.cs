@@ -239,9 +239,17 @@ public static class ContactEndpoints
 
     private static async Task<IResult> CreateAsync(
         CreateContactRequest req, AppDbContext db, TenantContext tenant,
+        TatvaOS.Api.Modules.Personal.PersonalHouse houses,
         HttpContext http, CancellationToken ct)
     {
         if (!TryCaller(tenant, out var uid)) return Results.Unauthorized();
+
+        // Personal accounts (build plan §6): an "organisational" contact is
+        // one every person in the tenant sees and may edit. In the personal
+        // house that is every stranger. Refused, not quietly made personal:
+        // the caller asked for something they cannot have, and should know.
+        if (req.OwnershipType == "organisational" && await houses.IsPersonalHouseAsync(tenant.TenantId, ct))
+            return Results.Json(new { error = TatvaOS.Api.Modules.Personal.PersonalGuard.Sentence }, statusCode: 403);
 
         var display = (req.DisplayName ?? string.Empty).Trim();
         if (display.Length == 0)
@@ -325,9 +333,14 @@ public static class ContactEndpoints
     /// </summary>
     private static async Task<IResult> PatchAsync(
         Guid id, PatchContactRequest req, AppDbContext db, TenantContext tenant,
+        TatvaOS.Api.Modules.Personal.PersonalHouse houses,
         HttpContext http, CancellationToken ct)
     {
         if (!TryCaller(tenant, out var uid)) return Results.Unauthorized();
+
+        // Promotion to organisational would publish it to every stranger (§6).
+        if (req.OwnershipType == "organisational" && await houses.IsPersonalHouseAsync(tenant.TenantId, ct))
+            return Results.Json(new { error = TatvaOS.Api.Modules.Personal.PersonalGuard.Sentence }, statusCode: 403);
 
         var c = await Live(db).FirstOrDefaultAsync(x => x.Id == id, ct);
         if (c is null) return Results.NotFound();
@@ -443,7 +456,8 @@ public static class ContactEndpoints
     /// ranked relevance is the wrong trade there.
     /// </summary>
     private static async Task<IResult> AutocompleteAsync(
-        string q, AppDbContext db, TenantContext tenant, CancellationToken ct,
+        string q, AppDbContext db, TenantContext tenant,
+        TatvaOS.Api.Modules.Personal.PersonalHouse houses, CancellationToken ct,
         int limit = 10)
     {
         var term = (q ?? string.Empty).Trim();
@@ -464,7 +478,14 @@ public static class ContactEndpoints
         //
         // Colleagues are listed FIRST. Typing three letters and getting a
         // supplier before your own team is the behaviour people complain about.
-        var colleagues = await db.Users
+        //
+        // EXCEPT in the personal house (build plan §6, §4.3): there are no
+        // colleagues there, only strangers, and this half would be a search
+        // box over every personal account. Suggestions come ONLY from the
+        // person's own contacts and the people they have written to (which
+        // ContactAutoSave already turns into contacts).
+        var personal = await houses.IsPersonalHouseAsync(tenant.TenantId, ct);
+        var colleagues = personal ? new List<AutocompleteRow>() : await db.Users
             .Where(u => u.Status == "active" &&
                         (EF.Functions.ILike(u.Email, prefix) ||
                          EF.Functions.ILike(u.DisplayName, prefix)))
