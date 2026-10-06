@@ -365,7 +365,8 @@ export function functionsNeedingNewerExcel(wb: WorkbookData): string[] {
 
 /**
  * The line the .xlsx download shows, or null when nothing in the workbook is
- * newer than Excel 2019. Wording awaits Mr. Singh's ruling (design §4a).
+ * newer than Excel 2019. Wording ruled by Mr. Singh on 7 Oct 2026, approved
+ * as it stands (design §4a).
  */
 export function olderExcelNote(names: readonly string[]): string | null {
   if (names.length === 0) return null;
