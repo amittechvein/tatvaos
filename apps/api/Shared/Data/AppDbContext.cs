@@ -45,6 +45,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<ProductAccess> ProductAccess => Set<ProductAccess>();
     public DbSet<Plan> Plans => Set<Plan>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
+    public DbSet<BillingProfile> BillingProfiles => Set<BillingProfile>();
+    public DbSet<Invoice> Invoices => Set<Invoice>();
+    public DbSet<InvoiceLine> InvoiceLines => Set<InvoiceLine>();
     public DbSet<Feature> Features => Set<Feature>();
     public DbSet<PlanFeatureLimit> PlanFeatureLimits => Set<PlanFeatureLimit>();
     public DbSet<FeatureOverride> FeatureOverrides => Set<FeatureOverride>();
@@ -73,6 +76,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     /// lookup. See the entity comment.
     /// </summary>
     public DbSet<MfaRecoveryCode> MfaRecoveryCodes => Set<MfaRecoveryCode>();
+    public DbSet<RecoveryEmailChange> RecoveryEmailChanges => Set<RecoveryEmailChange>();
+    public DbSet<RecoveryAdminSuspension> RecoveryAdminSuspensions => Set<RecoveryAdminSuspension>();
     public DbSet<UserAvatar> UserAvatars => Set<UserAvatar>();
 
     /// <summary>
@@ -207,6 +212,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<AiCreditAlert> AiCreditAlerts => Set<AiCreditAlert>();
     public DbSet<AiCreditTopup> AiCreditTopups => Set<AiCreditTopup>();
 
+    // Docs — collaborative documents, each one a Space file
+    // (20260924-docs-schema.sql). Everything else about them is configured
+    // in the single "Docs" block at the end of OnModelCreating.
+    public DbSet<DocsDocument> DocsDocuments => Set<DocsDocument>();
+    public DbSet<DocsUpdate> DocsUpdates => Set<DocsUpdate>();
+    public DbSet<DocsVersion> DocsVersions => Set<DocsVersion>();
+    public DbSet<DocsComment> DocsComments => Set<DocsComment>();
+    public DbSet<DocsImage> DocsImages => Set<DocsImage>();
+    public DbSet<DocsTenantSetting> DocsTenantSettings => Set<DocsTenantSetting>();
+    // Sheets' own switch (20260925-sheets-switch.sql); configured beside Docs'.
+    public DbSet<SheetsTenantSetting> SheetsTenantSettings => Set<SheetsTenantSetting>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         // ---- Schemas -----------------------------------------------------
@@ -241,6 +258,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<OidcScope>().ToTable("oidc_scopes", "core");
         b.Entity<OidcToken>().ToTable("oidc_tokens", "core");
         b.Entity<MfaRecoveryCode>().ToTable("mfa_recovery_codes", "core");
+        // Decision 0009. Filtered from the first line (0007's rule: every
+        // tenant-owned entity carries a query filter); RLS is forced as well.
+        b.Entity<RecoveryEmailChange>().ToTable("recovery_email_changes", "core");
+        b.Entity<RecoveryEmailChange>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<RecoveryAdminSuspension>().ToTable("recovery_admin_suspensions", "core");
+        b.Entity<RecoveryAdminSuspension>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<UserAvatar>().ToTable("user_avatars", "core");
         b.Entity<UserAvatar>().HasKey(a => a.UserId);
         b.Entity<SignupDraft>().ToTable("signup_drafts", "core");
@@ -299,6 +322,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<CalendarAttendee>().ToTable("event_attendees", "calendar");
         b.Entity<CalendarReminder>().ToTable("event_reminders", "calendar");
         b.Entity<CalendarReminderSend>().ToTable("reminder_sends", "calendar");
+        // Decision 0007's zero-layer PR: the second layer, beside the new RLS.
+        b.Entity<CalendarReminderSend>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
 
         // ---- Connect -----------------------------------------------------
         // Explicit schema on every one, like everything else here: a default
@@ -334,6 +359,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiSend>().ToTable("api_sends", "mail");
+        // 20261001-mail-sender-gate-bounce: the outbound gate's record of each
+        // send's mailbox. No DbSet; append-only for the app.
+        b.Entity<TatvaOS.Api.Modules.Mail.MailApiSendEnvelope>().ToTable("api_send_envelopes", "mail");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>().ToTable("meeting_chat", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingBlock>().ToTable("meeting_blocks", "connect");
@@ -885,6 +913,31 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             e.HasOne<User>().WithMany()
                 .HasForeignKey(u => u.UserId).OnDelete(DeleteBehavior.SetNull);
         });
+        // Billing (20260926-d-billing-invoices.sql). RLS-forced per
+        // organisation, and filtered here too. Seller and Buyer are jsonb
+        // snapshots — listed here because a jsonb column EF does not know
+        // about fails only at runtime (see the meeting_events note above).
+        b.Entity<BillingProfile>(e =>
+        {
+            e.ToTable("billing_profiles", "core");
+            e.HasKey(p => p.TenantId);
+            e.HasQueryFilter(p => p.TenantId == tenant.TenantId);
+        });
+        b.Entity<Invoice>(e =>
+        {
+            e.ToTable("invoices", "core");
+            e.Property(i => i.Seller).HasColumnType("jsonb");
+            e.Property(i => i.Buyer).HasColumnType("jsonb");
+            e.HasQueryFilter(i => i.TenantId == tenant.TenantId);
+            e.HasMany(i => i.Lines).WithOne().HasForeignKey(l => l.InvoiceId).OnDelete(DeleteBehavior.Cascade);
+        });
+        b.Entity<InvoiceLine>(e =>
+        {
+            e.ToTable("invoice_lines", "core");
+            e.HasKey(l => new { l.InvoiceId, l.LineNo });
+            e.HasQueryFilter(l => l.TenantId == tenant.TenantId);
+        });
+
         // Plan features (20260926-plan-features.sql). The catalogue and the
         // plan limits are platform reference data like plans (no tenant); the
         // overrides are per organisation, RLS-forced, and filtered here too.
@@ -936,6 +989,92 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             e.HasQueryFilter(a => a.TenantId == tenant.TenantId);
             e.HasOne<Tenant>().WithMany()
                 .HasForeignKey(a => a.TenantId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ---- Docs --------------------------------------------------------
+        // One block, additive, so the Docs lane never has to edit anyone
+        // else's lines. Tenant filters only, like Space: visibility is the
+        // RLS policy's job (it defers to space.files), level is the app's.
+        b.Entity<DocsDocument>(e =>
+        {
+            e.ToTable("documents", "docs");
+            // Keyed by the Space file, not by an Id of its own — EF's
+            // convention would find no key here, and a model that fails
+            // validation fails for every entity (see ConnectTenantSettings).
+            e.HasKey(d => d.FileId);
+            e.HasQueryFilter(d => d.TenantId == tenant.TenantId);
+            e.HasOne<SpaceFile>().WithOne()
+                .HasForeignKey<DocsDocument>(d => d.FileId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Tenant>().WithMany()
+                .HasForeignKey(d => d.TenantId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(d => d.CheckpointByUserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<DocsUpdate>(e =>
+        {
+            e.ToTable("updates", "docs");
+            e.HasKey(u => u.Seq);
+            e.Property(u => u.Seq).ValueGeneratedOnAdd();
+            e.HasQueryFilter(u => u.TenantId == tenant.TenantId);
+            e.HasOne<DocsDocument>().WithMany()
+                .HasForeignKey(u => u.FileId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(u => u.UserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<DocsVersion>(e =>
+        {
+            e.ToTable("versions", "docs");
+            e.HasQueryFilter(v => v.TenantId == tenant.TenantId);
+            e.HasOne<DocsDocument>().WithMany()
+                .HasForeignKey(v => v.FileId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(v => v.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<DocsComment>(e =>
+        {
+            e.ToTable("comments", "docs");
+            e.HasQueryFilter(c => c.TenantId == tenant.TenantId);
+            // jsonb must be stated: EF sends text and Postgres will not cast.
+            e.Property(c => c.Anchor).HasColumnType("jsonb");
+            e.HasOne<DocsDocument>().WithMany()
+                .HasForeignKey(c => c.FileId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<DocsComment>().WithMany()
+                .HasForeignKey(c => c.ParentId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(c => c.AuthorUserId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(c => c.ResolvedByUserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<DocsTenantSetting>(e =>
+        {
+            e.ToTable("tenant_settings", "docs");
+            // Keyed by tenant: EF's convention would find no key (the
+            // ConnectTenantSettings outage of 9 Sept).
+            e.HasKey(s => s.TenantId);
+            e.HasQueryFilter(s => s.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithOne()
+                .HasForeignKey<DocsTenantSetting>(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(s => s.UpdatedByUserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<SheetsTenantSetting>(e =>
+        {
+            e.ToTable("sheets_tenant_settings", "docs");
+            e.HasKey(s => s.TenantId);
+            e.HasQueryFilter(s => s.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithOne()
+                .HasForeignKey<SheetsTenantSetting>(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(s => s.UpdatedByUserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<DocsImage>(e =>
+        {
+            e.ToTable("images", "docs");
+            e.HasQueryFilter(i => i.TenantId == tenant.TenantId);
+            e.HasOne<DocsDocument>().WithMany()
+                .HasForeignKey(i => i.FileId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(i => i.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
         });
 
         base.OnModelCreating(b);

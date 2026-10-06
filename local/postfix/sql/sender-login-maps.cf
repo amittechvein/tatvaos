@@ -1,0 +1,29 @@
+# ============================================================================
+#  Who may use this address as the sender on port 587?
+# ============================================================================
+#
+#  smtpd_sender_login_maps (main.cf). Returns the sign-in names allowed to
+#  put the envelope sender in MAIL FROM, comma-separated: the mailbox
+#  itself, people with send_as / send_on_behalf / full on a shared mailbox,
+#  and an alias's target mailbox. Returns nothing for any other address.
+#
+#  reject_authenticated_sender_login_mismatch then refuses a SIGNED-IN
+#  session whose sign-in is not among them:
+#      553 5.7.1 <x@y>: Sender address rejected: not owned by user <login>
+#
+#  Until 2 Oct 2026 nothing checked this. A signed-in user could send as any
+#  address at all, another organisation's mailboxes included.
+#
+#  The rule lives in ONE place, mail.sender_logins() (migration
+#  20261002-mail-sender-logins.sql), so this file and the database cannot
+#  disagree. The mail edge has EXECUTE on that function and no grant on the
+#  permissions table it reads. local/scripts/test-mail.sh, section
+#  "Port 587", runs this query through the real Postfix.
+
+hosts    = postgres
+user     = tatvaos_mailedge
+password = dev_mail_pw
+dbname   = tatvaos_mail
+
+query = SELECT l FROM (SELECT mail.sender_logins('%s') AS l) owners
+        WHERE  l IS NOT NULL

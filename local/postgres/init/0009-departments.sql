@@ -62,9 +62,7 @@ ALTER TABLE core.users
     ADD CONSTRAINT core_users_department_fk
     FOREIGN KEY (department_id) REFERENCES core.departments(id) ON DELETE SET NULL;
 
--- Routing lookups may read department policy (can_send_external drives the
--- outbound gate). Same read-only scope the mail edge has on core.users.
-GRANT SELECT ON core.departments TO tatvaos_mailedge;
+-- No grant to tatvaos_mailedge: nothing it runs reads departments (removed 30 Sept 2026; see 20260930-revoke-mailedge-departments.sql).
 
 -- Self-reference. NULL parent = top level.
 --

@@ -204,13 +204,27 @@ public sealed class TotpService(IConfiguration config)
 
     private static readonly TimeSpan ChallengeLifetime = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// The first segment of every challenge, and the only one ReadChallenge
+    /// accepts: "mfa-challenge.{user}.{expiry}.{mac}". The type was already
+    /// inside the MAC ("mfa-challenge:" prefix) and the MAC key is SHA-256 of
+    /// the configured key, not the key itself - so a challenge was never
+    /// confusable with an access token or a download ticket. Now it is also
+    /// explicit and checked, as every token type's is (TokenIssuer.
+    /// AccessTokenType; Mr. Singh's ruling, which reached this lane by 28 Sept
+    /// 2026). A challenge issued before this
+    /// has three segments and is refused: it lived five minutes, and the
+    /// person types their password again.
+    /// </summary>
+    public const string ChallengeType = "mfa-challenge";
+
     public string IssueChallenge(Guid userId)
     {
         var expires = DateTimeOffset.UtcNow.Add(ChallengeLifetime).ToUnixTimeSeconds();
         var body = $"{userId:N}.{expires}";
         var mac = Convert.ToHexString(
             HMACSHA256.HashData(Key(), Encoding.UTF8.GetBytes($"mfa-challenge:{body}")));
-        return $"{body}.{mac.ToLowerInvariant()}";
+        return $"{ChallengeType}.{body}.{mac.ToLowerInvariant()}";
     }
 
     /// <summary>The user the challenge is for, or null if it is forged or expired.</summary>
@@ -218,8 +232,9 @@ public sealed class TotpService(IConfiguration config)
     {
         if (string.IsNullOrWhiteSpace(challenge)) return null;
 
-        var parts = challenge.Split('.');
-        if (parts.Length != 3) return null;
+        var all = challenge.Split('.');
+        if (all.Length != 4 || all[0] != ChallengeType) return null;
+        var parts = all[1..];
         if (!Guid.TryParseExact(parts[0], "N", out var userId)) return null;
         if (!long.TryParse(parts[1], out var expires)) return null;
 
@@ -250,17 +265,30 @@ public sealed class TotpService(IConfiguration config)
     /// losing your place — the dash is stripped before hashing, so how the
     /// user types it does not matter.
     /// </summary>
+    /// <summary>
+    /// 32 symbols = 5 bits each; 16 of them = 80 bits. The number is load-bearing:
+    /// the codes are stored as a fast, unsalted SHA-256 (0024-mfa.sql) on the
+    /// argument that 80 bits leaves nothing to brute-force. Until 27 Sept 2026
+    /// they were 10 characters, 50 bits, under a comment claiming 80 — a leaked
+    /// table was then about a GPU-day from every code in it. Raised before
+    /// anyone had MFA on (all 169 accounts had it off), so no code was re-issued.
+    /// tests/mfa/test-recovery-codes.sh fails if the entropy drops again.
+    /// </summary>
+    public const int RecoveryCodeLength = 16;
+    public const string RecoveryCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
     public static List<string> NewRecoveryCodes(int count = 10)
     {
         // No I, O, 0 or 1: these get written on paper and then read back.
-        const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
+        // Four groups of four, because sixteen characters in one run is where
+        // people lose their place while typing.
         return Enumerable.Range(0, count).Select(_ =>
         {
-            var chars = new char[10];
+            var chars = new char[RecoveryCodeLength];
             for (var i = 0; i < chars.Length; i++)
-                chars[i] = alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)];
-            return $"{new string(chars[..5])}-{new string(chars[5..])}";
+                chars[i] = RecoveryCodeAlphabet[RandomNumberGenerator.GetInt32(RecoveryCodeAlphabet.Length)];
+            return string.Join("-", Enumerable.Range(0, RecoveryCodeLength / 4)
+                .Select(g => new string(chars, g * 4, 4)));
         }).ToList();
     }
 
