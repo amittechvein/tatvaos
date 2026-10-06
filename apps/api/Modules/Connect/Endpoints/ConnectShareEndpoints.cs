@@ -472,6 +472,12 @@ public static class ConnectShareEndpoints
                 error = "Share with your organisation, with named people, "
                       + "with a password, or with anyone holding the link.",
             });
+        // "Anyone signed in to your organisation" is, in the personal house,
+        // every stranger with a personal account (build plan §6). Named
+        // people, a password or a public link are still there.
+        if (level == ConnectShareLevels.Organisation
+            && await TatvaOS.Api.Modules.Personal.PersonalHouse.IsHouseTenantAsync(db, tenant.TenantId, ct))
+            return Results.Json(new { error = TatvaOS.Api.Modules.Personal.PersonalGuard.Sentence }, statusCode: 403);
 
         // A recording with no file cannot be shared. Sharing one that is still
         // being written would hand somebody a link that 404s for ten minutes
@@ -1019,6 +1025,8 @@ public static class ConnectShareEndpoints
     /// finds nothing, and refuses them — so the cross-organisation grant, the
     /// one reason the function is a definer, could never have worked. The
     /// function now returns everything the caller needs in the one read.
+    /// (share_for_user() itself was dropped on 28 Sept, when the definer review
+    /// found nothing still called it - 20260928-e-connect-drop-unused-definers.sql.)
     ///
     /// Returns null for "no", which is also the answer for a revoked share,
     /// an expired one, a suspended organisation, and a recording nobody ever

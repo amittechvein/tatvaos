@@ -144,7 +144,10 @@ MIG="$ROOT/local/postgres/init/20260926-plan-features.sql"
 base="${TATVAOS_PSQL% -Atc}"
 out=$($base -v ON_ERROR_STOP=1 -q < "$MIG" 2>&1 | grep -v "^wsl:" | grep -E "ERROR" )
 [ -z "$out" ] && pass "a re-run reports no error" || fail "the re-run said: $(brief "$out")"
-same "12 features in the catalogue" "$(PG "SELECT count(*) FROM core.features")" "12"
+# 12 from this file, plus 7 from 20260926-z-personal-plans.sql (personal
+# plans, part A: recipients per day/hour, meeting size/length, captions,
+# attendance, AI trial length).
+same "19 features in the catalogue" "$(PG "SELECT count(*) FROM core.features")" "19"
 # A customer who arrives AFTER the migration must not be handed everything by
 # the next deploy's re-run. Make one, re-run, look.
 STRAY=$(PG "SELECT gen_random_uuid()")
