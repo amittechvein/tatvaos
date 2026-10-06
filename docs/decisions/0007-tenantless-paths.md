@@ -60,25 +60,55 @@ refused. `tests/tenant-filters` now lists no Connect entity among its gaps.
 "RLS forced" was read from `pg_class` on the local database built from this
 branch's init files. Production was not read.
 
-## 3. Definer functions in `connect`
+## 3. Definer functions in `connect`: reviewed 28 September
 
 These run as their owner, so **neither RLS nor any EF filter applies inside
-them.** Each is a deliberate hole, and its body is the only guard. There are 24
-on the local database:
+them.** The body is the only guard. There were **30** on 28 Sept, not the 24 this
+list first counted: `main` added six with recording sharing. The review asked,
+for each: what it returns, who can call it, where its input comes from, and
+whether a caller could get another organisation's rows out of it.
 
-`claim_lobby_admission`, `expired_recordings`, `log_recording_access`,
-`meeting_chat_lines`, `meetings_with_captions`, `minutes_recipients`,
-`minutes_unreachable`, `notes_tenant`, `peek_lobby_request`,
-`pending_minutes_email`, `pending_notes`, `pending_transcription`,
-`reconcile_recording_storage`, `recording_allowed`, `recording_bytes`,
-`recording_retention_days`, `recording_tenant`, `resolve_meeting_code`,
-`resolve_share_token`, `share_for_user`, `storage_headroom`, `stuck_recordings`,
-`sweep_meeting_invitations`, `webhook_meeting_tenant`.
+**Across all 30:**
+- **Every body names its tables with their schema** (`connect.…`, `core.…`).
+  So none could be hijacked by a temporary table, even the 11 that left
+  `pg_temp` off their search path, which Postgres then searches first.
+- **Every input that reaches a function returning content** comes from one
+  of four places:
+  - a signed or secret token;
+  - the session's own user or organisation;
+  - an id the worker got from another definer;
+  - an id the caller already proved it may see, through a filtered read.
+- **`20260928-d-connect-definer-review.sql`** makes three things true by
+  construction, and the isolation suite checks all three:
+  - every connect definer searches `pg_catalog` first and `pg_temp` last;
+  - none is executable by `PUBLIC` (one was);
+  - the two attendee functions answer only for the caller's own organisation.
+  - Red on a database without the file, green on a fresh database after every
+    file ran twice.
 
-**Not yet reviewed in this inventory:** what each one returns, and whether it
-could return another organisation's rows to its caller. The 25 Sept audit
-(Hire lane, PR 275) checked only that each pins `search_path`; eight Connect
-functions omit `pg_temp` and were assigned to this lane.
+| Function | Returns | Input comes from | Verdict |
+|---|---|---|---|
+| `resolve_meeting_code` | a meeting's id, org, title, state | the meeting code in a guest link (a secret) | by design: the code is the invitation |
+| `peek_lobby_request`, `claim_lobby_admission` | a lobby request, by token hash | the wait token (secret) | by design; claim is single-use |
+| `resolve_share_token` | a share and its org | a share link token (secret) | by design; only password/public levels, only live shares |
+| `share_access_for_user` | which share lets a user view a recording | the session's user id | safe: the reader's org is read from `core.users`, not passed |
+| `share_still_allows`, `share_is_live`, `share_password_paused_until`, `record_share_password_failure` | yes/no, a time, a counted failure | a share id held by a signed ticket or resolved from a token | safe: share ids are unguessable, and each answer is about that share only |
+| `log_recording_access` | writes one access row | a share id plus the session's user and org | safe: tenant taken from the share row |
+| `webhook_meeting_tenant`, `recording_tenant`, `notes_tenant` | only an org id | the LiveKit room name (signed webhook) or the worker's own list | safe: an org id for an unguessable id, with no content |
+| `pending_notes`, `pending_transcription`, `pending_minutes_email`, `expired_recordings`, `stuck_recordings` | ids of work across all orgs | the worker, on a timer | by design: the worker's one cross-org question; it enters each org before reading content |
+| `sweep_meeting_invitations`, `sweep_share_password_failures` | a count of rows deleted | the worker | by design: retention |
+| `reconcile_recording_storage`, `storage_headroom`, `recording_allowed`, `recording_retention_days` | numbers and flags for one org | the org the request or worker is acting for | safe. `recording_retention_days` **was executable by PUBLIC**; revoked |
+| `minutes_recipients` | **attendee emails and names** for a meeting | the minutes routes (after a filtered "did you see this meeting" check) and the worker (after entering the org) | callers were safe; **the function answered any org's meeting to anyone who could call it.** Now it answers only for the caller's current org. Red before (Techvein got a School attendee), green after |
+| `minutes_unreachable` | a count for a meeting | as above | as above: Techvein got a School count before, 0 after |
+| `meeting_chat_lines` | **any meeting's chat** | **nothing calls it** | **unused, and the widest of all.** Propose dropping it (Mr. Singh: not additive) |
+| `meetings_with_captions`, `recording_bytes`, `share_for_user` | ids, a byte count, a share id | **nothing calls them** | unused. `share_for_user` also ignores its third argument. Propose dropping |
+
+**What would prove this review wrong:**
+- a caller I did not find that passes a user-chosen id to a content function;
+- a query run by hand on the server that relies on `recording_retention_days`
+  being PUBLIC;
+- a definer created after this date without the pattern. The isolation
+  suite now fails on that.
 
 ## 4. Open items
 
@@ -89,7 +119,8 @@ functions omit `pg_temp` and were assigned to this lane.
    the notes writer's `EnterAnonymousScope` removed, it goes red, 7 of 14
    ("Tenant context was not resolved", "Connect notes sweep failed").
 2. **Walk the ticketed download and the screen-share event.**
-3. **Review each definer function's body** against section 3's question.
+3. **Review each definer function's body: done 28 Sept** (section 3). Open:
+   dropping the four unused ones is Mr. Singh's call.
 4. **Step two: done 28 Sept** (see section 2).
 5. **`core.departments`** (the ruling's first addition): policy on, the mail
    edge reads it through a definer function. Not Connect, but absorbed by 0007.
