@@ -70,15 +70,19 @@ same() {
     elif [ "$2" = "$3" ]; then pass "$1"
     else fail "$1 — got [$2], wanted [$3]"; fi
 }
+# A here-string, NOT printf | grep -q: under pipefail, grep -q exits at the
+# first match, printf dies of SIGPIPE writing the rest, and the pipeline is
+# "false". On a long text with an early match that made has() FAIL with the
+# line present and hasnt() PASS with it present (3 Oct 2026, PR 386).
 has() {
     if [ -z "$3" ]; then fail "$1 — nothing to look for"
-    elif printf "%s" "$2" | grep -qF -- "$3"; then pass "$1"
+    elif grep -qF -- "$3" <<< "$2"; then pass "$1"
     else fail "$1 — not found in: $(brief "$2")"; fi
 }
 hasnt() {
     if [ -z "$2" ]; then fail "$1 — nothing to look in"
     elif [ -z "$3" ]; then fail "$1 — nothing to look for"
-    elif printf "%s" "$2" | grep -qF -- "$3"; then fail "$1 — found [$3]"
+    elif grep -qF -- "$3" <<< "$2"; then fail "$1 — found [$3]"
     else pass "$1"; fi
 }
 CALLS=0
@@ -200,9 +204,9 @@ PG "UPDATE core.audit_logs SET occurred_at = occurred_at - interval '2 hours'
     WHERE action='connect.recording.share_lookup' AND occurred_at > now() - interval '1 hour'" >/dev/null
 
 PG "UPDATE core.users SET role='org_owner' WHERE email='amit@techvein.local' AND role='owner'" >/dev/null
-PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
-PG "UPDATE core.users SET phone='+919999900002' WHERE email='hr@techvein.local' AND phone IS NULL" >/dev/null
-PG "UPDATE core.users SET phone='+919999900003' WHERE email='principal@abcschool.local' AND phone IS NULL" >/dev/null
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 PG "INSERT INTO core.users (tenant_id, email, display_name, role, status, phone)
     SELECT '$TECHVEIN', 'attendee@techvein.local', 'Attendee', 'employee', 'active', '+919999900004'
     WHERE NOT EXISTS (SELECT 1 FROM core.users WHERE email='attendee@techvein.local')" >/dev/null

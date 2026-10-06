@@ -96,6 +96,10 @@ public static class ConnectCaptionEndpoints
         // and who is in it are both things a stranger should not learn from
         // the difference between two error messages.
         if (participant is null) return Results.NotFound();
+        // The personal house: a stranger still knocking has a row but is not
+        // in the room, and must not write into its minutes (build plan §6).
+        // One call covers it - SeenMeetingAsync already knows the rule.
+        if (!await ConnectRecordingEndpoints.SeenMeetingAsync(db, id, uid, ct)) return Results.NotFound();
 
         var existing = await db.ConnectCaptionLines
             .CountAsync(c => c.MeetingId == id, ct);

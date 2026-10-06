@@ -23,8 +23,8 @@ export TZ=Asia/Kolkata
 TIERS="${TIERS:-./infra/scripts/backup-tiers.sh}"
 pass=0; fail=0
 same()  { if [ "$2" = "$3" ]; then pass=$((pass+1)); echo "  ok    $1"; else fail=$((fail+1)); echo "  FAIL  $1: expected [$3], got [$2]"; fi; }
-has()   { if printf '%s\n' "$2" | grep -qxF -- "$3"; then pass=$((pass+1)); echo "  ok    $1"; else fail=$((fail+1)); echo "  FAIL  $1: [$3] missing"; fi; }
-hasnt() { if printf '%s\n' "$2" | grep -qxF -- "$3"; then fail=$((fail+1)); echo "  FAIL  $1: [$3] present"; else pass=$((pass+1)); echo "  ok    $1"; fi; }
+has()   { if grep -qxF -- "$3" <<< "$2"; then pass=$((pass+1)); echo "  ok    $1"; else fail=$((fail+1)); echo "  FAIL  $1: [$3] missing"; fi; }
+hasnt() { if grep -qxF -- "$3" <<< "$2"; then fail=$((fail+1)); echo "  FAIL  $1: [$3] present"; else pass=$((pass+1)); echo "  ok    $1"; fi; }
 
 stamp() { date -u -d "@$1" +%Y%m%d-%H%M%S; }
 H=3600

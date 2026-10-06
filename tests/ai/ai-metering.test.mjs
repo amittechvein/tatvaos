@@ -4,7 +4,9 @@
 //
 //  Proves MeteredAiGateway with a FAKE provider, never a real key. Needs:
 //    - the API with Ai__BaseUrl pointing at the fake (http://127.0.0.1:5198/v1),
-//      Ai__ApiKey/Model/DataLocation set to anything, and Smtp__Port=5871;
+//      Ai__ApiKey/Model/DataLocation set to anything, Ai__Vendor set (a host
+//      the gateway does not know must name its vendor - PR 366), and
+//      Smtp__Port=5871;
 //    - .tmp/fake-ai-and-mail.mjs running (fake provider on :5198, which also
 //      counts completions at /hits and lists caught mail at /mail; SMTP sink
 //      on :5871).

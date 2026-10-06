@@ -71,6 +71,7 @@ public sealed class MeteredAiGateway(
     public bool IsConfigured => inner.IsConfigured;
     public string Model => inner.Model;
     public string? DataLocation => inner.DataLocation;
+    public string? Vendor => inner.Vendor;
     public Task<bool> EnabledForTenantAsync(CancellationToken ct) => inner.EnabledForTenantAsync(ct);
 
     /// <summary>The limits in force. NULL means no limit; 0 means none allowed.</summary>
@@ -150,10 +151,40 @@ public sealed class MeteredAiGateway(
             return AiResult.Failed("This AI request could not be sent (it did not say which feature it was for).");
         }
 
+        // 0b. A personal account has no organisation and no administrator,
+        //     so the provider gateway's refusal ("an administrator can switch
+        //     it on") would be wrong words. Its own, here, unmetered.
+        var personal = tenant.HasTenant && await services.GetRequiredService<TatvaOS.Api.Modules.Personal.PersonalHouse>()
+            .IsPersonalHouseAsync(tenant.TenantId, ct);
+        if (personal && inner.IsConfigured && !await inner.EnabledForTenantAsync(ct))
+            return AiResult.Failed("Switch AI on in your Account settings first.");
+
         // 1. Nothing will be sent: let the provider gateway give its own
         //    refusal, unmetered.
         if (!inner.IsConfigured || !tenant.HasTenant || !await inner.EnabledForTenantAsync(ct))
             return await inner.CompleteAsync(instruction, input, ct, feature);
+
+        // 1a. Is this feature offered to this organisation at all (AiGate,
+        //     30 Sept 2026)? Every label has a list; one without is refused.
+        //     Before the product switches, so a feature shipped ahead of its
+        //     disclosure is refused here whatever an administrator switched on.
+        if (!await AiGate.AllowedAsync(db, tenant.TenantId, feature, log, ct))
+            return AiResult.Failed(AiGate.RefusalFor(feature));
+
+        // 1a-bis (merged 6 Oct 2026, round one): the AiGate above applies to the
+        //     personal house too, so personal AI minutes are refused until the house
+        //     is on the feature lists - a launch step, and it fails closed.
+        // 1a. A PERSONAL account (build plan §4.5, §5): consent was the
+        //     person's own switch (OpenAiGateway). Here, what their PLAN allows:
+        //     AI meeting minutes only, on Premium or during their trial. Mail
+        //     AI is out of scope for personal plans. Refused unmetered, like
+        //     the product switches below: nothing was about to be sent.
+        if (personal)
+        {
+            var refusal = await TatvaOS.Api.Modules.Personal.PersonalAiService.PlanRefusalAsync(
+                services.GetRequiredService<TatvaOS.Api.Shared.Plans.EffectiveSettings>(), tenant.UserId, feature, ct);
+            if (refusal is not null) return AiResult.Failed(refusal);
+        }
 
         // 1b. The product's own switch, where it has one (Mail, 25 Sept 2026).
         //     Same standing as consent: nothing was about to be sent, so not

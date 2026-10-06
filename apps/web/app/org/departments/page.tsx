@@ -252,9 +252,10 @@ function Row({ node, depth, onAddChild, onEdit, onDelete }: {
         <div className="min-w-0 flex-auto">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold text-[0.875rem]">{node.name}</span>
+            {/* See the note on the "Can email outside" switch below: not enforced yet. */}
             {!node.canSendExternal && (
-              <span title="Members can email inside the organisation only">
-                <Badge tone="neutral">internal only</Badge>
+              <span title="Internal-only departments are coming soon. This setting does not yet stop outside email.">
+                <Badge tone="neutral">internal only · coming soon</Badge>
               </span>
             )}
           </div>
@@ -472,10 +473,19 @@ function DeptDialog({ node, parent, storage, onClose, onSaved, onError }: {
         onChange={(e) => setExternal(e.target.checked)}
         label={
           <>
+            {/* NOT ENFORCED YET - so these words must not claim it. Found 30 Sept 2026:
+                            can_send_external is saved and shown here, and no sending path reads it
+                            (webmail, phone, the send API and the mail edge all ignore it), while
+                            these screens promised "they can only email colleagues". Mr. Singh,
+                            1 Oct 2026: until enforcement exists, the screens tell the truth, and
+                            the setting is kept, because organisations have already entered it. A
+                            setting that promises a restriction ships only with its enforcement
+                            (house rule 7). When enforcement lands, change these words with it. */}
             <span className="block text-[0.875rem]">Can email outside the organisation</span>
             <span className="block text-[0.75rem] text-ink-muted">
-              Off means they can only email colleagues. This does <strong>not</strong> inherit —
-              it is chosen per department, so a new one is never accidentally permissive.
+              Internal-only departments are coming soon. Turning this off does{' '}
+              <strong>not</strong> yet stop outside email. It is chosen per department and
+              does not inherit.
             </span>
           </>
         }
