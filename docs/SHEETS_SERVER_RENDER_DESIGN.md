@@ -65,7 +65,7 @@ Six functions the editor supports are newer than Excel 2019. Our file stores the
 | CHOOSECOLS, CHOOSEROWS, REGEXEXTRACT, REGEXREPLACE | Microsoft 365 |
 
 - **What changes:** when someone chooses *Download as Excel (.xlsx)* and the workbook uses any of these, the download shows one line naming the functions it found. The file itself does not change.
-- **Proposed wording, for Mr. Singh:** "This workbook uses XLOOKUP. It works in Excel 2021 and Microsoft 365; older Excel shows #NAME? in those cells." When a Microsoft 365-only function is used, the sentence names Microsoft 365 alone.
+- **Wording, ruled by Mr. Singh on 7 Oct 2026 (approved as it stands):** "This workbook uses XLOOKUP. It works in Excel 2021 and Microsoft 365; older Excel shows #NAME? in those cells." When a Microsoft 365-only function is used, the sentence names Microsoft 365 alone.
 - **Where the list lives:** next to `XLFN` in `lib/sheets/io/xlsx.ts`. A unit test fails if the engine gains a prefixed function that is in neither the "fine in Excel 2019" list nor this one, so a new function can't skip the hint.
 - **Test:** a workbook with XLOOKUP gets the hint naming it; one without gets none. Calibrated: with the list emptied, the first test fails.
 - It is a separate small PR from the server build, and can go first.
@@ -97,7 +97,7 @@ Six functions the editor supports are newer than Excel 2019. Our file stores the
 2. **Approach:** the render service runs the editor's own Sheets code (proposed), as it runs the Docs schema.
 3. **The gate in §5**, especially check 2 (a colleague's unseen edit) as condition 1's proof for Sheets.
 4. **XlsxGuard on the server's own `.xlsx`:** refuse and log on a hit (proposed), treated as a writer bug, never stored.
-5. **The hint's wording** in §4a, since it is what a customer is told.
+5. ~~**The hint's wording** in §4a~~: **ruled 7 Oct 2026, approved as it stands** (it names what, where it works, and what the person will see, in that order).
 
 ## 8. Before switch-on: what PDFs and spreadsheets do to Docs saves in the same container
 
