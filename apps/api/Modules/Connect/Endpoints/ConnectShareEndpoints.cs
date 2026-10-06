@@ -1025,6 +1025,8 @@ public static class ConnectShareEndpoints
     /// finds nothing, and refuses them — so the cross-organisation grant, the
     /// one reason the function is a definer, could never have worked. The
     /// function now returns everything the caller needs in the one read.
+    /// (share_for_user() itself was dropped on 28 Sept, when the definer review
+    /// found nothing still called it - 20260928-e-connect-drop-unused-definers.sql.)
     ///
     /// Returns null for "no", which is also the answer for a revoked share,
     /// an expired one, a suspended organisation, and a recording nobody ever

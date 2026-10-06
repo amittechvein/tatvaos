@@ -116,6 +116,12 @@ public sealed class ConnectMeeting
 
 public sealed class ConnectParticipant
 {
+    /// <summary>
+    /// Decision 0007 step two (20260928-connect-child-tenant-id.sql). Set by the
+    /// database from the row's meeting, whatever is written here - so a new row
+    /// may leave it empty. Present so the query filter can read it.
+    /// </summary>
+    public Guid TenantId { get; set; }
     public Guid Id { get; set; }
     public Guid MeetingId { get; set; }
 
@@ -140,6 +146,12 @@ public sealed class ConnectParticipant
 
 public sealed class ConnectLobbyRequest
 {
+    /// <summary>
+    /// Decision 0007 step two (20260928-connect-child-tenant-id.sql). Set by the
+    /// database from the row's meeting, whatever is written here - so a new row
+    /// may leave it empty. Present so the query filter can read it.
+    /// </summary>
+    public Guid TenantId { get; set; }
     public Guid Id { get; set; }
     public Guid MeetingId { get; set; }
     public Guid? UserId { get; set; }
@@ -203,6 +215,12 @@ public static class ConnectModes
 /// </summary>
 public sealed class ConnectMeetingBlock
 {
+    /// <summary>
+    /// Decision 0007 step two (20260928-connect-child-tenant-id.sql). Set by the
+    /// database from the row's meeting, whatever is written here - so a new row
+    /// may leave it empty. Present so the query filter can read it.
+    /// </summary>
+    public Guid TenantId { get; set; }
     public Guid Id { get; set; }
     public Guid MeetingId { get; set; }
 
@@ -320,6 +338,12 @@ public static class ConnectChat
 
 public sealed class ConnectMeetingEvent
 {
+    /// <summary>
+    /// Decision 0007 step two (20260928-connect-child-tenant-id.sql). Set by the
+    /// database from the row's meeting, whatever is written here - so a new row
+    /// may leave it empty. Present so the query filter can read it.
+    /// </summary>
+    public Guid TenantId { get; set; }
     public long Id { get; set; }
     public Guid MeetingId { get; set; }
 
