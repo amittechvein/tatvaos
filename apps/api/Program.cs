@@ -430,6 +430,10 @@ builder.Services.AddHostedService<StorageReconcileWorker>();
 // #3 — both invisible failures on the filesystem Mail also writes to.
 builder.Services.AddHostedService<SpaceBlobSweepWorker>();
 
+// Domain claims unverified for thirty days are abandoned (Mr. Singh, 24 Sept
+// 2026). Daily, never touching a verified or superseded row.
+builder.Services.AddHostedService<DomainClaimSweepWorker>();
+
 // Answers Postfix's quota question at RCPT time — the last moment a refusal
 // still leaves the message with the sender. Starts in observe-only mode and
 // refuses nothing until Mail:QuotaEnforcement is set to "enforce".
