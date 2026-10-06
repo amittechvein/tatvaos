@@ -172,7 +172,8 @@ public static class ImportExportEndpoints
     /// attaches to a cross-site request on its own.
     /// </summary>
     private static async Task<IResult> ImportAsync(
-        HttpContext http, AppDbContext db, TenantContext tenant, CancellationToken ct,
+        HttpContext http, AppDbContext db, TenantContext tenant,
+        TatvaOS.Api.Modules.Personal.PersonalHouse houses, CancellationToken ct,
         bool dryRun = false,
         string ownership = "personal",
         string mode = "skip",
@@ -277,12 +278,20 @@ public static class ImportExportEndpoints
                           $"import is {ContactImport.MaxRows:N0}. Split it and import the parts.",
             });
 
+        // Personal accounts (§6): no organisational contacts, and no labels —
+        // labels are contact groups, and groups are tenant-wide, so in the
+        // house they would be shared with every stranger. Refused outright
+        // for "organisational"; labels are simply not made.
+        var personal = await houses.IsPersonalHouseAsync(tenant.TenantId, ct);
+        if (personal && ownership == "organisational")
+            return Results.Json(new { error = TatvaOS.Api.Modules.Personal.PersonalGuard.Sentence }, statusCode: 403);
+
         var options = new ImportOptions
         {
             Ownership = ownership == "organisational" ? "organisational" : "personal",
             Mode = mode == "update" ? "update" : "skip",
-            CreateLabels = createLabels,
-            TagLabel = string.IsNullOrWhiteSpace(label) ? null : label.Trim(),
+            CreateLabels = createLabels && !personal,
+            TagLabel = personal || string.IsNullOrWhiteSpace(label) ? null : label.Trim(),
         };
 
         try

@@ -91,7 +91,9 @@ public sealed class InvoiceIssuer(AppDbContext db, SettingsReader settings)
         // refused here; every read below takes only organisation rows
         // (user_id IS NULL); and AssertOrganisationRow stops anything that gets
         // past both. tests/billing-personal proves each, red first.
-        if (await new TatvaOS.Api.Modules.Personal.PersonalHouse(db).IsPersonalHouseAsync(tenantId, ct))
+        // The uncached, static check (#314 made the instance one cached and
+        // DI-built): issuing an invoice is a write path, so one indexed read.
+        if (await TatvaOS.Api.Modules.Personal.PersonalHouse.IsHouseTenantAsync(db, tenantId, ct))
             return (null, NotForPersonal);
 
         var (seller, missing, _, terms) = await SellerAsync(ct);

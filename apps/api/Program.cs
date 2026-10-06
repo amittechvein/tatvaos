@@ -874,6 +874,10 @@ app.UseAuthentication();
 // BEFORE the endpoints — they hit the database and need the context set.
 app.UseMiddleware<TenantMiddleware>();
 app.UseAuthorization();
+// Strangers must not see each other (personal accounts, build plan §6): the
+// organisation-wide routes a personal-house account may never call. After
+// authorization, so an anonymous caller still gets 401, not this.
+app.UseMiddleware<PersonalGuard>();
 app.UseRateLimiter();
 
 // Docs' live channel (/api/docs/{id}/live) is the one WebSocket the API
@@ -1015,6 +1019,10 @@ app.MapGet("/health/db", async (AppDbContext db, CancellationToken ct) =>
     return canConnect ? Results.Ok(new { database = "ok" })
                       : Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
 }).AllowAnonymous().WithTags("Operations");
+
+// Fails the boot if PersonalGuard names a route that is not mapped: a rename
+// would otherwise leave its replacement open to every personal account.
+PersonalGuard.Verify(((IEndpointRouteBuilder)app).DataSources);
 
 // Every operator write route must carry its transaction (OperatorWriteTransaction).
 // Logged once the routes exist: a CRITICAL line names any that do not.
