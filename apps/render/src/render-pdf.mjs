@@ -67,6 +67,28 @@ export class PdfFailed extends Error {
   constructor(code, detail = {}) { super(code); this.code = code; this.detail = detail; }
 }
 
+// ---------------------------------------------------------------------------
+//  No room in the job folder. In the container /tmp is a 16 MB tmpfs and the
+//  request body limit is 48 MB, so ONE document with a few dozen photographs
+//  fills it (docs/DOCS_PDF_DESIGN.md §10, Mr. Singh 7 Oct 2026). Until this,
+//  the write threw a plain ENOSPC and the person read only "The PDF could not
+//  be built" — true, and nothing they could act on. Now it is its own reason:
+//    pictures_too_large  the job had pictures to write (the server's 413 and
+//                        its sentence: remove some and try again)
+//    no_room             it had none, so the room went to OTHER jobs at once;
+//                        still the generic 500 to the person, but named in
+//                        the log so the two are never confused
+//  Caught wherever the folder fills: making it, writing into it, and Typst
+//  writing out.pdf (its message carries the OS error, "os error 28").
+// ---------------------------------------------------------------------------
+export const isNoRoom = (e) => e?.code === 'ENOSPC';
+export const TYPST_NO_ROOM = /os error 28|no space left on device/i;
+
+function noRoom(stage, files) {
+  const bytes = files.reduce((n, f) => n + f.bytes.length, 0);
+  return new PdfFailed(files.length ? 'pictures_too_large' : 'no_room', { stage, pictures: files.length, bytes });
+}
+
 /**
  * The template's input. Attributes starting with "_" are the service's own
  * (a hand-made client could put one in a stored document), so every one is
@@ -126,12 +148,23 @@ export async function buildPdf(job) {
   if (unchecked.length) throw new PdfFailed('script_not_checked', { scripts: unchecked });
 
   const { data, files } = templateInput(job.json, job.pictures);
-  const dir = await mkdtemp(join(tmpdir(), 'pdf-'));
+  let dir;
+  try {
+    dir = await mkdtemp(join(tmpdir(), 'pdf-'));
+  } catch (e) {
+    if (isNoRoom(e)) throw noRoom('folder', files);
+    throw e;
+  }
   const t0 = Date.now();
   try {
-    await copyFile(job.template ?? TEMPLATE, join(dir, 'main.typ'));
-    await writeFile(join(dir, 'doc.json'), JSON.stringify(data));
-    for (const f of files) await writeFile(join(dir, f.name), f.bytes);
+    try {
+      await copyFile(job.template ?? TEMPLATE, join(dir, 'main.typ'));
+      await writeFile(join(dir, 'doc.json'), JSON.stringify(data));
+      for (const f of files) await writeFile(join(dir, f.name), f.bytes);
+    } catch (e) {
+      if (isNoRoom(e)) throw noRoom('write', files);
+      throw e;
+    }
 
     const left = job.deadline - Date.now();
     if (left <= 0) throw new PdfFailed('timeout');
@@ -165,6 +198,7 @@ export async function buildPdf(job) {
     // Typst's message names the place in main.typ; a value it quotes could be
     // document text, so every quoted string is blanked before it is logged.
     if (code !== 0) {
+      if (TYPST_NO_ROOM.test(stderr)) throw noRoom('typst', files);
       const line = stderr.split('\n').find((l) => /error/i.test(l)) ?? `exit ${code}`;
       throw new PdfFailed('typst_failed', { message: line.replace(/"[^"]*"/g, '"…"').slice(0, 160) });
     }

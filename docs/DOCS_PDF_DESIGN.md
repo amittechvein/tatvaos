@@ -175,6 +175,13 @@ The record Amit asked for. A script is switched on in `CHECKED_SCRIPTS` (`apps/r
 - **The limits.** Bring the PDF route's body limit under what `/tmp` holds, give `/tmp` room for the body limit, or cap pictures by **total size** instead of count. Mr. Singh prefers a total-size cap plus a smaller PDF-route body limit; the measured sizes decide.
 - **What limits concurrent Typst processes**, and what a request gets at that limit: a clear "busy, try again", never a dead container. Mr. Singh's instinct is a small semaphore and a queue in `buildPdf`. Measure before building it.
 - **Fix regardless of the numbers: the refusal a person can act on.** A full `/tmp` (`ENOSPC` while writing pictures) gets **its own reason code and sentence**, e.g. *"This document has too many pictures, or pictures too large, to make a PDF. Remove some and try again."*, instead of the generic `pdf_failed`. A refusal a person can act on is worth more than a correct 500. **Proven in the hardened container**, whose `/tmp` really is 16 MB.
+  - **Built 7 Oct 2026** (branch `docs/pdf-no-room-reason`). `ENOSPC` while making the job folder, writing into it, or Typst writing `out.pdf` ("os error 28") becomes:
+    - **`413 {reason: "pictures_too_large", error: <the sentence above>}`** when the job had pictures;
+    - **`no_room`** in the log when it had none, so the room went to other jobs at the same moment. That is still the generic 500 to the person, because "remove some pictures" would be wrong advice for a document with none.
+  - The log line names the stage, the picture count and the bytes; never content.
+  - `container-test.sh` §8 proves it in the real container. 2 pictures of about 3 MB fit and are built (200, the calibration). 7 don't fit: 413 with the sentence, no job folder left in `/tmp`, two log lines at `stage=write`, and the next document save still 200.
+  - **Owed by whoever wires PDF by email:** show the 413's `error` to the person as written. Don't fold it back into "The PDF could not be built".
+  - **Not changed:** the limits (body limit vs `/tmp`, total-size cap). The measurements still decide those.
 
 Rulings: Mr. Singh. Anything needing more capacity (cost): Amit. It sits on the switch-on checklist beside the AI-lists line and the personal-table audit.
 
