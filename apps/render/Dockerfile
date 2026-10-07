@@ -53,8 +53,23 @@ WORKDIR /app
 ENV NODE_ENV=production PORT=8080 TZ=Asia/Kolkata
 COPY --from=deps /repo/node_modules ./node_modules
 COPY --from=deps /repo/apps/render/node_modules ./apps/render/node_modules
+# The PDF engine and its fonts (decision 0011 condition 2, docs/DOCS_PDF_DESIGN.md).
+# From Alpine 3.24's own signed repository — the pinned base image's — at
+# exact versions (Mr. Singh's condition 3, 1 Oct 2026: Alpine's package first,
+# pinned with the image; nothing from GitHub). Fonts are OFL / open licences:
+# Liberation is metric-compatible with Arial / Times / Courier (Amit's ruling);
+# Noto covers the Indian scripts.
+RUN apk add --no-cache \
+      typst=0.14.2-r0 \
+      font-liberation=2.1.5-r2 font-dejavu=2.37-r6 font-noto=2026.06.01-r0 \
+      font-noto-devanagari=2026.06.01-r0 font-noto-bengali=2026.06.01-r0 \
+      font-noto-tamil=2026.06.01-r0 font-noto-telugu=2026.06.01-r0 \
+      font-noto-gujarati=2026.06.01-r0 font-noto-kannada=2026.06.01-r0 \
+      font-noto-malayalam=2026.06.01-r0 font-noto-gurmukhi=2026.06.01-r0 \
+      font-noto-oriya=2026.06.01-r0 font-noto-emoji=2.051-r0
 COPY apps/render/package.json ./apps/render/
 COPY apps/render/src ./apps/render/src
+COPY apps/render/pdf ./apps/render/pdf
 COPY apps/web/components/docs/schema.ts apps/web/components/docs/extensions.ts ./apps/web/components/docs/
 COPY apps/web/lib/sheets ./apps/web/lib/sheets
 # Everything above is owned by root and the container runs as `node`

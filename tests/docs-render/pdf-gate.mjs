@@ -1,0 +1,444 @@
+// ============================================================================
+//  THE PDF GATE (decision 0011 condition 2; docs/DOCS_PDF_DESIGN.md §5, §8)
+// ============================================================================
+//
+//  Runs INSIDE the gate image (apps/render/Dockerfile.pdf-gate = the real
+//  render image + test tools), under the render container's own limits, from
+//  tests/docs-render/pdf-gate.sh. Nothing past it is built if it fails.
+//
+//    1. THE SAME DOCUMENT, AS TEXT. pdftotext of each PDF equals the render
+//       service's text for the same stored state (0011's proof), and every
+//       page carries its number at the foot. Calibrated: one changed word
+//       is caught.
+//    2. DATA, NEVER MARKUP; A LOCKED ROOT (Mr. Singh's conditions 1 and 2).
+//       Red first on a deliberately unsafe template: markup in the text is
+//       interpreted, a "#read" of the data file runs, and with the root
+//       opened "/etc/passwd" is read — each caught. Then the real template:
+//       every planted string prints literally, no file outside the job
+//       folder and the fonts is opened, no socket is made, no link to
+//       javascript:, a planted "_pic" is ignored.
+//    3. SHAPING (tool check, every script). The glyphs drawn in the Indian-
+//       script font equal hb-shape's for the same text and font (by outline).
+//       Calibrated: with shaping switched off in the reference, the conjunct
+//       lines differ.
+//    4. EVERY NODE AND MARK. Fonts (bold, italic, mono, serif), the link
+//       addresses, colour, the stored picture drawn and the web one named,
+//       the page break.
+//    5. INSIDE THE LIMITS (condition 4). Time and memory for the largest
+//       fixture; a build past its deadline is killed and nothing is left
+//       running.
+//
+//  Writes sample PDFs to $GATE_OUT for the people who check them.
+// ============================================================================
+
+import { readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import * as Y from 'yjs';
+import { getSchema } from '@tiptap/core';
+import { prosemirrorJSONToYDoc } from '@tiptap/y-tiptap';
+import { documentExtensions } from '/app/apps/web/components/docs/schema.ts';
+import { renderDoc } from '/app/apps/render/src/render-doc.mjs';
+import { buildPdf, PdfFailed, SCRIPTS, scriptsIn, CHECKED_SCRIPTS } from '/app/apps/render/src/render-pdf.mjs';
+
+const FX = '/gate/fixtures/';
+const OUT = process.env.GATE_OUT ?? '/out';
+const FONTS = process.env.PDF_FONT_DIR ?? '/usr/share/fonts';
+const ALL = new Set(Object.keys(SCRIPTS));
+const schema = getSchema(documentExtensions());
+// A 1x1 PNG: a stored picture's bytes.
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+
+let passed = 0;
+let failed = 0;
+function check(name, ok, detail = '') {
+  if (ok) { passed += 1; console.log(`  ok    ${name}`); }
+  else { failed += 1; console.log(`  FAIL  ${name}${detail ? `\n        ${String(detail).slice(0, 600)}` : ''}`); }
+}
+const sh = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: 256 << 20 });
+const fixture = (name) => JSON.parse(readFileSync(`${FX}${name}.json`, 'utf8'));
+const stateOf = (json) => Y.encodeStateAsUpdate(prosemirrorJSONToYDoc(schema, json, 'default'));
+
+async function pdfOf(state, opts = {}) {
+  const r = renderDoc([state]);
+  const p = await buildPdf({ json: r.json, text: r.text, deadline: Date.now() + 10_000, checkedScripts: ALL, ...opts });
+  return { r, ...p };
+}
+async function tryPdf(state, opts) {
+  try { return await pdfOf(state, opts); } catch (e) { return { error: e }; }
+}
+
+/**
+ * pdftotext's words WITH their positions (-bbox). The page number is the
+ * word(s) in the foot area of each page — by position, not "the last line":
+ * round 3 (1 Oct 2026) showed pdftotext's reading order can put a table's
+ * right-hand column after the footer.
+ */
+const ENT = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&apos;': "'" };
+function textOf(pdf) {
+  writeFileSync('/tmp/g.pdf', pdf);
+  const html = sh('pdftotext', ['-bbox', '-enc', 'UTF-8', '/tmp/g.pdf', '-']);
+  const pages = [...html.matchAll(/<page width="([\d.]+)" height="([\d.]+)">([\s\S]*?)<\/page>/g)];
+  let numbersOk = pages.length > 0;
+  const all = [];
+  pages.forEach((m, i) => {
+    const height = Number(m[2]);
+    const words = [...m[3].matchAll(/<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">([^<]*)<\/word>/g)]
+      .map((w) => ({ x: Number(w[1]), y: Number(w[2]), text: w[5].replace(/&(amp|lt|gt|quot|#39|apos);/g, (e) => ENT[e]), page: i + 1 }));
+    const foot = words.filter((w) => w.y > height - 60);
+    if (foot.map((w) => w.text).join(' ') !== String(i + 1)) numbersOk = false;
+    all.push(...words.filter((w) => w.y <= height - 60));
+  });
+  return { body: all.map((w) => w.text).join(' '), words: all, pages: pages.length, numbersOk };
+}
+
+// Bullets, list numbers and task boxes are the PDF's own; nothing else may be extra.
+const DECOR = /^(\d{1,3}[.)]|[a-z][.)]|[ivxlc]{1,6}[.)]|[•◦▪‣–☐☑])$/;
+// Words in an Indian script are NOT compared through pdftotext: the first CI
+// run (1 Oct 2026) showed the PDF's text layer splits and repeats clusters
+// (कृपया -> "कृ पया"), so copy and search are imperfect — a finding reported
+// on its own (indicTextLayer below). What the page SHOWS for those words is
+// checked against the stored text glyph by glyph in part 3.
+const INDIC = /[ऀ-ൿ]/;
+function bagDiff(server, pdf) {
+  const tok = (s) => s.normalize('NFC').split(/\s+/).filter((t) => t && !INDIC.test(t));
+  const count = new Map();
+  for (const t of tok(server)) count.set(t, (count.get(t) ?? 0) + 1);
+  const extra = [];
+  for (const t of tok(pdf)) { const c = count.get(t) ?? 0; if (c > 0) count.set(t, c - 1); else extra.push(t); }
+  const missing = [...count].flatMap(([t, c]) => Array(c).fill(t));
+  return { missing, extra: extra.filter((t) => !DECOR.test(t)) };
+}
+const sameText = (d) => d.missing.length === 0 && d.extra.length === 0;
+/**
+ * The same characters, word boundaries aside. pdftotext reads a page by
+ * layout and can glue words from neighbouring table cells, or split a long
+ * word the PDF broke across a line (round 3: the scrubbed Google Docs
+ * fixture). If the words differ but every character is accounted for, that
+ * is the extractor, not the PDF; a changed word changes the characters.
+ */
+// Private Use Area characters (U+E000-U+F8FF, planes 15-16) are left out of
+// the comparison and COUNTED instead. Google Docs puts invisible markers there
+// in copied text (U+E200-E202 in the scrubbed fixture: 34 of them, for smart
+// chips and the like); no font has a glyph for them, so the PDF draws nothing
+// and pdftotext has nothing to extract. Found by round 5 (2 Oct 2026), whose
+// log printed them as "" — invisible.
+const PRIVATE = /[-]|[\u{F0000}-\u{10FFFF}]/u;
+const privateCount = (s) => [...s].filter((c) => PRIVATE.test(c)).length;
+function charDiff(server, pdf) {
+  const chars = (toks) => { const m = new Map(); for (const t of toks) for (const c of t) if (!PRIVATE.test(c)) m.set(c, (m.get(c) ?? 0) + 1); return m; };
+  const tok = (x) => x.normalize('NFC').split(/\s+/).filter((t) => t && !INDIC.test(t));
+  const st = tok(server);
+  // A list marker or bullet is the PDF's own only beyond the times the
+  // document itself has that word (round 4: a document's own "–" was being
+  // dropped as if it were a third-level bullet).
+  const own = new Map();
+  for (const t of st) if (DECOR.test(t)) own.set(t, (own.get(t) ?? 0) + 1);
+  const pt = tok(pdf).filter((t) => {
+    if (!DECOR.test(t)) return true;
+    const n = own.get(t) ?? 0;
+    if (n > 0) { own.set(t, n - 1); return true; }
+    return false;
+  });
+  const a = chars(st);
+  const b = chars(pt);
+  const diff = [];
+  for (const c of new Set([...a.keys(), ...b.keys()])) {
+    const d = (b.get(c) ?? 0) - (a.get(c) ?? 0);
+    if (d !== 0) diff.push(`U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')} ${JSON.stringify(c)} ${d > 0 ? '+' : ''}${d}`);
+  }
+  return diff;
+}
+const sameChars = (server, pdf) => charDiff(server, pdf).length === 0;
+// "[picture: …]" is the PDF naming a picture it does not draw (a web address,
+// or no stored bytes); it is the PDF's own text, not the document's.
+const PLACEHOLDER = /\[picture(?:: [^\]]*)?\]/g;
+
+// Mr. Singh, 1 Oct 2026: copy and search of Indian-script text from the PDF
+// is imperfect — acceptable for the Hindi/Marathi launch while the count of
+// affected words is reported on every run and CANNOT GET WORSE. These are the
+// counts measured on the first run that had them (2 Oct 2026), with the
+// combination named below. Lower them when a fix lands; never raise them.
+const COMBINATION = 'Typst 0.14.2 + Noto Sans Devanagari 2026.06.01 (Alpine 3.24)';
+const TEXT_LAYER_BROKEN_MAX = { 'editor-page': 0, 'indian-scripts': 6 };
+const flat = (s) => s.replace(/\s+/g, ' ').trim();
+
+/** Every path opened and every socket made, from an strace log. */
+function traced(file) {
+  const log = readFileSync(file, 'utf8');
+  const opened = [...log.matchAll(/open(?:at2?)?\([^"]*"([^"]+)"/g)].map((m) => m[1]);
+  const sockets = log.split('\n').filter((l) => /\b(socket|connect)\(/.test(l));
+  return { opened, sockets };
+}
+const SYSTEM = [/^\/lib\//, /^\/usr\/lib\//, /^\/usr\/local\/lib\/[^/]+\.so[.\d]*$/, /^\/etc\/(localtime|timezone|config\/system)$/, /^\/etc\/ld-musl/, /^\/proc\/self\//, /^\/dev\/(null|urandom)$/, /^\/sys\/devices\/system\/cpu/, /^\/sys\/fs\/cgroup/, /^\/proc\/(stat|meminfo|cpuinfo)$/];
+function outside(opened, dir) {
+  return opened.filter((p) => !(p.startsWith(`${dir}/`) || p === dir || p.startsWith(`${FONTS}/`) || p === FONTS || SYSTEM.some((r) => r.test(p))));
+}
+
+console.log('0. The engine in this image');
+{
+  const v = sh('typst', ['--version']).trim();
+  check(`Typst is Alpine's 0.14.2 (${v})`, /0\.14\.2/.test(v));
+  const fams = sh('typst', ['fonts', '--font-path', FONTS, '--ignore-system-fonts']);
+  for (const f of ['Liberation Sans', 'Liberation Serif', 'Liberation Mono', 'DejaVu Sans', 'DejaVu Serif', 'Noto Sans',
+    ...Object.keys(SCRIPTS).map((s) => `Noto Sans ${s === 'Odia' ? 'Oriya' : s}`)]) {
+    check(`font family the template names is installed: ${f}`, fams.split('\n').some((l) => l.trim() === f));
+  }
+  check('only Devanagari is switched on beyond English (Amit, 1 Oct 2026)', [...CHECKED_SCRIPTS].join() === 'Devanagari');
+}
+
+console.log('\n1. The same document, as text (every fixture)');
+const FIXTURES = ['editor-page', 'word-paste', 'nested-lists', 'merged-cells', 'every-mark-pair', 'google-docs-paste', 'indian-scripts'];
+const built = {};
+for (const name of FIXTURES) {
+  const res = await tryPdf(stateOf(fixture(name)), name === 'editor-page' ? { pictures: picturesOf(fixture(name)) } : {});
+  if (res.error) { check(`${name}: built`, false, `${res.error.code ?? ''} ${JSON.stringify(res.error.detail ?? res.error.message)}`); continue; }
+  built[name] = res;
+  writeFileSync(`${OUT}/${name}.pdf`, res.pdf);
+  const t = textOf(res.pdf);
+  const pdfText = t.body.replace(PLACEHOLDER, ' ');
+  const d = bagDiff(res.r.text, pdfText);
+  const exact = sameText(d);
+  const chars = exact || sameChars(res.r.text, pdfText);
+  // Fixtures are synthetic or scrubbed, so words and positions may be shown.
+  const near = (tok) => {
+    const i = t.words.findIndex((w) => w.text.includes(tok.slice(0, 4)));
+    return i < 0 ? `"${tok}": not on any page` : JSON.stringify(t.words.slice(Math.max(0, i - 2), i + 3).map((w) => `${w.text}@p${w.page}(${Math.round(w.x)},${Math.round(w.y)})`));
+  };
+  check(`${name}: the PDF's text is the server's text (${t.pages} page(s), ${res.ms} ms)${exact ? '' : chars ? ' — same characters; pdftotext joined or split words at layout edges' : ''}`, chars,
+    `characters that differ (PDF minus server): ${charDiff(res.r.text, pdfText).slice(0, 20).join(' ')}`
+    + `\n        missing ${JSON.stringify(d.missing.slice(0, 8))} extra ${JSON.stringify(d.extra.slice(0, 8))}`
+    + (d.missing.length ? `\n        where the first missing word should be: ${near(d.missing[0])}` : ''));
+  check(`${name}: every page has its number at the foot`, t.numbersOk);
+  const priv = privateCount(res.r.text);
+  if (priv) console.log(`  info  ${name}: ${priv} Private Use character(s) in the document (e.g. Google Docs markers) — no glyph, not drawn, left out of the text comparison`);
+  if (INDIC.test(res.r.text)) {
+    const want = res.r.text.normalize('NFC').split(/\s+/).filter((w) => INDIC.test(w));
+    const got = new Set(t.body.normalize('NFC').split(/\s+/));
+    const exact = want.filter((w) => got.has(w)).length;
+    const broken = want.length - exact;
+    console.log(`  info  ${name}: the PDF's TEXT LAYER (copy, search) has ${exact} of ${want.length} Indian-script words intact (${COMBINATION})`);
+    if (name in TEXT_LAYER_BROKEN_MAX) {
+      check(`${name}: the copy/search finding has not got worse — ${broken} word(s) affected, at most ${TEXT_LAYER_BROKEN_MAX[name]} allowed`,
+        broken <= TEXT_LAYER_BROKEN_MAX[name]);
+    }
+  }
+}
+{
+  const ep = built['editor-page'];
+  if (ep) {
+    const words = ep.r.text.split(/\s+/);
+    const i = words.findIndex((w) => w.length > 4);
+    const planted = [...words.slice(0, i), `${words[i]}x`, ...words.slice(i + 1)].join(' ');
+    const body = textOf(ep.pdf).body.replace(PLACEHOLDER, ' ');
+    check('calibration: one changed word is caught (by words AND by characters)', !sameText(bagDiff(planted, body)) && !sameChars(planted, body));
+  }
+}
+
+function picturesOf(json) {
+  const m = new Map();
+  (function w(n) { if (n?.type === 'image' && typeof n.attrs?.src === 'string' && n.attrs.src.startsWith('/api/')) m.set(n.attrs.src, PNG); (n?.content ?? []).forEach(w); })(json);
+  return m;
+}
+
+console.log('\n2. Data, never markup; a locked root (Mr. Singh, conditions 1 and 2)');
+const UNSAFE = new URL('file:///gate/pdf-unsafe.typ');
+const READ = '#read("/etc/passwd")';
+{
+  // RED FIRST: the unsafe template, which evaluates document text as markup.
+  const one = (text) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
+  const u = await tryPdf(stateOf(one('*bold* = heading $ x^2 $')), { template: UNSAFE });
+  const ut = u.error ? '' : flat(textOf(u.pdf).body);
+  check('red first: the unsafe template interprets the text (the literal-text check FAILS on it)',
+    !u.error && ut !== '' && !ut.includes('*bold* = heading $ x^2 $'), u.error ? `${u.error.code} ${JSON.stringify(u.error.detail)}` : ut.slice(0, 160));
+  const u2 = await tryPdf(stateOf(one('#read("doc.json")')), { template: UNSAFE });
+  const ut2 = u2.error ? '' : flat(textOf(u2.pdf).body);
+  check('red first: …and a "#read" in the text ran — the data file is in the PDF', ut2.includes('"type"'), ut2.slice(0, 160));
+
+  const readDoc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: READ }] }] };
+  const wide = await tryPdf(stateOf(readDoc), { template: UNSAFE, root: '/', traceTo: '/tmp/wide.trace' });
+  const wt = wide.error ? '' : textOf(wide.pdf).body;
+  const wtr = traced('/tmp/wide.trace');
+  check('red first: with the root opened, the unsafe template reads /etc/passwd — the checks SEE it',
+    wt.includes('root:') && wtr.opened.includes('/etc/passwd'), wide.error ? `${wide.error.code}` : `root: ${wt.includes('root:')}, opened: ${wtr.opened.includes('/etc/passwd')}`);
+
+  const locked = await tryPdf(stateOf(readDoc), { template: UNSAFE, traceTo: '/tmp/locked.trace' });
+  const ltr = traced('/tmp/locked.trace');
+  check('the locked root alone stops it: the unsafe template cannot read /etc/passwd (the build fails, nothing opened)',
+    locked.error?.code === 'typst_failed' && !ltr.opened.includes('/etc/passwd'),
+    locked.error ? `${locked.error.code} ${JSON.stringify(locked.error.detail)}` : 'it built');
+}
+{
+  // The real template, on the injection fixture, with a "_pic" planted the
+  // way a hand-made client would: straight into the stored Yjs.
+  const ydoc = prosemirrorJSONToYDoc(schema, fixture('pdf-injection'), 'default');
+  const para = new Y.XmlElement('paragraph');
+  const planted = new Y.XmlElement('image');
+  planted.setAttribute('src', '/api/docs/x/images/y');
+  planted.setAttribute('alt', 'stored picture');
+  planted.setAttribute('_pic', 'doc.json');
+  const planted2 = new Y.XmlElement('image');
+  planted2.setAttribute('src', '/api/docs/x/images/none');
+  planted2.setAttribute('alt', 'no bytes supplied');
+  planted2.setAttribute('_pic', 'pic-0.png');
+  para.insert(0, [planted, planted2]);
+  ydoc.getXmlFragment('default').insert(ydoc.getXmlFragment('default').length, [para]);
+  const res = await tryPdf(Y.encodeStateAsUpdate(ydoc), {
+    traceTo: '/tmp/inj.trace', pictures: new Map([['/api/docs/x/images/y', PNG]]),
+  });
+  if (res.error) check('the injection fixture builds with the real template', false, `${res.error.code} ${JSON.stringify(res.error.detail)}`);
+  else {
+    writeFileSync(`${OUT}/pdf-injection.pdf`, res.pdf);
+    const t = flat(textOf(res.pdf).body);
+    for (const s of [READ, '#include "doc.json"', '#import "@preview/cetz:0.3.4": *', '#eval("read(\\"/etc/passwd\\")")',
+      '#image("/etc/passwd")', '#{ panic("injected") }', '#set page(paper: "a0")',
+      '$ x^2 $ = heading *bold* _emph_ `raw` <label> @ref ]] [[', '#include "main.typ"', '#read("doc.json")']) {
+      check(`prints literally: ${s}`, t.includes(s));
+    }
+    check('no line of /etc/passwd is in the PDF', !t.includes('root:'));
+    check('the page is A4 (a planted "#set page(paper: \\"a0\\")" did nothing)', /595\.2\d* x 841\.8\d* pts/.test(sh('pdfinfo', ['/tmp/g.pdf'])));
+    const tr = traced('/tmp/inj.trace');
+    const out = outside(tr.opened, res.dir);
+    check(`no file opened outside the job folder and the fonts (${tr.opened.length} opens)`, out.length === 0, JSON.stringify(out.slice(0, 10)));
+    check('no socket made, no connection tried', tr.sockets.length === 0, tr.sockets.slice(0, 3).join(' | '));
+    sh('mutool', ['clean', '-d', '/tmp/g.pdf', '/tmp/g-plain.pdf']);
+    const plain = readFileSync('/tmp/g-plain.pdf', 'latin1');
+    check('no link to javascript: in the PDF', !/javascript/i.test(plain));
+    const trace = sh('mutool', ['trace', '/tmp/g.pdf']);
+    // Two image nodes name the one stored picture (the fixture's own, and the
+    // one planted with _pic "doc.json"): both drawn from its bytes, and a
+    // planted name never used (doc.json is not an image: the build would fail).
+    check('the stored picture is drawn for both nodes that name it — a planted "_pic" ignored', (trace.match(/<fill_image/g) ?? []).length === 2,
+      `${(trace.match(/<fill_image/g) ?? []).length} drawn`);
+    check('a picture with no stored bytes is named, not drawn (its planted "_pic" ignored)', t.includes('[picture: no bytes supplied]'));
+    check('pictures by path or web address are named, not fetched',
+      t.includes('[picture: a path as a picture]') && t.includes('[picture: the data file as a picture]') && t.includes('[picture: from the web]'));
+  }
+}
+
+console.log('\n3. Shaping: the glyphs drawn equal HarfBuzz\'s (tool check, every script)');
+{
+  const ind = built['indian-scripts'];
+  if (!ind) check('indian-scripts built', false);
+  else {
+    const exp = fixture('indian-scripts').content.map((p) => ({ text: p.content[0].text, script: scriptsIn(p.content[0].text)[0] }));
+    writeFileSync('/tmp/exp.json', JSON.stringify(exp));
+    writeFileSync('/tmp/ind.pdf', ind.pdf);
+    const run = (env = {}) => {
+      const r = spawnSync('python3', ['/gate/pdf-shaping.py', '/tmp/ind.pdf', '/tmp/exp.json', FONTS], { encoding: 'utf8', env: { ...process.env, ...env } });
+      try { return JSON.parse(r.stdout); } catch { return { ok: false, error: (r.stderr || r.stdout).slice(-600) }; }
+    };
+    const s = run();
+    if (s.error) check('the shaping check ran', false, s.error);
+    else {
+      check(`the PDF has one line per expected line (${s.pdf_lines}/${s.expected_lines})`, s.pdf_lines === s.expected_lines,
+        s.trace_sample ? `the trace looked like: ${JSON.stringify(s.trace_sample)}` : '');
+      for (const l of s.lines) {
+        check(`line ${l.line} (${l.script}${l.font ? `, ${l.font}` : ''}): ${l.pdf_glyphs ?? '?'} glyphs equal hb-shape's`, l.ok,
+          l.why ?? `pdf ${l.pdf_glyphs} vs reference ${l.reference_glyphs}; names equal ${l.names_equal}, outlines equal ${l.outlines_equal}; `
+            + `first difference at glyph ${l.first_difference_at_glyph}: ${JSON.stringify(l.around)}`);
+      }
+      // Calibration: the same comparison with shaping SWITCHED OFF in the
+      // reference must fail on the conjunct lines — the check sees shaping.
+      const off = run({ SHAPING_FEATURES: '-akhn,-rphf,-rkrf,-pref,-blwf,-abvf,-half,-pstf,-vatu,-cjct,-pres,-abvs,-blws,-psts' });
+      const conj = (off.lines ?? []).filter((l) => l.script === 'Devanagari');
+      check('calibration: with shaping switched off in the reference, Devanagari lines NO LONGER match (only meaningful once they matched above)',
+        s.lines.filter((l) => l.script === 'Devanagari').every((l) => l.ok) && conj.filter((l) => !l.ok).length >= 3,
+        JSON.stringify(conj.map((l) => l.ok)));
+    }
+  }
+}
+
+console.log('\n4. Every node and mark (editor-page)');
+{
+  const ep = built['editor-page'];
+  if (!ep) check('editor-page built', false);
+  else {
+    writeFileSync('/tmp/ep.pdf', ep.pdf);
+    const fonts = sh('pdffonts', ['/tmp/ep.pdf']);
+    for (const f of ['LiberationSans-Bold', 'LiberationSans-Italic', 'LiberationMono', 'DejaVuSerif']) {
+      check(`font used: ${f}`, fonts.includes(f), fonts.split('\n').slice(2).map((l) => l.split(/\s+/)[0]).join(' '));
+    }
+    sh('mutool', ['clean', '-d', '/tmp/ep.pdf', '/tmp/ep-plain.pdf']);
+    const plain = readFileSync('/tmp/ep-plain.pdf', 'latin1');
+    for (const href of ['https://tatvaos.com/admissions', 'mailto:office@school.example']) {
+      check(`link kept: ${href}`, plain.includes(href));
+    }
+    const trace = sh('mutool', ['trace', '/tmp/ep.pdf']);
+    // mutool writes ".10196 .45098 .9098" (no leading zero; found by the second run).
+    check('colour kept: rgb(26, 115, 232) text', /color="0?\.10\d* 0?\.45\d* 0?\.9\d*"/.test(trace),
+      `colours in the trace: ${JSON.stringify([...new Set(trace.match(/<fill_text[^>]*>/g) ?? [])].slice(0, 6))}`);
+    check('the stored picture is drawn', (trace.match(/<fill_image/g) ?? []).length >= 1);
+    check('the web picture is named, not fetched', textOf(ep.pdf).body.includes('[picture: From the web]'));
+    check('the page break makes a second page', textOf(ep.pdf).pages >= 2);
+  }
+}
+
+console.log('\n5. Inside the limits (condition 4)');
+{
+  const g = built['google-docs-paste'];
+  if (g) check(`the largest fixture builds well inside 10 s (${g.ms} ms for the PDF)`, g.ms < 5_000);
+  const t0 = Date.now();
+  const r = await tryPdf(stateOf(fixture('google-docs-paste')), { deadline: Date.now() + 50 });
+  const took = Date.now() - t0;
+  check(`a build past its deadline is killed and refused (timeout after ${took} ms)`, r.error instanceof PdfFailed && r.error.code === 'timeout',
+    r.error ? `${r.error.code}` : `it built in ${r.ms} ms — the deadline was not reached`);
+  check('…and no Typst process is left running', spawnSync('pgrep', ['-x', 'typst']).status === 1);
+  let peak = '';
+  try { peak = readFileSync('/sys/fs/cgroup/memory.peak', 'utf8').trim(); } catch { /* cgroup v1 */ }
+  check(`memory stayed under the container's 512 MB (peak ${peak ? `${Math.round(Number(peak) / 1048576)} MB` : 'not readable'})`,
+    peak !== '' && Number(peak) < 512 * 1048576);
+}
+
+console.log('\n5b. The copy/search finding: another face (tracked, not a gate check)');
+{
+  const fams = sh('typst', ['fonts', '--font-path', FONTS, '--ignore-system-fonts']);
+  if (!fams.split('\n').some((l) => l.trim() === 'Noto Serif Devanagari')) {
+    console.log('  info  Noto Serif Devanagari is not installed in this image — not tried');
+  } else {
+    const serif = readFileSync('/app/apps/render/pdf/main.typ', 'utf8').replace('"Noto Sans Devanagari"', '"Noto Serif Devanagari"');
+    writeFileSync('/tmp/serif.typ', serif);
+    const r = await tryPdf(stateOf(fixture('indian-scripts')), { template: new URL('file:///tmp/serif.typ') });
+    if (r.error) console.log(`  info  serif trial did not build: ${r.error.code}`);
+    else {
+      const want = r.r.text.normalize('NFC').split(/\s+/).filter((w) => /[ऀ-ॿ]/.test(w));
+      const got = new Set(textOf(r.pdf).body.normalize('NFC').split(/\s+/));
+      console.log(`  info  Noto SERIF Devanagari: ${want.filter((w) => got.has(w)).length} of ${want.length} Devanagari words intact in the text layer (${COMBINATION.replace('Sans', 'Serif')})`);
+    }
+  }
+}
+
+// The other half of the tracked fix (Mr. Singh, 2 Oct 2026): does a NEWER
+// Typst copy Indian-script text better? Dockerfile.pdf-gate unpacks Alpine
+// edge's typst to /opt/typst-edge (verified, not installed). The same
+// document, the same fonts, counted the same way for both versions.
+{
+  const EDGE = '/opt/typst-edge/usr/bin/typst';
+  const v = spawnSync(EDGE, ['--version'], { encoding: 'utf8' });
+  if (v.error || v.status !== 0) {
+    console.log(`  info  newer Typst not tried: ${v.error ? v.error.code : (v.stderr || '').split('\n')[0].slice(0, 120) || `exit ${v.status}`}`);
+  } else {
+    const count = (res, re) => {
+      const want = res.r.text.normalize('NFC').split(/\s+/).filter((w) => re.test(w));
+      const got = new Set(textOf(res.pdf).body.normalize('NFC').split(/\s+/));
+      return `${want.filter((w) => got.has(w)).length} of ${want.length}`;
+    };
+    const DEV = /[ऀ-ॿ]/;
+    const now = await tryPdf(stateOf(fixture('indian-scripts')));
+    const edge = await tryPdf(stateOf(fixture('indian-scripts')), { typst: EDGE });
+    if (now.error || edge.error) console.log(`  info  newer Typst trial did not build: ${now.error?.code ?? ''} ${edge.error?.code ?? ''} ${JSON.stringify(edge.error?.detail ?? '')}`);
+    else {
+      console.log(`  info  Typst 0.14.2 (production): ${count(now, INDIC)} Indian-script words intact, Devanagari ${count(now, DEV)}`);
+      console.log(`  info  ${v.stdout.trim()} (Alpine edge): ${count(edge, INDIC)} Indian-script words intact, Devanagari ${count(edge, DEV)}`);
+    }
+  }
+}
+
+console.log('\n6. A sample for the reader (Devanagari, day one)');
+{
+  const s = await tryPdf(stateOf(fixture('devanagari-sample')));
+  if (s.error) check('devanagari-sample built', false, `${s.error.code}`);
+  else { writeFileSync(`${OUT}/devanagari-sample.pdf`, s.pdf); check(`devanagari-sample.pdf written (${s.pdf.length} bytes) for a reader`, true); }
+}
+
+console.log(`\n  passed: ${passed}   failed: ${failed}`);
+process.exitCode = failed === 0 ? 0 : 1;
