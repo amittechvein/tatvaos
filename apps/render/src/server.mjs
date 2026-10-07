@@ -19,8 +19,12 @@
 //  Answers:  200 {pdf (base64), ms, dropped, schema}
 //            422 {reason: "script_not_checked", scripts} — a script no reader
 //                has checked yet (Amit, 1 Oct 2026); the send says so
+//            413 {reason: "pictures_too_large"} — its pictures do not fit in
+//                the job folder (/tmp, a 16 MB tmpfs); the sentence says to
+//                remove some and try again (Mr. Singh, 7 Oct 2026)
 //            504 past the SAME time limit as a render (render + PDF together)
-//            500 {reason: "pdf_failed"} — Typst could not build it
+//            500 {reason: "pdf_failed"} — Typst could not build it (the log
+//                says no_room when /tmp filled with no pictures of its own)
 //
 //  The time limit is 10 s (Mr. Singh, 29 Sept 2026). RENDER_TIMEOUT_MS can
 //  only LOWER it (a test proves the kill quickly); it is never raised.
@@ -38,6 +42,12 @@ const LIMIT_MS = Math.min(10_000, Number(process.env.RENDER_TIMEOUT_MS ?? 10_000
 const WORKERS = Math.max(1, Math.min(4, Number(process.env.RENDER_WORKERS ?? 2) || 2));
 // A stored state may be 32 MB (DocsEndpoints.MaxStateBytes); base64 and JSON add a third.
 const MAX_BODY = 48 * 1024 * 1024;
+// The refusal a person can act on (docs/DOCS_PDF_DESIGN.md §10, Mr. Singh's
+// wording, 7 Oct 2026). MAX_BODY still admits about 36 MB of pictures, more
+// than twice what /tmp holds; that inconsistency is a switch-on item the
+// measurements decide. This sentence is owed whatever they show.
+const PICTURES_TOO_LARGE =
+  'This document has too many pictures, or pictures too large, to make a PDF. Remove some and try again.';
 
 const log = (msg) => process.stdout.write(`${new Date().toISOString()} render ${msg}\n`);
 
@@ -167,7 +177,10 @@ const server = http.createServer((req, res) => {
       return send(res, 200, { pdf: p.pdf.toString('base64'), ms: Date.now() - t0, dropped: r.body.dropped, schema: SCHEMA_VERSION });
     } catch (e) {
       const code = e instanceof PdfFailed ? e.code : 'pdf_failed';
-      log(`pdf FAILED ${code} ms=${Date.now() - t0}${e?.detail?.scripts ? ` scripts=${e.detail.scripts.join(',')}` : ''}${e?.detail?.message ? ` typst: ${e.detail.message}` : ''}`);
+      const d = e?.detail ?? {};
+      log(`pdf FAILED ${code} ms=${Date.now() - t0}${d.scripts ? ` scripts=${d.scripts.join(',')}` : ''}${d.message ? ` typst: ${d.message}` : ''}`
+        + `${d.stage ? ` stage=${d.stage} pictures=${d.pictures} bytes=${d.bytes}` : ''}${code === 'pdf_failed' && e?.code ? ` error=${e.code}` : ''}`);
+      if (code === 'pictures_too_large') return send(res, 413, { error: PICTURES_TOO_LARGE, reason: code });
       if (code === 'script_not_checked') return send(res, 422, { error: 'This document contains text in a script whose PDF has not been checked by a reader yet.', reason: code, scripts: e.detail.scripts });
       if (code === 'timeout') return send(res, 504, { error: 'render timed out', limitMs: LIMIT_MS });
       return send(res, 500, { error: 'The PDF could not be built.', reason: 'pdf_failed' });

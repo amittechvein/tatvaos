@@ -270,6 +270,43 @@ for _ in $(seq 1 60); do DC exec -T apistub node -e "$WEB" "http://${P}-render-l
 same "the limit cannot be RAISED past 10 s (asked for 600000)" \
   "$(DC exec -T apistub node -e "fetch('http://${P}-render-limit:8080/health').then(r=>r.json()).then(b=>console.log(b.limitMs))" 2>&1 | tail -1)" 10000
 
+echo "== 8. a PDF whose pictures do not fit in /tmp gets a refusal a person can act on"
+# docs/DOCS_PDF_DESIGN.md §10 (Mr. Singh, 7 Oct 2026): /tmp is a 16 MB tmpfs,
+# the body limit 48 MB, so ONE document with enough photographs fills it.
+# Before this, the write threw a plain ENOSPC and the answer was the generic
+# "The PDF could not be built". Proven HERE because only this container's /tmp
+# is really 16 MB. Pictures are real PNGs of random pixels, stored (deflate
+# level 0) so each is ~3 MB on disk whatever compresses. 2 of them fit: that
+# is the calibration — pictures as such are not refused. 7 do not.
+PDFMAKE='import * as Y from "yjs"; import { getSchema } from "@tiptap/core"; import { prosemirrorJSONToYDoc } from "@tiptap/y-tiptap"; import { documentExtensions } from "../web/components/docs/schema.ts"; import zlib from "node:zlib"; import { randomBytes } from "node:crypto"; const n = Number(process.argv[1]); const side = 1000; const chunk = (t, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); const c = Buffer.alloc(4); c.writeUInt32BE(zlib.crc32(td)); return Buffer.concat([l, td, c]); }; const png = () => { const ih = Buffer.alloc(13); ih.writeUInt32BE(side, 0); ih.writeUInt32BE(side, 4); ih[8] = 8; ih[9] = 2; const row = side * 3 + 1; const raw = Buffer.alloc(row * side); for (let y = 0; y < side; y++) randomBytes(side * 3).copy(raw, y * row + 1); return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ih), chunk("IDAT", zlib.deflateSync(raw, { level: 0 })), chunk("IEND", Buffer.alloc(0))]); }; const pictures = {}; const content = [{ type: "paragraph", content: [{ type: "text", text: "Newsletter" }] }]; for (let i = 1; i <= n; i++) { const src = "/api/docs/00000000-0000-4000-8000-000000000001/images/" + i; pictures[src] = png().toString("base64"); content.push({ type: "paragraph", content: [{ type: "image", attrs: { src, alt: null, title: null, width: "320", height: null } }] }); } const s = Y.encodeStateAsUpdate(prosemirrorJSONToYDoc(getSchema(documentExtensions()), { type: "doc", content }, "default")); process.stdout.write(JSON.stringify({ updates: [Buffer.from(s).toString("base64")], pictures }));'
+for n in 2 7; do
+  DC run --rm --no-deps -T --entrypoint node render \
+    --no-warnings --import ./src/register.mjs --input-type=module -e "$PDFMAKE" "$n" > "$TMP/pdf-$n.json" 2>/dev/null
+  docker cp "$TMP/pdf-$n.json" "$(DC ps -q apistub)":/tmp/pdf-"$n".json >/dev/null
+  echo "        payload with $n pictures: $(wc -c < "$TMP/pdf-$n.json") bytes"
+done
+PDFPOST='const [url,f]=process.argv.slice(1);fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:require("fs").readFileSync(f)}).then(async r=>{const b=await r.json();console.log(r.status+" "+(b.pdf&&Buffer.from(b.pdf,"base64").subarray(0,4).toString()==="%PDF"?"pdf":(b.reason||b.error||"")))},e=>console.log("error "+e.message))'
+PDFSAYS='const [url,f]=process.argv.slice(1);fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:require("fs").readFileSync(f)}).then(async r=>{const b=await r.json();console.log(String(b.error))},e=>console.log("error "+e.message))'
+same "2 large pictures fit: the PDF is built (200) — the calibration" \
+  "$(DC exec -T apistub node -e "$PDFPOST" http://render:8080/render/pdf /tmp/pdf-2.json 2>&1 | tail -1)" "200 pdf"
+same "7 do not fit in the 16 MB /tmp: refused with its own reason (413)" \
+  "$(DC exec -T apistub node -e "$PDFPOST" http://render:8080/render/pdf /tmp/pdf-7.json 2>&1 | tail -1)" "413 pictures_too_large"
+same "…and told what to do, in the person's words" \
+  "$(DC exec -T apistub node -e "$PDFSAYS" http://render:8080/render/pdf /tmp/pdf-7.json 2>&1 | tail -1)" \
+  "This document has too many pictures, or pictures too large, to make a PDF. Remove some and try again."
+same "no PDF job folder is left in /tmp (the room is given back)" \
+  "$(DC exec -T render sh -c 'ls -d /tmp/pdf-* 2>/dev/null | wc -l' | tr -d '\r ')" 0
+# Read into a variable, then grep a here-string, never a pipe: piping long
+# text into grep gave false reds AND false greens under pipefail elsewhere in
+# tests/ (fixed by PRs 389 and 392 the same way).
+render_log="$(DC logs --no-color render 2>&1)"
+same "the log names the reason and where /tmp filled (twice: two refusals above)" \
+  "$(grep -c -F -- "pdf FAILED pictures_too_large" <<<"$render_log")" 2
+same "…at the picture writes, not elsewhere" \
+  "$(grep -c -F -- "stage=write pictures=7" <<<"$render_log")" 2
+same "a document save still works afterwards" \
+  "$(DC exec -T apistub node -e "$POST" http://render:8080/render/doc /tmp/nested-lists.json 2>&1 | tail -1)" "200 html"
+
 echo
 echo "  passed: $pass   failed: $fail"
 [ "$fail" -eq 0 ]
