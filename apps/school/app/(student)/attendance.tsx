@@ -52,7 +52,8 @@ function Ring({ parts, label, sub }: { parts: { value: number; color: string }[]
       <Text size={24} weight={800}>
         {label}
       </Text>
-      <Text size={11} weight={700} color={colors.textSoft}>
+      {/* long month names (September, सितंबर) shrink to stay inside the ring */}
+      <Text size={11} weight={700} color={colors.textSoft} numberOfLines={1} adjustsFontSizeToFit style={{ maxWidth: 66, textAlign: "center" }}>
         {sub}
       </Text>
     </View>

@@ -147,7 +147,7 @@ export default function Home() {
                   {pct ?? "–"}
                 </Text>
               </View>
-              <Text size={15} weight={800} color={status.color} numberOfLines={1}>
+              <Text size={14} weight={800} color={status.color} numberOfLines={2}>
                 {t(status.label)}
               </Text>
               <Text size={11} weight={600} color={colors.textSoft} numberOfLines={2}>
@@ -158,7 +158,7 @@ export default function Home() {
           {canHomework ? (
             <Summary onPress={soon}>
               <Icon name="homework" size={36} />
-              <Text size={15} weight={800} numberOfLines={1}>
+              <Text size={14} weight={800} numberOfLines={2}>
                 {hwToday === 0 ? t("hwNone") : hwToday === 1 ? t("hwOne") : t("hwToday", { n: hwToday })}
               </Text>
               <Text size={11} weight={600} color={colors.textSoft}>
@@ -168,7 +168,7 @@ export default function Home() {
           ) : null}
           <Summary onPress={() => router.push("/fees")}>
             <Icon name="fees" size={36} />
-            <Text size={15} weight={800} numberOfLines={1}>
+            <Text size={14} weight={800} numberOfLines={2}>
               {fees.data ? (fees.data.dueNow > 0 ? inr(fees.data.dueNow) : t("noDues")) : "–"}
             </Text>
             <Text size={11} weight={600} color={colors.textSoft} numberOfLines={2}>
