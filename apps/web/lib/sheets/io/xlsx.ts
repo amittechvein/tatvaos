@@ -321,6 +321,61 @@ function addFunctionPrefixes(formula: string): string {
     }));
 }
 
+/** True when the file format wants this function prefixed (_xlfn. or _xlfn._xlws.). */
+export function excelPrefixes(name: string): boolean {
+  const up = name.toUpperCase();
+  return XLWS.has(up) || XLFN.has(up);
+}
+
+/**
+ * Functions the editor supports that Excel 2019 and older do not know. The
+ * file stores them correctly (_xlfn.XLOOKUP), and older Excel still shows
+ * #NAME? in those cells: measured 3 Oct 2026 on this laptop's 2019-class
+ * Excel, where the one miss in the real-Excel check was XLOOKUP. So the
+ * download names them (Amit, 3 Oct; design §4a). The value is the oldest
+ * Excel that has the function. tests/sheets/older-excel.test.ts fails when the
+ * engine gains a prefixed function that is in neither this map nor its list
+ * of functions Excel 2019 already has.
+ */
+export const NEWER_THAN_EXCEL_2019: ReadonlyMap<string, 'Excel 2021' | 'Microsoft 365'> = new Map([
+  ['XLOOKUP', 'Excel 2021'], ['XMATCH', 'Excel 2021'],
+  ['CHOOSECOLS', 'Microsoft 365'], ['CHOOSEROWS', 'Microsoft 365'],
+  ['REGEXEXTRACT', 'Microsoft 365'], ['REGEXREPLACE', 'Microsoft 365'],
+]);
+
+/** The functions in a workbook that Excel 2019 and older show as #NAME?, sorted. */
+export function functionsNeedingNewerExcel(wb: WorkbookData): string[] {
+  const found = new Set<string>();
+  for (const sheet of wb.sheets) {
+    for (const cell of sheet.cells.values()) {
+      const input = cell.input;
+      // Only what goes into the file as a formula: cellXml writes an unsafe one as text.
+      if (input === null || !input.startsWith('=') || input.length < 2 || !formulaIsSafe(input)) continue;
+      mapFormulaCode(input.slice(1), (seg) => {
+        for (const m of seg.matchAll(/(?<![A-Za-z0-9_.])([A-Za-z][A-Za-z0-9.]*)(?=\()/g)) {
+          const up = m[1]!.toUpperCase();
+          if (NEWER_THAN_EXCEL_2019.has(up)) found.add(up);
+        }
+        return seg;
+      });
+    }
+  }
+  return [...found].sort();
+}
+
+/**
+ * The line the .xlsx download shows, or null when nothing in the workbook is
+ * newer than Excel 2019. Wording ruled by Mr. Singh on 7 Oct 2026, approved
+ * as it stands (design §4a).
+ */
+export function olderExcelNote(names: readonly string[]): string | null {
+  if (names.length === 0) return null;
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  const where = names.some((n) => NEWER_THAN_EXCEL_2019.get(n) === 'Microsoft 365')
+    ? 'Microsoft 365' : 'Excel 2021 and Microsoft 365';
+  return `This workbook uses ${list}. ${names.length === 1 ? 'It works' : 'They work'} in ${where}; older Excel shows #NAME? in those cells.`;
+}
+
 // ============================================================================
 //  Colours
 // ============================================================================
