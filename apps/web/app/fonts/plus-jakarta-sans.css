@@ -80,8 +80,9 @@
 }
 
 /* On <body>, replacing next/font's generated className + variable pair. The
-   variable is still called --font-inter so the theme and globals that
-   reference it keep working (see layout.tsx). */
+   font-family line is what styles the page. Nothing read --font-inter on
+   7 Oct 2026 (searched); it is kept, under its old name, for anything that
+   reaches for it later. */
 .app-font {
   --font-inter: 'Plus Jakarta Sans', 'Plus Jakarta Sans Fallback';
   font-family: 'Plus Jakarta Sans', 'Plus Jakarta Sans Fallback';

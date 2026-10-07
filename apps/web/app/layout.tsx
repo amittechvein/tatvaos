@@ -22,9 +22,8 @@ import '../styles/globals.css';
 //  Until 7 Oct 2026 next/font/google fetched them during `next build`, and a
 //  failed fetch failed the build (CI red on 2 and 6 Oct, nothing at fault).
 //  The header of the stylesheet says why it is not next/font/local (the ₹
-//  sign). Its .app-font class still sets a variable called --font-inter so the
-//  theme and globals that reference it keep working — one rename would
-//  otherwise ripple through both. eslint.config.mjs refuses next/font/google.
+//  sign). Its .app-font class on <body> is what applies the font.
+//  eslint.config.mjs refuses next/font/google.
 // ---------------------------------------------------------------------------
 import './fonts/plus-jakarta-sans.css';
 
