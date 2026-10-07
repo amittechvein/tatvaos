@@ -239,6 +239,44 @@ In every case where the service survived, its thread count at rest was the same 
 
 **Today nothing calls `/render/pdf`, so production's Docs saves are not exposed** until someone wires PDF by email.
 
+### Mr. Singh's ruling (7 Oct) and the proposed target, for his decision
+
+**Ruling:**
+- **Downscale and recompress pictures before Typst. Don't simply enlarge `/tmp`.** These PDFs go by email, and most mail servers refuse attachments over 10–25 MB: a bigger `/tmp` would build a PDF that bounces at the far end.
+- **Then cap pictures by total bytes after downscaling, not by count.**
+- **Decide `/tmp` last,** from the new numbers.
+- **The target resolution and quality go to him before anything is built.**
+
+**Measured 7 Oct** (in the browser, on four 4000×3000 photos made by case 0's painter, 4.37–4.43 MB each at JPEG q90). Re-encoded size per photo, mean of four:
+
+| Long side | q75 | **q82** | q90 |
+|---|---|---|---|
+| 1200 px | 117 KB | 155 KB | 250 KB |
+| **1600 px** | 191 KB | **249 KB** | 397 KB |
+| 2000 px | 326 KB | 456 KB | 785 KB |
+
+**Caution:** these test photos are synthetic, with sensor-like noise added. Real photos have more fine detail in some places and less in others. **Expect real phone photos at 1600 px q82 between roughly 250 and 500 KB.** A handful of real school photos would confirm it before the cap is fixed.
+
+**Proposed for his decision:**
+
+| | Proposal | Why |
+|---|---|---|
+| **Size** | **Longest side 1,600 px**, never enlarged | On A4 (about 6.7 in of printable width), a full-width photo prints at ~240 dpi and a half-width one at ~480: sharp on paper and on screen. 2,000 px roughly doubles the bytes for detail nobody sees in an email PDF; 1,200 px (~180 dpi full width) is visibly soft in print |
+| **Quality** | **JPEG quality 82** | About two-thirds of q90's bytes (measured above). That it looks no different, and that q75 begins to show blocking in skies and skin, is general JPEG behaviour, **not judged here by eye**: worth one look at a sample PDF before fixing it |
+| **Format** | JPEG for photos; a PNG with transparency stays PNG, downscaled the same way | Logos and diagrams keep crisp edges and transparent backgrounds |
+| **Orientation** | **Apply the EXIF orientation before re-encoding** | Re-encoding drops EXIF. A phone photo shot upright is stored sideways with an "orientation" tag, and without this step it would print on its side |
+| **Metadata** | Dropped (a side effect of re-encoding) | **Privacy, worth naming:** phone photos carry the GPS position where they were taken. Today's pass-through puts the JPEG in the PDF unchanged, so a PDF emailed outside the school may carry the location of every photo. *Not yet checked whether Typst keeps EXIF*: to verify on the first build |
+| **Total cap** | **6 MB of pictures after downscaling**, refused above that with the existing "remove some pictures" sentence | 6 MB of pictures means a PDF of about 6 MB: under the stricter 10 MB mail limits, with room for text. `/tmp` then needs about 12 MB (pictures + PDF), inside today's 16 MB. **So `/tmp` can stay as it is.** At 250–500 KB a photo, that's about 12–24 photos per document |
+
+**Still open (his, before building):**
+- **Where the downscaling runs:**
+  - (i) in the render container, before Typst. Needs an image library in the image: `sharp` is native libvips and grows the image; a WebAssembly encoder is slower but has no native code. Keeps the hardened container the only place that decodes untrusted pictures;
+  - (ii) in the API, as it gathers the stored pictures (for example SkiaSharp, MIT-licensed). Smaller requests to the render service, which also helps with the heap crash in cases 2 and 3; but the API process then decodes untrusted images;
+  - (iii) at upload, in the browser. Fixes neither pictures already stored nor a client that skips it, so it can only be an addition.
+
+  **I recommend (i).** Decoding untrusted image bytes belongs in the container that was hardened for exactly that.
+- **The in-progress limit and the "busy, try again" sentence** (cases 2 and 3), which downscaling makes less urgent but doesn't remove.
+
 **Then fix the inconsistency, not just measure it:**
 - **The limits.** Bring the PDF route's body limit under what `/tmp` holds, give `/tmp` room for the body limit, or cap pictures by **total size** instead of count. Mr. Singh prefers a total-size cap plus a smaller PDF-route body limit; the measured sizes decide.
 - **What limits concurrent Typst processes**, and what a request gets at that limit: a clear "busy, try again", never a dead container. Mr. Singh's instinct is a small semaphore and a queue in `buildPdf`. Measure before building it.
