@@ -5,14 +5,14 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import * as Y from 'yjs';
 
 import { useAuth } from '@/lib/auth';
-import { toBase64, fromBase64, type CommentThread, type DocumentMeta, type DocVersion } from '@/lib/docs';
+import { fromBase64, type CommentThread, type DocumentMeta, type DocVersion } from '@/lib/docs';
 import { DocsLiveProvider, type LiveEvent } from '@/lib/docsLive';
 import { formatDateTime } from '@/lib/dates';
 import { sheetsApi, SheetsError, sheetHref } from '@/lib/sheets/api';
 import { SheetsModel } from '@/lib/sheets/model';
 import { parseRect, rectName, colName, type Rect } from '@/lib/sheets/engine/address';
 import { formatValue } from '@/lib/sheets/engine/format';
-import { workbookHtml, workbookText, rangeForAi } from '@/lib/sheets/render';
+import { rangeForAi } from '@/lib/sheets/render';
 import { printSheet } from '@/lib/sheets/print';
 import { readXlsx, writeXlsx, functionsNeedingNewerExcel, olderExcelNote } from '@/lib/sheets/io/xlsx';
 import { readCsv, writeCsv } from '@/lib/sheets/io/csv';
@@ -359,11 +359,7 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
     const when = preview.v.name ?? formatDateTime(preview.v.createdAt);
     if (!window.confirm(`Restore the version from ${when}? The current spreadsheet is kept in version history first, so this can be undone.`)) return;
     try {
-      const snap = model.snapshot();
-      await sheetsApi.saveVersion(authedFetch, id, {
-        kind: 'restore', name: `Before restoring ${when}`,
-        state: toBase64(Y.encodeStateAsUpdate(provider.doc)), html: workbookHtml(snap, model.locale()),
-      });
+      await sheetsApi.saveVersion(authedFetch, id, { kind: 'restore', name: `Before restoring ${when}` });
       const old = preview.model.snapshot();
       setPreview(null);
       const first = model.load(old, 'replace');
@@ -395,31 +391,37 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
   };
 
   // ---- checkpoints -------------------------------------------------------------------
+  // The server builds the .xlsx Space serves, its HTML and text, from what IT
+  // stored (Sheets server build, stage 3): this sends only how far the browser
+  // has seen. The server could not build the file (503 render_failed, or 500
+  // xlsx_refused): SAID, not hidden behind "All changes saved", as in Docs
+  // (Mr. Singh, 30 Sept 2026). The edits themselves are stored already.
+  const [fileError, setFileError] = useState<string | null>(null);
   const checkpointing = useRef(false);
   const checkpoint = useCallback(async () => {
     if (checkpointing.current || !provider.canEdit || provider.status !== 'synced') return false;
     if (model.sheetIds().length === 0) return false;
     checkpointing.current = true;
     try {
-      const upToSeq = provider.lastSeq;
-      const state = Y.encodeStateAsUpdate(provider.doc);
-      const snap = model.snapshot();
-      const xlsx = await writeXlsx(snap);
-      const locale = model.locale();
-      await sheetsApi.checkpointSheet(authedFetch, id, {
-        state: toBase64(state), upToSeq,
-        html: workbookHtml(snap, locale),
-        text: workbookText(snap, locale).slice(0, 2_000_000),
-        xlsx: toBase64(xlsx),
-      });
+      await sheetsApi.checkpointSheet(authedFetch, id, { upToSeq: provider.lastSeq });
       setSavedAt(new Date());
+      setFileError(null);
       return true;
-    } catch {
-      return false; // edits are already stored as updates; the next checkpoint retries
+    } catch (e) {
+      // Edits are already stored as updates; a later checkpoint retries.
+      if (e instanceof SheetsError && (e.status === 503 || e.status === 500)) setFileError(e.message);
+      return false;
     } finally {
       checkpointing.current = false;
     }
   }, [provider, model, authedFetch, id]);
+
+  // While the file could not be built, try again every 10 s, as Docs does.
+  useEffect(() => {
+    if (!fileError) return;
+    const t = setInterval(() => void checkpoint(), 10_000);
+    return () => clearInterval(t);
+  }, [fileError, checkpoint]);
 
   useEffect(() => {
     let idle: ReturnType<typeof setTimeout> | null = null;
@@ -781,6 +783,9 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
 
   // ---- status line -----------------------------------------------------------------------
   const status = lostAccess ? { text: 'You no longer have access', tone: 'text-danger', icon: <I.cloudOff className="h-4 w-4" /> }
+    // Before "Saving…" and "All changes saved": the edits reached the server,
+    // but the file others download was not built. Say so.
+    : fileError ? { text: 'Not saved as a file yet — your work is safe, retrying', tone: 'text-warn', icon: <I.cloudOff className="h-4 w-4" /> }
     : provider.status === 'offline' ? { text: provider.pending ? 'Offline — your edits are kept in this tab' : 'Offline', tone: 'text-warn', icon: <I.cloudOff className="h-4 w-4" /> }
     : provider.status === 'connecting' ? { text: 'Connecting…', tone: 'text-ink-faint', icon: null }
     : provider.pending ? { text: 'Saving…', tone: 'text-ink-faint', icon: null }
@@ -1091,11 +1096,13 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
       {dialog === 'nameVersion' && (
         <NameVersionDialog onClose={() => setDialog(null)} onSave={async (name) => {
           setDialog(null);
-          await sheetsApi.saveVersion(authedFetch, id, {
-            kind: 'named', name, state: toBase64(Y.encodeStateAsUpdate(provider.doc)), html: workbookHtml(model.snapshot(), model.locale()),
-          });
-          loadVersions();
-          setNotice(`Saved as “${name}”.`);
+          try {
+            await sheetsApi.saveVersion(authedFetch, id, { kind: 'named', name });
+            loadVersions();
+            setNotice(`Saved as “${name}”.`);
+          } catch (e) {
+            setNotice(e instanceof Error ? e.message : 'Could not save the version.');
+          }
         }} />
       )}
     </div>

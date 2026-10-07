@@ -1,12 +1,15 @@
 // ============================================================================
-//  The render service: POST /render/doc, GET /health. Reached by the API only.
+//  The render service: POST /render/doc, POST /render/sheet, GET /health.
+//  Reached by the API only.
 // ============================================================================
 //
 //  Request:  {"updates": ["<base64>", ...]} — the stored state, then every
-//            stored update after it.
-//  Answers:  200 {state, html, text, dropped, schema}   (state is base64)
+//            stored update after it. The same for both routes.
+//  Answers:  200 /render/doc   {state, html, text, dropped, schema}
+//                /render/sheet {state, xlsx, html, text, sheets, cells, schema}
+//                (state and xlsx are base64)
 //            400 not that shape      413 too large
-//            422 the bytes are not a document the renderer can read
+//            422 the bytes are not a document (spreadsheet) the renderer can read
 //            504 the render ran past the time limit — the worker is killed
 //                and replaced; the API fails the save and says so
 //
@@ -18,6 +21,7 @@
 import http from 'node:http';
 import { Worker } from 'node:worker_threads';
 import { SCHEMA_VERSION } from './render-doc.mjs';
+import { SHEETS_SCHEMA_VERSION } from './render-sheet.mjs';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const LIMIT_MS = Math.min(10_000, Number(process.env.RENDER_TIMEOUT_MS ?? 10_000) || 10_000);
@@ -62,16 +66,17 @@ function run(w, job) {
     w.removeListener('message', onMessage);
     idle.push(w);
     drain();
+    const b64 = (u8) => Buffer.from(u8).toString('base64');
     job.resolve(m.ok
-      ? { status: 200, body: { ...m.result, state: Buffer.from(m.result.state).toString('base64') } }
-      : { status: 422, body: { error: 'not a document the renderer can read' } });
+      ? { status: 200, body: { ...m.result, state: b64(m.result.state), ...(m.result.xlsx ? { xlsx: b64(m.result.xlsx) } : {}) } }
+      : { status: 422, body: { error: `not a ${job.kind === 'sheet' ? 'spreadsheet' : 'document'} the renderer can read` } });
   }
   w.on('message', onMessage);
-  w.postMessage({ id, updates: job.updates }, job.updates.map((u) => u.buffer));
+  w.postMessage({ id, kind: job.kind, updates: job.updates }, job.updates.map((u) => u.buffer));
 }
 
-function render(updates) {
-  return new Promise((resolve) => { waiting.push({ updates, resolve }); drain(); });
+function render(kind, updates) {
+  return new Promise((resolve) => { waiting.push({ kind, updates, resolve }); drain(); });
 }
 
 // ---- HTTP -------------------------------------------------------------------
@@ -82,8 +87,11 @@ function send(res, status, body) {
 }
 
 const server = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/health') return send(res, 200, { ok: true, schema: SCHEMA_VERSION, limitMs: LIMIT_MS });
-  if (req.method !== 'POST' || req.url !== '/render/doc') return send(res, 404, { error: 'not found' });
+  if (req.method === 'GET' && req.url === '/health') {
+    return send(res, 200, { ok: true, schema: SCHEMA_VERSION, sheetsSchema: SHEETS_SCHEMA_VERSION, limitMs: LIMIT_MS });
+  }
+  const kind = req.method !== 'POST' ? null : req.url === '/render/doc' ? 'doc' : req.url === '/render/sheet' ? 'sheet' : null;
+  if (!kind) return send(res, 404, { error: 'not found' });
 
   const chunks = [];
   let size = 0;
@@ -105,11 +113,17 @@ const server = http.createServer((req, res) => {
       return send(res, 400, { error: 'expected {"updates": ["<base64>", ...]}' });
     }
     const t0 = Date.now();
-    const r = await render(updates);
-    const dropped = r.body.dropped?.length ? ` unknown=${r.body.dropped.map((d) => `${d.name}x${d.count}`).join(',')}` : '';
-    log(`doc ${r.status} in=${size}B updates=${updates.length} ms=${Date.now() - t0}${r.status === 200 ? ` html=${r.body.html.length}` : ''}${dropped}`);
+    const r = await render(kind, updates);
+    const ok = r.status === 200;
+    if (kind === 'sheet') {
+      // Sizes and counts only; never a cell.
+      log(`sheet ${r.status} in=${size}B updates=${updates.length} ms=${Date.now() - t0}${ok ? ` xlsx=${Math.floor(r.body.xlsx.length * 3 / 4)}B html=${r.body.html.length} sheets=${r.body.sheets} cells=${r.body.cells}` : ''}`);
+    } else {
+      const dropped = r.body.dropped?.length ? ` unknown=${r.body.dropped.map((d) => `${d.name}x${d.count}`).join(',')}` : '';
+      log(`doc ${r.status} in=${size}B updates=${updates.length} ms=${Date.now() - t0}${ok ? ` html=${r.body.html.length}` : ''}${dropped}`);
+    }
     send(res, r.status, r.body);
   });
 });
 
-server.listen(PORT, '0.0.0.0', () => log(`listening on ${PORT}; schema ${SCHEMA_VERSION}; limit ${LIMIT_MS} ms; ${WORKERS} workers`));
+server.listen(PORT, '0.0.0.0', () => log(`listening on ${PORT}; schema ${SCHEMA_VERSION}, ${SHEETS_SCHEMA_VERSION}; limit ${LIMIT_MS} ms; ${WORKERS} workers`));
