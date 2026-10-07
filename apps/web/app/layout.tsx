@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from 'next';
-import { Plus_Jakarta_Sans } from 'next/font/google';
 import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
 import { DesktopAlerts } from '@/components/DesktopAlerts';
@@ -18,17 +17,16 @@ import '../styles/globals.css';
 //  admin UI read as designed rather than defaulted; the previous Inter (and
 //  before that, unstyled Segoe UI) is most of what read as "cheap".
 //
-//  next/font self-hosts it: no Google request at runtime, no layout shift,
-//  and the file is subset and cached by the build. The CSS variable is still
-//  called --font-inter so the theme and globals that reference it keep
-//  working — one rename would otherwise ripple through both.
+//  The font files live in this repository (app/fonts/) and this stylesheet
+//  only declares them: no request to Google at build time or at runtime.
+//  Until 7 Oct 2026 next/font/google fetched them during `next build`, and a
+//  failed fetch failed the build (CI red on 2 and 6 Oct, nothing at fault).
+//  The header of the stylesheet says why it is not next/font/local (the ₹
+//  sign). Its .app-font class still sets a variable called --font-inter so the
+//  theme and globals that reference it keep working — one rename would
+//  otherwise ripple through both. eslint.config.mjs refuses next/font/google.
 // ---------------------------------------------------------------------------
-const inter = Plus_Jakarta_Sans({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700', '800'],
-  display: 'swap',
-  variable: '--font-inter',
-});
+import './fonts/plus-jakarta-sans.css';
 
 export const metadata: Metadata = {
   title: 'TatvaOS',
@@ -79,7 +77,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         Bootstrap/YZEN theme that replaced it; the console is Tailwind and
         components/ui throughout.
       */}
-      <body className={`h-full ${inter.variable} ${inter.className}`}>
+      <body className="h-full app-font">
         <ThemeProvider>
           {/* DesktopAlerts renders nothing. It is here rather than on the
               mail page so that alerts work wherever the person is — alerts
