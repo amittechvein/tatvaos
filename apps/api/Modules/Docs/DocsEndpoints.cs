@@ -1304,11 +1304,17 @@ public static class DocsEndpoints
                 return Error(400, "action must be summarize, rewrite, translate or generate.");
         }
 
-        // Named, so the metering (PR 280) counts it under "Docs" — the gateway
-        // refuses a request with no feature. It costs the default, 1 credit:
-        // AiCredits has no line for "docs", and what it should cost is a
-        // pricing decision (Amit's), not one to make in a merge.
-        var result = await ai.CompleteAsync(instruction, text, ct, feature: TatvaOS.Api.Shared.Ai.AiGate.Docs);
+        // One label per action, so each is metered (PR 280) and priced on its
+        // own: Write costs 5 credits, the rest 1 (AiCredits; Amit, 3 Oct 2026).
+        // Written out per case, not as a variable, so
+        // tests/ai/every_ai_entry_calls_gate.py can read every label passed.
+        var result = action switch
+        {
+            "summarize" => await ai.CompleteAsync(instruction, text, ct, feature: TatvaOS.Api.Shared.Ai.AiGate.DocsSummarize),
+            "rewrite" => await ai.CompleteAsync(instruction, text, ct, feature: TatvaOS.Api.Shared.Ai.AiGate.DocsRewrite),
+            "translate" => await ai.CompleteAsync(instruction, text, ct, feature: TatvaOS.Api.Shared.Ai.AiGate.DocsTranslate),
+            _ => await ai.CompleteAsync(instruction, text, ct, feature: TatvaOS.Api.Shared.Ai.AiGate.DocsWrite), // "generate"; anything else returned 400 above
+        };
         if (result.Error is not null) return Error(502, result.Error);
         return Results.Ok(new { text = result.Text.Trim(), truncated = result.Truncated });
     }

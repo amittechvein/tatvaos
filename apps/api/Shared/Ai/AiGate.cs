@@ -53,6 +53,12 @@ public static class AiGate
         // why it is named here and gated where it is sent.
         [ConnectTranscription] = SettingKeys.AiConnectOrganisations,
         [Docs] = SettingKeys.AiDocsOrganisations,
+        // One label per Docs AI action, so each can have its own price
+        // (AiCredits; Amit, 3 Oct 2026). All four share the Docs list.
+        [DocsSummarize] = SettingKeys.AiDocsOrganisations,
+        [DocsRewrite] = SettingKeys.AiDocsOrganisations,
+        [DocsTranslate] = SettingKeys.AiDocsOrganisations,
+        [DocsWrite] = SettingKeys.AiDocsOrganisations,
         // Sheets (merged 1 Oct 2026, after this registry was written): its own
         // list, EMPTY until Sheets AI has a disclosure - the same start as Docs.
         [Sheets] = SettingKeys.AiSheetsOrganisations,
@@ -61,6 +67,10 @@ public static class AiGate
     public const string ConnectMinutes = "connect.minutes";
     public const string ConnectTranscription = "connect.transcription";
     public const string Docs = "docs";
+    public const string DocsSummarize = "docs.summarize";
+    public const string DocsRewrite = "docs.rewrite";
+    public const string DocsTranslate = "docs.translate";
+    public const string DocsWrite = "docs.write";
     public const string Sheets = "sheets";
 
     /// <summary>
