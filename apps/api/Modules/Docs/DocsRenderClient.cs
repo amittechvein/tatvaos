@@ -24,18 +24,43 @@ public sealed class DocsRenderClient(HttpClient http, IConfiguration config, ILo
 {
     public sealed record Dropped(string Kind, string Name, int Count);
     public sealed record Result(byte[] State, string Html, string Text, IReadOnlyList<Dropped> Dropped, string Schema);
+    /// <summary>A spreadsheet's build: the merged state, the .xlsx Space serves, its HTML and text.</summary>
+    public sealed record SheetResult(byte[] State, byte[] Xlsx, string Html, string Text, int Sheets, int Cells, string Schema);
 
     private sealed record Wire(string? State, string? Html, string? Text, List<Dropped>? Dropped, string? Schema);
+    private sealed record SheetWire(string? State, string? Xlsx, string? Html, string? Text, int? Sheets, int? Cells, string? Schema);
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     /// <summary>The service's own limit is 10 s; this is that plus the network, and no more.</summary>
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(12);
 
-    private Uri Endpoint => new(new Uri(config["Docs:RenderUrl"] ?? "http://render:8080"), "/render/doc");
+    private Uri Endpoint(string route) => new(new Uri(config["Docs:RenderUrl"] ?? "http://render:8080"), route);
 
     /// <param name="updates">The stored state first (empty = a blank document), then each stored update in seq order.</param>
     public async Task<Result> RenderAsync(IEnumerable<byte[]> updates, CancellationToken ct)
+    {
+        var w = await PostAsync<Wire>("/render/doc", updates, ct);
+        if (w?.State is null || w.Html is null || w.Text is null) throw new DocsRenderFailed("incomplete answer");
+        return new Result(Convert.FromBase64String(w.State), w.Html, w.Text,
+            (IReadOnlyList<Dropped>?)w.Dropped ?? [], w.Schema ?? "");
+    }
+
+    /// <summary>
+    /// A spreadsheet's file, built by the render service running the editor's
+    /// own Sheets code on what the server stored (docs/SHEETS_SERVER_RENDER_DESIGN.md).
+    /// The same failures as <see cref="RenderAsync"/>, the same 10-second limit.
+    /// </summary>
+    /// <param name="updates">The stored state first, then each stored update in seq order.</param>
+    public async Task<SheetResult> RenderSheetAsync(IEnumerable<byte[]> updates, CancellationToken ct)
+    {
+        var w = await PostAsync<SheetWire>("/render/sheet", updates, ct);
+        if (w?.State is null || w.Xlsx is null || w.Html is null || w.Text is null) throw new DocsRenderFailed("incomplete answer");
+        return new SheetResult(Convert.FromBase64String(w.State), Convert.FromBase64String(w.Xlsx), w.Html, w.Text,
+            w.Sheets ?? 0, w.Cells ?? 0, w.Schema ?? "");
+    }
+
+    private async Task<T?> PostAsync<T>(string route, IEnumerable<byte[]> updates, CancellationToken ct)
     {
         // A blank document's state is empty; Yjs spells "nothing" as [0, 0].
         var list = updates.Select(u => u.Length == 0 ? new byte[] { 0, 0 } : u).Select(Convert.ToBase64String).ToList();
@@ -44,11 +69,11 @@ public sealed class DocsRenderClient(HttpClient http, IConfiguration config, ILo
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(Timeout);
-            res = await http.PostAsJsonAsync(Endpoint, new { updates = list }, Json, cts.Token);
+            res = await http.PostAsJsonAsync(Endpoint(route), new { updates = list }, Json, cts.Token);
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
         {
-            log.LogWarning("Docs render service unreachable or too slow: {Error}", e.GetType().Name);
+            log.LogWarning("Docs render service unreachable or too slow ({Route}): {Error}", route, e.GetType().Name);
             throw new DocsRenderFailed("unavailable");
         }
 
@@ -56,10 +81,7 @@ public sealed class DocsRenderClient(HttpClient http, IConfiguration config, ILo
         {
             if (res.StatusCode == HttpStatusCode.GatewayTimeout) throw new DocsRenderFailed("timeout");
             if (!res.IsSuccessStatusCode) throw new DocsRenderFailed($"status {(int)res.StatusCode}");
-            var w = await res.Content.ReadFromJsonAsync<Wire>(Json, ct);
-            if (w?.State is null || w.Html is null || w.Text is null) throw new DocsRenderFailed("incomplete answer");
-            return new Result(Convert.FromBase64String(w.State), w.Html, w.Text,
-                (IReadOnlyList<Dropped>?)w.Dropped ?? [], w.Schema ?? "");
+            return await res.Content.ReadFromJsonAsync<T>(Json, ct);
         }
     }
 }

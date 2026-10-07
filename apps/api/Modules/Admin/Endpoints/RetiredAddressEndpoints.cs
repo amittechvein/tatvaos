@@ -25,8 +25,15 @@ public static class RetiredAddressEndpoints
 {
     public static void MapRetiredAddressEndpoints(this IEndpointRouteBuilder app)
     {
+        // RequireOperator, not RequireAuthorization("SuperAdmin"): the same policy
+        // PLUS the operator write transaction (#355). The release's UPDATE and its
+        // "address.released" audit line now commit together, so a refused audit
+        // line undoes the release. Before 6 Oct 2026 the UPDATE committed on its
+        // own and the audit write came after: a failed audit write left the
+        // address released with nobody recorded (Mr. Singh, after round one;
+        // tests/retired-release, red first).
         var g = app.MapGroup("/api/admin/retired-addresses")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         g.MapGet("/", ListAsync);
         g.MapPost("/{id:long}/release", ReleaseAsync);
