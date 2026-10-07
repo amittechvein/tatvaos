@@ -6,14 +6,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { useAuth } from '@/lib/auth';
 import { formatDateShort } from '@/lib/dates';
-import { toBase64 } from '@/lib/docs';
+import { DocsLiveProvider } from '@/lib/docsLive';
 import { spaceApi } from '@/lib/space';
 import { sheetHref, sheetsApi, type SheetRow, type SheetsView } from '@/lib/sheets/api';
 import { SheetsModel } from '@/lib/sheets/model';
 import { TEMPLATES, type Template } from '@/lib/sheets/templates';
-import { readXlsx, writeXlsx } from '@/lib/sheets/io/xlsx';
+import { readXlsx } from '@/lib/sheets/io/xlsx';
 import { readCsv } from '@/lib/sheets/io/csv';
-import { workbookHtml, workbookText } from '@/lib/sheets/render';
 import type { WorkbookData } from '@/lib/sheets/workbook';
 import { Icon } from '@/components/ui/Icon';
 import { Spinner } from '@/components/ui/Kit';
@@ -32,28 +31,54 @@ const EMPTY: Record<SheetsView, string> = {
 
 const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
 
+/** The live channel's largest message (DocsLiveHub.MaxMessageBytes), less room for its frame. */
+const MAX_LIVE_UPDATE_BYTES = 8 * 1024 * 1024 - 64;
+
+/** Wait until `ok()` holds, or fail with `message` after `ms`. */
+async function until(ok: () => boolean, ms: number, message: string) {
+  for (let waited = 0; !ok(); waited += 50) {
+    if (waited >= ms) throw new Error(message);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
 /**
  * Create a spreadsheet that starts with content (a template or an imported
- * file): the file is created empty, then its first CHECKPOINT carries the
- * whole Yjs state — the same call every editor makes after editing. No
- * second way of writing content exists on the server.
+ * file). The file is created empty, and the content goes in as an EDIT over
+ * the live channel: stored by the server as an update like any typing, then
+ * saved by an ordinary checkpoint, which builds the .xlsx on the server from
+ * what it stored (Sheets server build, stage 3). No second way of writing
+ * content exists on the server, and nothing here sends a file of its own.
  */
 async function createWith(authedFetch: ReturnType<typeof useAuth>['authedFetch'], title: string, data: WorkbookData, scope: 'personal' | 'organisational') {
-  const created = await sheetsApi.create(authedFetch, title, null, scope);
-  const doc = new Y.Doc();
-  const model = new SheetsModel(doc);
+  // Built here first, to measure it: the live channel takes one message of at
+  // most 8 MB, and a larger import would be cut off mid-way.
+  const scratch = new Y.Doc();
+  const model = new SheetsModel(scratch);
+  let content: Uint8Array;
   try {
     model.load(data, 'replace');
-    const snap = model.snapshot();
-    const locale = model.locale();
-    await sheetsApi.checkpointSheet(authedFetch, created.id, {
-      state: toBase64(Y.encodeStateAsUpdate(doc)), upToSeq: 0,
-      html: workbookHtml(snap, locale), text: workbookText(snap, locale).slice(0, 2_000_000),
-      xlsx: toBase64(await writeXlsx(snap)),
-    });
+    content = Y.encodeStateAsUpdate(scratch);
   } finally {
     model.destroy();
-    doc.destroy();
+    scratch.destroy();
+  }
+  if (content.length > MAX_LIVE_UPDATE_BYTES) {
+    throw new Error(`This file holds too much to import (${(content.length / 1048576).toFixed(1)} MB of spreadsheet data; the limit is 8 MB). Split it into smaller files and import each.`);
+  }
+
+  const created = await sheetsApi.create(authedFetch, title, null, scope);
+  const live = new DocsLiveProvider(created.id, () => sheetsApi.ticket(authedFetch, created.id), () => {});
+  try {
+    await until(() => (live.status === 'synced' && live.canEdit) || live.status === 'closed', 20_000,
+      'The new spreadsheet was created, but its content could not be added. Open it and import the file there.');
+    if (live.status === 'closed') throw new Error('The new spreadsheet was created, but its content could not be added. Open it and import the file there.');
+    Y.applyUpdate(live.doc, content);                      // sent as an edit, like typing
+    await until(() => !live.pending, 60_000,
+      'The new spreadsheet was created, but its content is still being sent. Open it and check before importing again.');
+    await sheetsApi.checkpointSheet(authedFetch, created.id, { upToSeq: live.lastSeq });
+  } finally {
+    live.destroy();
   }
   return created.id;
 }
