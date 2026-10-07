@@ -179,7 +179,7 @@ The record Amit asked for. A script is switched on in `CHECKED_SCRIPTS` (`apps/r
 - **Readings:** the container's own cgroup (`memory.peak`, `pids.peak`, `memory.events`), read from the host. The container is restarted before each case.
 - **Run:** cases 1–4 at 12:11–12:13Z. The laptop's WSL VM stopped during case 5 (the laptop was short of memory), so 5–8 were re-run at 13:29–13:31Z.
 
-| Photos | Request | Answer | Where it stopped | Time | Peak memory | Pids | Docs save after |
+| Photos | Request | Answer | Where it stopped | Time | Peak memory | Pids (startup peak, see 4) | Docs save after |
 |---|---|---|---|---|---|---|---|
 | 1 | 5.8 MB | **200**, PDF 4.4 MB | — | 2.4 s | 204 MB | 17 | 200 |
 | 2 | 11.7 MB | 413 `pictures_too_large` | Typst writing the PDF | 1.0 s | 272 MB | 17 | 200 |
@@ -190,13 +190,13 @@ The record Amit asked for. A script is switched on in `CHECKED_SCRIPTS` (`apps/r
 | 7 | 41.0 MB | 413 | writing the pictures | 0.9 s | 315 MB | 17 | 200 |
 | 8 | 46.9 MB | 413 | writing the pictures | 1.4 s | **384 MB** | 17 | 200 |
 
-Idle after a restart: 128–147 MB, 17 pids. No memory kill, no restart, in any case.
+Idle after a restart: 128–147 MB. No memory kill, no restart, in any case.
 
 **What it says:**
 1. **One phone photo is the most a PDF can hold today.** Typst puts a JPEG into the PDF unchanged, so the PDF is as big as its photos, and `/tmp` must hold both: about **2 × the photos**. Two photos (9.2 MB), plus a 9.2 MB PDF beside them, overflow 16 MB at Typst's write. From four photos, the photos alone overflow it. *One request can do it*, as the design feared, and it's far fewer photos than "a few dozen".
 2. **One request cannot exhaust memory.** The worst is 384 MB of 512, at a body just under the 48 MB limit, and anything larger is refused (413 "too large") before it's read. Memory grows with the body (it is parsed and decoded in memory) and while Typst runs (343 MB at 3 photos).
 3. **Two requests at once could exhaust memory.** Two near-limit requests are each about 240 MB above idle. Together with the idle ~140 MB, that's roughly 620 MB against 512. **That makes case 2 (concurrent PDFs) the exposure to measure next**, because a memory kill takes Techvein's Docs saves down with it.
-4. **The process count never moved** (17), so one request doesn't stress `pids_limit`. The process-cap hypothesis (case 1) needs concurrent Typst runs to test at all.
+4. **The process column shows nothing about Typst. Corrected the same day.** `pids.peak` keeps the highest count since the container started, and starting up already reaches 17. So a Typst run that briefly added processes, but stayed under 17, can't show in it. **One request's effect on `pids_limit` was not measured.** The next harness samples `pids.current` every 10 ms and is calibrated first against processes started on purpose. Memory is unaffected by this: its after-restart baseline (128–147 MB) is below every case's peak, so `memory.peak` did reset per case.
 5. **PR 401's refusal works in every case.** The person was told to remove some pictures, and the stage in the log (`typst` for 2–3, `write` for 4–8) matches where `/tmp` filled.
 
 **Instrument limit:** the `/tmp` high-water reading (`du` every 50 ms) misses events shorter than about a second: it read 0 for several cases that certainly filled `/tmp`. The log's `stage=` and bytes are the authority, and the harness keeps the column only as a lower bound.
