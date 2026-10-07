@@ -516,6 +516,11 @@ async function main() {
   ];
   for (const [label, answer] of failures) {
     const before = String((await A(`/space/files/${id}/content`)).body);
+    // "Unchanged" below is only worth something if `before` is a real save:
+    // an empty or wrong file would compare equal to itself and pass for
+    // nothing (Mr. Singh, 7 Oct 2026, on 391's calibration).
+    check(`${label}: the file it is compared against is a real save (it holds the earlier typing)`,
+      before.includes('TYPED WHILE DOWN'), `length ${before.length}`);
     const acks = a1.acks.length;
     appendParagraph(a1.doc, `TYPED BEFORE: ${label}`);
     await waitFor(() => a1.acks.length > acks);
