@@ -36,3 +36,8 @@ packages:
   #  Bring it back into the workspace the day it needs to share code with the
   #  web apps — and expect to solve the path length another way that day.
   - "!apps/mobile"
+
+  # apps/school (the TatvaOS School app) is excluded for the same reason as
+  # apps/mobile above: it builds native Android code, so it needs the flat
+  # node_modules in its own .npmrc and keeps its own pnpm-lock.yaml.
+  - "!apps/school"
