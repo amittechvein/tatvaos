@@ -171,6 +171,42 @@ The record Amit asked for. A script is switched on in `CHECKED_SCRIPTS` (`apps/r
 3. **A Docs save sent during 2:** its time to answer and its result.
 4. **Both workers busy with the longest jobs** (a 20,000-cell sheet, a PDF render), then a Docs save, at `RENDER_WORKERS` 2, 3 and 4.
 
+### Case 0, measured 7 Oct 2026
+
+**Set-up:**
+- `tests/docs-render/measure-pdf.sh`, on main `f84c532`, in the hardened container (production's compose: 512 MB, 1 CPU, 64 pids, `/tmp` 16 MB), on the laptop's WSL engine.
+- **Pictures:** phone-photo-sized JPEGs, 4000×3000 at 4.4–4.6 MB each. Docs stores pictures up to 5 MB with no pixel limit (`DocsEndpoints.MaxImageBytes`), so this is the realistic case, not the extreme one.
+- **Readings:** the container's own cgroup (`memory.peak`, `pids.peak`, `memory.events`), read from the host. The container is restarted before each case.
+- **Run:** cases 1–4 at 12:11–12:13Z. The laptop's WSL VM stopped during case 5 (the laptop was short of memory), so 5–8 were re-run at 13:29–13:31Z.
+
+| Photos | Request | Answer | Where it stopped | Time | Peak memory | Pids | Docs save after |
+|---|---|---|---|---|---|---|---|
+| 1 | 5.8 MB | **200**, PDF 4.4 MB | — | 2.4 s | 204 MB | 17 | 200 |
+| 2 | 11.7 MB | 413 `pictures_too_large` | Typst writing the PDF | 1.0 s | 272 MB | 17 | 200 |
+| 3 | 17.6 MB | 413 | Typst writing the PDF | 1.6 s | 343 MB | 17 | 200 |
+| 4 | 23.4 MB | 413 | writing the pictures | 0.7 s | 261 MB | 17 | 200 |
+| 5 | 29.3 MB | 413 | writing the pictures | 1.0 s | 261 MB | 17 | 200 |
+| 6 | 35.2 MB | 413 | writing the pictures | 1.2 s | 288 MB | 17 | 200 |
+| 7 | 41.0 MB | 413 | writing the pictures | 0.9 s | 315 MB | 17 | 200 |
+| 8 | 46.9 MB | 413 | writing the pictures | 1.4 s | **384 MB** | 17 | 200 |
+
+Idle after a restart: 128–147 MB, 17 pids. No memory kill, no restart, in any case.
+
+**What it says:**
+1. **One phone photo is the most a PDF can hold today.** Typst puts a JPEG into the PDF unchanged, so the PDF is as big as its photos, and `/tmp` must hold both: about **2 × the photos**. Two photos (9.2 MB), plus a 9.2 MB PDF beside them, overflow 16 MB at Typst's write. From four photos, the photos alone overflow it. *One request can do it*, as the design feared, and it's far fewer photos than "a few dozen".
+2. **One request cannot exhaust memory.** The worst is 384 MB of 512, at a body just under the 48 MB limit, and anything larger is refused (413 "too large") before it's read. Memory grows with the body (it is parsed and decoded in memory) and while Typst runs (343 MB at 3 photos).
+3. **Two requests at once could exhaust memory.** Two near-limit requests are each about 240 MB above idle. Together with the idle ~140 MB, that's roughly 620 MB against 512. **That makes case 2 (concurrent PDFs) the exposure to measure next**, because a memory kill takes Techvein's Docs saves down with it.
+4. **The process count never moved** (17), so one request doesn't stress `pids_limit`. The process-cap hypothesis (case 1) needs concurrent Typst runs to test at all.
+5. **PR 401's refusal works in every case.** The person was told to remove some pictures, and the stage in the log (`typst` for 2–3, `write` for 4–8) matches where `/tmp` filled.
+
+**Instrument limit:** the `/tmp` high-water reading (`du` every 50 ms) misses events shorter than about a second: it read 0 for several cases that certainly filled `/tmp`. The log's `stage=` and bytes are the authority, and the harness keeps the column only as a lower bound.
+
+**For the limits decision (Mr. Singh; Amit where it costs):**
+- **To fit N photos of up to 5 MB, `/tmp` needs about 2 × N × 5 MB.** Ten photos means a 100 MB tmpfs, which counts against the 512 MB of memory and so means more memory.
+- **The other direction: shrink pictures before they go into the PDF** (for example, 1,600 px on the long side, re-encoded). That's roughly 300 KB a photo instead of 4.5 MB (**an estimate, not measured here**): small PDFs, small `/tmp` use, small memory.
+- **It also matters for the PDF's purpose, which is email.** At phone-photo sizes, a 6-photo PDF would be about 27 MB, past Gmail's 25 MB attachment limit, whatever the container allows.
+- The measurements recommend shrinking. The ruling is Mr. Singh's.
+
 **Then fix the inconsistency, not just measure it:**
 - **The limits.** Bring the PDF route's body limit under what `/tmp` holds, give `/tmp` room for the body limit, or cap pictures by **total size** instead of count. Mr. Singh prefers a total-size cap plus a smaller PDF-route body limit; the measured sizes decide.
 - **What limits concurrent Typst processes**, and what a request gets at that limit: a clear "busy, try again", never a dead container. Mr. Singh's instinct is a small semaphore and a queue in `buildPdf`. Measure before building it.
