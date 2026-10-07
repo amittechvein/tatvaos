@@ -171,6 +171,74 @@ The record Amit asked for. A script is switched on in `CHECKED_SCRIPTS` (`apps/r
 3. **A Docs save sent during 2:** its time to answer and its result.
 4. **Both workers busy with the longest jobs** (a 20,000-cell sheet, a PDF render), then a Docs save, at `RENDER_WORKERS` 2, 3 and 4.
 
+### Case 0, measured 7 Oct 2026
+
+**Set-up:**
+- `tests/docs-render/measure-pdf.sh`, on main `f84c532`, in the hardened container (production's compose: 512 MB, 1 CPU, 64 pids, `/tmp` 16 MB), on the laptop's WSL engine.
+- **Pictures:** phone-photo-sized JPEGs, 4000×3000 at 4.4–4.6 MB each. Docs stores pictures up to 5 MB with no pixel limit (`DocsEndpoints.MaxImageBytes`), so this is the realistic case, not the extreme one.
+- **Readings:** the container's own cgroup (`memory.peak`, `pids.peak`, `memory.events`), read from the host. The container is restarted before each case.
+- **Run:** cases 1–4 at 12:11–12:13Z. The laptop's WSL VM stopped during case 5 (the laptop was short of memory), so 5–8 were re-run at 13:29–13:31Z.
+
+| Photos | Request | Answer | Where it stopped | Time | Peak memory | Pids (startup peak, see 4) | Docs save after |
+|---|---|---|---|---|---|---|---|
+| 1 | 5.8 MB | **200**, PDF 4.4 MB | — | 2.4 s | 204 MB | 17 | 200 |
+| 2 | 11.7 MB | 413 `pictures_too_large` | Typst writing the PDF | 1.0 s | 272 MB | 17 | 200 |
+| 3 | 17.6 MB | 413 | Typst writing the PDF | 1.6 s | 343 MB | 17 | 200 |
+| 4 | 23.4 MB | 413 | writing the pictures | 0.7 s | 261 MB | 17 | 200 |
+| 5 | 29.3 MB | 413 | writing the pictures | 1.0 s | 261 MB | 17 | 200 |
+| 6 | 35.2 MB | 413 | writing the pictures | 1.2 s | 288 MB | 17 | 200 |
+| 7 | 41.0 MB | 413 | writing the pictures | 0.9 s | 315 MB | 17 | 200 |
+| 8 | 46.9 MB | 413 | writing the pictures | 1.4 s | **384 MB** | 17 | 200 |
+
+Idle after a restart: 128–147 MB. No memory kill, no restart, in any case.
+
+**What it says:**
+1. **One phone photo is the most a PDF can hold today.** Typst puts a JPEG into the PDF unchanged, so the PDF is as big as its photos, and `/tmp` must hold both: about **2 × the photos**. Two photos (9.2 MB), plus a 9.2 MB PDF beside them, overflow 16 MB at Typst's write. From four photos, the photos alone overflow it. *One request can do it*, as the design feared, and it's far fewer photos than "a few dozen".
+2. **One request cannot exhaust memory.** The worst is 384 MB of 512, at a body just under the 48 MB limit, and anything larger is refused (413 "too large") before it's read. Memory grows with the body (it is parsed and decoded in memory) and while Typst runs (343 MB at 3 photos).
+3. **Two requests at once could exhaust memory.** Two near-limit requests are each about 240 MB above idle. Together with the idle ~140 MB, that's roughly 620 MB against 512. **That makes case 2 (concurrent PDFs) the exposure to measure next**, because a memory kill takes Techvein's Docs saves down with it.
+4. **The process column shows nothing about Typst. Corrected the same day.** `pids.peak` keeps the highest count since the container started, and starting up already reaches 17. So a Typst run that briefly added processes, but stayed under 17, can't show in it. **One request's effect on `pids_limit` was not measured.** The next harness samples `pids.current` every 10 ms and is calibrated first against processes started on purpose. Memory is unaffected by this: its after-restart baseline (128–147 MB) is below every case's peak, so `memory.peak` did reset per case.
+5. **PR 401's refusal works in every case.** The person was told to remove some pictures, and the stage in the log (`typst` for 2–3, `write` for 4–8) matches where `/tmp` filled.
+
+**Instrument limit:** the `/tmp` high-water reading (`du` every 50 ms) misses events shorter than about a second: it read 0 for several cases that certainly filled `/tmp`. The log's `stage=` and bytes are the authority, and the harness keeps the column only as a lower bound.
+
+**For the limits decision (Mr. Singh; Amit where it costs):**
+- **To fit N photos of up to 5 MB, `/tmp` needs about 2 × N × 5 MB.** Ten photos means a 100 MB tmpfs, which counts against the 512 MB of memory and so means more memory.
+- **The other direction: shrink pictures before they go into the PDF** (for example, 1,600 px on the long side, re-encoded). That's roughly 300 KB a photo instead of 4.5 MB (**an estimate, not measured here**): small PDFs, small `/tmp` use, small memory.
+- **It also matters for the PDF's purpose, which is email.** At phone-photo sizes, a 6-photo PDF would be about 27 MB, past Gmail's 25 MB attachment limit, whatever the container allows.
+- The measurements recommend shrinking. The ruling is Mr. Singh's.
+
+### Cases 2 and 3, measured 7 Oct 2026: several PDFs at once, and a Docs save among them
+
+**Set-up:**
+- `measure-pdf.sh <photos> concurrent`, on the same container, photos and main as case 0. Run at 15:43–15:50Z.
+- **Process counting:** `pids.current` and `memory.current` sampled every 10 ms from the host. The sampler was **calibrated first**: at rest **9**, with 8 processes started on purpose **18**, as expected.
+- **Each case:** one warm-up PDF, then *k* identical requests at the same moment, and a Docs save sent 300 ms in.
+
+| Requests at once | PDFs built | Refused / failed | Peak memory | Peak pids | Save during | Service |
+|---|---|---|---|---|---|---|
+| 2 × 1-photo | 2 | — | 462 MB | 17 | 200, 0.47 s | survived |
+| 5 × 1-photo | 2 | 3 × `pictures_too_large` | 371 MB | 19 | 200, 0.73 s | survived |
+| 10 × 1-photo | 1 | 9 × `pictures_too_large` | 479 MB | 19 | 200, 1.17 s | survived |
+| 2 × 8-photo (46.9 MB each) | — | 2 × `pictures_too_large` | **512 MB** (at the ceiling) | 13 | 200, 0.08 s | survived |
+| 5 × 8-photo | — | **5 × connection lost** | — | — | 200, 0.40 s (sent before the crash) | **crashed, restarted** |
+| 10 × 8-photo | — | **10 × connection lost** (slowest 10 s) | — | — | 200, 1.07 s (before the crash) | **crashed, restarted** |
+
+In every case where the service survived, its thread count at rest was the same before and after (13 → 13), with no `worker error` line. After each case, a further save answered 200.
+
+**What it says:**
+1. **Several large PDF requests at once crash the whole render service, Docs saves included.** The cause, from the container's own log: `FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory`, at **about 256 MB of JavaScript heap** (`Mark-Compact 251.4 (256.1) MB`). That's Node's own ceiling, half the container's 512 MB, not a kernel memory kill (`dmesg` has none). Five 47 MB bodies, held as text and decoded at once, are enough. The server process aborts, every render in flight fails with it, and the service is down until the restart. **The design's exposure 1 happens, through Node's heap rather than the container's memory.**
+2. **A save sent *while* it's down was not measured.** Each case's save went at +300 ms and finished before the crash. One sent during the restart would fail; the API answers `503 render_failed` and the person's typing is kept, as `docs-live.test.mjs` proves for a stopped render service.
+3. **The process cap is not the constraint.** Even 10 PDFs built at once peaked at **19 of 64**, so Typst adds very few. The process-cap hypothesis (case 1, a pool that shrinks for good) **can't be reached this way**, and no worker was lost in any case that didn't crash. *Case 1 is moot unless something else uses processes.*
+4. **#401's refusal gives the wrong advice when PDFs are made at the same time.** With 5 or 10 one-photo PDFs at once, the shared 16 MB `/tmp` fills with the *other* jobs' files. The single-photo documents are then told *"too many pictures… remove some"*, when the honest answer is "busy, try again". 401 decides on "did this job have pictures", which is not the same as "did this job's pictures not fit". **A fix is owed: compare the job's own bytes with what `/tmp` can hold.** That needs a second sentence for "busy", which is Mr. Singh's.
+5. **Memory sits near the ceiling at only 2 PDFs** (462 MB, and 512 MB with two large bodies), so there's no room for anything else in that container while PDFs run.
+
+**What this means for switch-on.** PDF by email must not be switched on until:
+- **(a) a limit on PDFs in progress, checked BEFORE the body is read.** One or two at a time; the rest get "busy, try again" (Mr. Singh's semaphore, now measured as needed);
+- **(b) a PDF-route body limit well under the heap.** Better still, pictures shrunk before they're sent: case 0's recommendation, which also fixes (c);
+- **(c) #401's sentence chosen by whose bytes filled `/tmp`.**
+
+**Today nothing calls `/render/pdf`, so production's Docs saves are not exposed** until someone wires PDF by email.
+
 **Then fix the inconsistency, not just measure it:**
 - **The limits.** Bring the PDF route's body limit under what `/tmp` holds, give `/tmp` room for the body limit, or cap pictures by **total size** instead of count. Mr. Singh prefers a total-size cap plus a smaller PDF-route body limit; the measured sizes decide.
 - **What limits concurrent Typst processes**, and what a request gets at that limit: a clear "busy, try again", never a dead container. Mr. Singh's instinct is a small semaphore and a queue in `buildPdf`. Measure before building it.
