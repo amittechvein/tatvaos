@@ -26,7 +26,11 @@ import { useHireAccess } from '../HireAccess';
 // ============================================================================
 
 interface Pending { days: number; effectiveAt: string; requestedBy: string | null; requestedAt: string }
-interface Settings { retentionDays: number; minDays: number; maxDays: number; pending: Pending | null }
+// sweepOn: whether the sweep deletes anyone at all (platform setting
+// hire.retention_sweep_enabled; Mr. Singh, 2 Oct 2026: off until a lawyer has
+// confirmed the periods). While it is off, nothing on this page may say
+// TatvaOS deletes anyone, or name a date on which it will.
+interface Settings { retentionDays: number; minDays: number; maxDays: number; sweepOn: boolean; pending: Pending | null }
 interface Confirm { days: number; deletes: number; effectiveAt: string }
 
 const fmt = (iso: string) =>
@@ -117,9 +121,17 @@ export default function HireSettingsPage() {
         </Alert>
       )}
 
+      {!s.sweepOn && (
+        <Alert tone="warn" title="Automatic deletion is not switched on yet">
+          Until it is, TatvaOS deletes nobody automatically: candidates are kept until you erase them
+          from their page under Candidates. The period you set here is kept, and applies from the day
+          automatic deletion is switched on.
+        </Alert>
+      )}
+
       <Card title="Keeping candidates' data" className="mb-5">
         <p className="mb-3 text-[0.8125rem] text-ink-muted">
-          When every application of a candidate has been rejected or withdrawn, TatvaOS deletes the
+          {s.sweepOn ? '' : 'Once automatic deletion is switched on: '}When every application of a candidate has been rejected or withdrawn, TatvaOS deletes the
           candidate — their details, applications and history — automatically once this period has
           passed since the last decision. Someone added but never put forward for a job is deleted
           once nobody has edited their profile for the same period; looking at it does not count.
@@ -162,13 +174,15 @@ export default function HireSettingsPage() {
               <Button variant="ghost" onClick={() => setConfirm(null)} disabled={busy}>Keep {s.retentionDays} days</Button>
               <Button variant={confirm.deletes > 0 ? 'danger' : 'primary'} disabled={busy}
                       onClick={() => void put(confirm.days, confirm.deletes)}>
-                {confirm.deletes > 0 ? `Delete ${confirm.deletes} on ${fmt(confirm.effectiveAt)}` : 'Shorten'}
+                {confirm.deletes > 0 && s.sweepOn ? `Delete ${confirm.deletes} on ${fmt(confirm.effectiveAt)}` : 'Shorten'}
               </Button>
             </>
           }
         >
           <p className="text-[0.8125rem] text-ink-muted">
-            {confirm.deletes > 0
+            {confirm.deletes > 0 && !s.sweepOn
+              ? `Shortening to ${confirm.days} days means ${confirm.deletes} candidate${confirm.deletes === 1 ? '' : 's'} who would otherwise be kept longer will be deleted for good, with their applications and history, once automatic deletion is switched on — and not before ${fmt(confirm.effectiveAt)}.`
+              : confirm.deletes > 0
               ? `Shortening to ${confirm.days} days means ${confirm.deletes} candidate${confirm.deletes === 1 ? '' : 's'} who would otherwise be kept longer will be deleted for good on ${fmt(confirm.effectiveAt)}, with their applications and history.`
               : `Nobody who would otherwise be kept will be deleted when this starts on ${fmt(confirm.effectiveAt)}.`}
           </p>

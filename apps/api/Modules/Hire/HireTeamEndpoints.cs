@@ -64,6 +64,12 @@ public static class HireTeamEndpoints
             minDays = HireAccess.MinRetentionDays,
             maxDays = HireAccess.MaxRetentionDays,
             s.UpdatedAt,
+            // Whether the sweep deletes anyone at all. The page must not say
+            // "TatvaOS deletes ..." while it is off (Mr. Singh, 2 Oct 2026).
+            sweepOn = string.Equals(
+                await db.PlatformSettings.AsNoTracking().Where(x => x.Key == "hire.retention_sweep_enabled")
+                    .Select(x => x.Value).FirstOrDefaultAsync(ct),
+                "true", StringComparison.Ordinal),
             pending = s.PendingRetentionDays is int d
                 ? new { days = d, effectiveAt = s.PendingEffectiveAt, requestedBy = by, requestedAt = s.PendingRequestedAt }
                 : null,

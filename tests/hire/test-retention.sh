@@ -165,6 +165,41 @@ same "C really has an active application" "$(PG "SELECT count(*) FROM hire.appli
 same "F really has no application" "$(PG "SELECT count(*) FROM hire.applications WHERE candidate_id='$F'")" "0"
 FLOOR=$(PG "SELECT coalesce(max(id),0) FROM core.audit_logs")
 
+printf '\n>> 0c. Switched off, the sweep deletes nobody\n'
+# Mr. Singh, 2 Oct 2026: #271 merges, but the sweep stays OFF until a lawyer
+# has confirmed the periods - platform setting hire.retention_sweep_enabled,
+# installed 'false'. Off, the sweep must answer NULL ("did not run", which
+# the worker logs as OFF) and erase nobody, although five of these fixtures
+# are due. Anything but the exact text 'true' is off: 'TRUE' is tried too.
+# The setting is put back as found on exit, whatever happens.
+ORIG_SW=$(PG "SELECT coalesce((SELECT value FROM core.platform_settings WHERE key='hire.retention_sweep_enabled'),'(missing)')")
+[ "$ORIG_SW" = "false" ] || [ "$ORIG_SW" = "true" ] \
+    && pass "the switch is installed (reads '$ORIG_SW')" \
+    || fail "the switch reads '$ORIG_SW' - the migration should have installed it as 'false'"
+restore_switch() {
+    case "$ORIG_SW" in
+        true|false) PG "UPDATE core.platform_settings SET value='$ORIG_SW' WHERE key='hire.retention_sweep_enabled'" >/dev/null ;;
+    esac
+}
+trap 'restore_switch; [ -n "$WSL_KEEPALIVE" ] && kill "$WSL_KEEPALIVE" >/dev/null 2>&1' EXIT
+ours="'$A','$B','$B2','$C','$D','$E','$F','$G','$G2','$H','$I'"
+for off in false TRUE; do
+    PG "UPDATE core.platform_settings SET value='$off' WHERE key='hire.retention_sweep_enabled'" >/dev/null
+    same "with the switch at '$off', the sweep answers NULL (did not run)" \
+        "$(PGAPP "SELECT (hire.sweep_expired_candidates() IS NULL)::text")" "true"
+    same "and all eleven fixtures are still there, the five due ones included" \
+        "$(PG "SELECT count(*) FROM hire.candidates WHERE id IN ($ours)")" "11"
+done
+same "no erasure was logged while it was off" \
+    "$(PG "SELECT count(*) FROM core.audit_logs WHERE id > $FLOOR AND action='candidate.retention_erased'")" "0"
+# Applying a period an administrator chose seven days ago deletes nobody, so
+# it runs while the sweep is off - otherwise the Settings page's dates lie.
+same "ABC School's due shortening was applied all the same" \
+    "$(PG "SELECT retention_days||'/'||coalesce(pending_retention_days::text,'none') FROM hire.settings WHERE tenant_id='$S'")" "30/none"
+PG "UPDATE core.platform_settings SET value='true' WHERE key='hire.retention_sweep_enabled'" >/dev/null
+same "switched on for the rest of this test" \
+    "$(PG "SELECT value FROM core.platform_settings WHERE key='hire.retention_sweep_enabled'")" "true"
+
 printf '\n>> 1. The sweep, as the app with no tenant\n'
 # stderr kept: when the sweep itself errors, the database's own message is
 # the only useful thing to print (the first run of this version printed '').
@@ -256,6 +291,10 @@ PG "DELETE FROM hire.pipeline_stages WHERE key = 'ret_stage'" >/dev/null
 same "fixtures removed" "$(PG "SELECT count(*) FROM hire.candidates WHERE full_name LIKE 'ret-$RUN-%'")" "0"
 same "nothing of this test left behind (stages, jobs, settings)" \
     "$(PG "SELECT (SELECT count(*) FROM hire.pipeline_stages WHERE key='ret_stage') + (SELECT count(*) FROM hire.job_openings WHERE title LIKE 'ret-$RUN-%') + (SELECT count(*) FROM hire.settings WHERE tenant_id IN ('$S','$T'))")" "0"
+
+restore_switch
+same "the switch is back as found ('$ORIG_SW')" \
+    "$(PG "SELECT value FROM core.platform_settings WHERE key='hire.retention_sweep_enabled'")" "$ORIG_SW"
 
 printf '\n  passed: %d   failed: %d\n\n' "$PASSED" "$FAILED"
 [ "$FAILED" -eq 0 ]

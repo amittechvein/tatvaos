@@ -157,6 +157,16 @@ $$;
 REVOKE ALL ON FUNCTION hire.due_candidates(timestamptz, integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION hire.due_candidates(timestamptz, integer) TO tatvaos_app;
 
+-- ---- the switch --------------------------------------------------------------
+-- Mr. Singh, 2 Oct 2026 (PR 267/271 ruling): this merges, but the sweep stays
+-- OFF until a lawyer has confirmed the six months and the thirty days. A
+-- platform setting, as 'hire.careers_portal_enabled' is: created 'false', and
+-- DO NOTHING on conflict so a deploy never quietly resets it either way.
+-- Anything but the exact text 'true' - missing, empty, 'TRUE ' - is OFF.
+INSERT INTO core.platform_settings (key, value)
+VALUES ('hire.retention_sweep_enabled', 'false')
+ON CONFLICT (key) DO NOTHING;
+
 -- ---- the sweep ----------------------------------------------------------------
 CREATE OR REPLACE FUNCTION hire.sweep_expired_candidates()
 RETURNS integer
@@ -192,6 +202,17 @@ BEGIN
                 jsonb_build_object('retentionDays', r.old_days),
                 jsonb_build_object('retentionDays', r.new_days, 'requestedAt', r.req_at));
     END LOOP;
+
+    -- Switched off (see above): delete NOBODY, and answer NULL, not 0. Zero
+    -- means "ran, nobody was due"; NULL means "did not run", and the worker
+    -- logs the two differently, so an off switch is never mistaken for a
+    -- sweep that is working. Step 1 above still runs: it only moves a
+    -- period an administrator chose, seven days on, and deletes nothing -
+    -- so the Settings page's dates stay true with the sweep off.
+    IF coalesce((SELECT value FROM core.platform_settings
+                  WHERE key = 'hire.retention_sweep_enabled'), '') <> 'true' THEN
+        RETURN NULL;
+    END IF;
 
     -- 2. Erase whoever is due, and log the EVENT per organisation: how many,
     --    under which period, set by whom and when. Never who was erased.

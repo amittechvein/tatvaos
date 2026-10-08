@@ -53,9 +53,15 @@ public sealed class HireRetentionWorker(IServiceScopeFactory scopes, ILogger<Hir
             await using var scope = scopes.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var erased = await db.Database
-                .SqlQuery<int>($"""SELECT hire.sweep_expired_candidates() AS "Value" """)
+                .SqlQuery<int?>($"""SELECT hire.sweep_expired_candidates() AS "Value" """)
                 .SingleAsync(ct);
-            log.LogInformation("Hire retention sweep: {Erased} candidate(s) past their retention period erased.", erased);
+            // NULL = switched off (platform setting hire.retention_sweep_enabled,
+            // Mr. Singh 2 Oct 2026: off until a lawyer confirms the periods).
+            // Said every tick, so the log never reads as a working sweep.
+            if (erased is null)
+                log.LogInformation("Hire retention sweep is OFF (platform setting hire.retention_sweep_enabled is not 'true'): nobody erased.");
+            else
+                log.LogInformation("Hire retention sweep: {Erased} candidate(s) past their retention period erased.", erased);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
