@@ -30,8 +30,21 @@ public static class SheetsSwitch
     /// production must never hold one. While false, the operator's switch
     /// refuses to turn Sheets on. The server build's own pull request sets it
     /// true, and nothing else should.
+    ///
+    /// TRUE FROM 8 OCT 2026. The server build (PRs 390, 391, 393) merged on
+    /// 7 Oct with this still false, on purpose: it was deployed first and
+    /// checked on production (round two, 13148ba, 8 Oct 17:30Z). In
+    /// production's own render container, POST /render/sheet built a real
+    /// .xlsx (200, PK, 139 ms), and a Docs save went through the API's shared
+    /// render path (DocsRenderClient.PostAsync, which Sheets' save also uses).
+    /// A real SPREADSHEET save on production is not yet seen: Sheets has never
+    /// been on there. It is the first check after switch-on, for the first
+    /// organisation. This is the switch-on pull request the design names
+    /// (docs/SHEETS_SERVER_RENDER_DESIGN.md §8). It makes switching Sheets ON
+    /// possible; it switches nobody on. That stays the operator's, per
+    /// organisation.
     /// </summary>
-    public const bool ServerRenderLanded = false;
+    public const bool ServerRenderLanded = true;
 
     public const string BeforeRenderMessage =
         "Sheets cannot be switched on yet. Spreadsheets must first be built on the server "

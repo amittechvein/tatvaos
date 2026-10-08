@@ -10,7 +10,7 @@ Today a spreadsheet's `.xlsx`, its HTML (version history) and its text
 XlsxGuard and stores it (`DocsEndpoints.SheetCheckpointAsync`). That is the
 browser-trusting path decision 0011 condition 1 ended for Docs.
 
-- **Amit, 30 Sept:** Sheets refuses switch-on until its own server-built `.xlsx` exists. This is enforced by `SheetsSwitch.ServerRenderLanded = false` (live, 409 `sheets_before_render`).
+- **Amit, 30 Sept:** Sheets refuses switch-on until its own server-built `.xlsx` exists. This was enforced by `SheetsSwitch.ServerRenderLanded = false` (409 `sheets_before_render`) until the switch-on PR, opened 8 Oct after round two deployed (13148ba) and `/render/sheet` was checked in production's render container.
 - **Mr. Singh:** the same rules as Docs, plus XlsxGuard on the server's own `.xlsx`.
 
 ## 2. What the server does: what the browser does today, from what the server stored
@@ -43,7 +43,7 @@ Nothing from the browser is used: not its state, not its `.xlsx`, not its HTML o
 | **API** | `SheetCheckpointAsync` and `SheetVersionAsync` take Docs' shape exactly: snapshot under the room lock, build outside it, write only if built from a later point than the stored file (`RenderedSeq`; an older build never overwrites a newer file). A failed build returns `503 render_failed`, which the editor shows and retries. |
 | **XlsxGuard** | Runs on the **server's own** `.xlsx` before it is stored, as Mr. Singh ruled. Our writer never produces what it refuses, so a refusal means a writer bug: logged by reason and refused, never stored. |
 | **Browser** | `checkpointSheet` sends `{upToSeq}` only; versions send `{kind, name}`. The fields the browser used to send are accepted and ignored until a dated removal, as with Docs. |
-| **Switch** | `SheetsSwitch.ServerRenderLanded` turns true in its own one-line PR, after the deploy and three production checks, as with Docs. The browser-written-files guard applies to spreadsheets too. Production should hold none, because Sheets has never been switchable on; one read-only count confirms it. |
+| **Switch** | `SheetsSwitch.ServerRenderLanded` turns true in its own one-line PR, after the deploy and three production checks, as with Docs. The browser-written-files guard applies to spreadsheets too. Production should hold none, because Sheets has never been switchable on; one read-only count confirms it: `docs.browser_written_count(<organisation>)` = 0, run for each organisation just before its Sheets switch goes on (the Sheets switch has no guard of its own). |
 
 ## 4. One product decision: the time zone of TODAY() and NOW()
 
