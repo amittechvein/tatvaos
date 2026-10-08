@@ -14,6 +14,13 @@ export const PLATFORM = Platform.OS === "ios" ? "ios" : "android";
 
 const TIMEOUT_MS = 20000;
 
+// Development only: EXPO_PUBLIC_DEV_API (e.g. http://localhost:5055) sends every call to a
+// backend running on the developer's PC, which picks the school from the X-Tenant-Slug header
+// (its development mode) instead of the address. Store builds never have __DEV__, so they
+// always use the school's own https address.
+const DEV_API = __DEV__ ? process.env.EXPO_PUBLIC_DEV_API : undefined;
+export const usingDevApi = !!DEV_API;
+
 /** A refused or failed call. `code` is the backend's code (LOCKED, FEATURE_OFF, …) when it sent one. */
 export class ApiError extends Error {
   status: number;
@@ -50,7 +57,7 @@ export async function call<T = any>(host: string, path: string, opts: Options = 
         .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
         .join("&")
     : "";
-  const url = `https://${host}${path}${qs ? `?${qs}` : ""}`;
+  const url = `${DEV_API ?? `https://${host}`}${path}${qs ? `?${qs}` : ""}`;
   const headers: Record<string, string> = {
     Accept: "application/json",
     "X-App-Version": APP_VERSION,
@@ -58,6 +65,7 @@ export async function call<T = any>(host: string, path: string, opts: Options = 
   };
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+  if (DEV_API && host !== DIRECTORY_HOST) headers["X-Tenant-Slug"] = host.split(".")[0];
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);

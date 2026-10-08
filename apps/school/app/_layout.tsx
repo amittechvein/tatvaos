@@ -7,7 +7,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AccountsProvider } from "@/core/accounts";
 import { I18nProvider } from "@/core/i18n";
-import { ApiError } from "@/core/api";
+import { ApiError, usingDevApi } from "@/core/api";
+import { View } from "react-native";
+import { Text } from "@/ui/Text";
 import { useReduceMotion } from "@/ui/parts";
 import { colors } from "@/ui/theme";
 
@@ -48,6 +50,14 @@ export default function RootLayout() {
             >
               <Stack.Screen name="index" options={{ animation: "none" }} />
             </Stack>
+            {usingDevApi ? (
+              // development builds on the local test server say so on every screen
+              <View pointerEvents="none" style={{ position: "absolute", left: 8, bottom: 8, backgroundColor: "rgba(239,71,111,0.9)", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+                <Text size={10} weight={800} color="#FFFFFF">
+                  LOCAL TEST DATA
+                </Text>
+              </View>
+            ) : null}
           </QueryClientProvider>
         </AccountsProvider>
       </I18nProvider>
