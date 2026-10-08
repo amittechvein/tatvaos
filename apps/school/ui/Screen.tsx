@@ -3,11 +3,11 @@ import React from "react";
 import { View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Header, Loading, Notice } from "./parts";
+import { Header, Loading, Notice, OfflineBanner } from "./parts";
 import { colors } from "./theme";
 import { Text } from "./Text";
 
-export function Screen({ title, sub, right, tab, children }: { title: string; sub?: string; right?: React.ReactNode; tab?: boolean; children: React.ReactNode }) {
+export function Screen({ title, sub, right, tab, offlineAt, children }: { title: string; sub?: string; right?: React.ReactNode; tab?: boolean; offlineAt?: number; children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -15,6 +15,7 @@ export function Screen({ title, sub, right, tab, children }: { title: string; su
       <View style={{ backgroundColor: colors.white, paddingTop: insets.top }}>
         <Header title={title} sub={sub} right={right} noBack={tab} />
       </View>
+      <OfflineBanner at={offlineAt} />
       {children}
     </View>
   );

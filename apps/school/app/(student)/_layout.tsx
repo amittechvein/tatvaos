@@ -82,7 +82,7 @@ export default function StudentLayout() {
   if (!active) return <Redirect href="/" />;
   if (active.role !== "STUDENT") return <Redirect href="/staff" />;
   if (boot.isPending) return <Loading />;
-  if (boot.error) {
+  if (boot.error && !boot.data) {
     const e = boot.error as ApiError;
     if (e.code === "APP_NOT_ENABLED") return <Stop body={t("notEnabled", { school: active.school.name })} signOut onRetry={() => boot.refetch()} />;
     if (e.code === "PASSWORD_CHANGE_REQUIRED") return <ForcedChange />;

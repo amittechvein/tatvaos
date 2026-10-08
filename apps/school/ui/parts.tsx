@@ -164,3 +164,17 @@ export function Loading() {
     </View>
   );
 }
+
+/** "Offline. Showing the copy from 10:42 am." on a screen answered from its offline copy. */
+export function OfflineBanner({ at }: { at?: number }) {
+  const { t } = useT();
+  if (!at) return null;
+  const d = new Date(at + 330 * 60000);
+  const hh = d.getUTCHours(), mm = String(d.getUTCMinutes()).padStart(2, "0");
+  const time = `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")} ${hh % 12 || 12}:${mm} ${hh < 12 ? "am" : "pm"}`;
+  return (
+    <View accessibilityLiveRegion="polite" style={{ backgroundColor: "#FFF6E0", paddingHorizontal: 16, paddingVertical: 8 }}>
+      <Text size={12} weight={700} color="#7A4D00">{t("offlineCopy", { time })}</Text>
+    </View>
+  );
+}

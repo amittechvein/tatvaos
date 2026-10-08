@@ -16,7 +16,7 @@ import { useDates, useT } from "@/core/i18n";
 import type { StringKey } from "@/core/strings";
 import { Icon } from "@/ui/Icon";
 import { Text } from "@/ui/Text";
-import { Button, Card, Header, Loading, Notice } from "@/ui/parts";
+import { Button, Card, Header, Loading, Notice, OfflineBanner } from "@/ui/parts";
 import { colors, size } from "@/ui/theme";
 
 const look = {
@@ -97,6 +97,7 @@ export default function Attendance() {
       <View style={{ backgroundColor: colors.white, paddingTop: insets.top }}>
         <Header title={t("attendanceTitle")} sub={sub} right={<Icon name="attendance" size={34} />} />
       </View>
+      <OfflineBanner at={att.offlineAt} />
       <ScrollView contentContainerStyle={{ padding: size.side, gap: 16, paddingBottom: insets.bottom + 100 }}>
         <Card style={{ flexDirection: "row", alignItems: "center", gap: 20, padding: 20 }}>
           <Ring parts={rows.map((r) => ({ value: r.n, color: r.color }))} label={pct} sub={months[m - 1]} />

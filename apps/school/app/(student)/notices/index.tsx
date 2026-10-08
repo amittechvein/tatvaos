@@ -26,7 +26,7 @@ export default function NoticesList() {
   const q = useMePages("notice-pages", api.noticesPage);
   const items = q.data?.pages.flatMap((p) => p.items) ?? [];
   return (
-    <Screen title={t("noticesTitle")} right={<Icon name="notices" size={34} />}>
+    <Screen offlineAt={q.offlineAt} title={t("noticesTitle")} right={<Icon name="notices" size={34} />}>
       <FlatList
         data={items}
         keyExtractor={(n) => String(n.id)}

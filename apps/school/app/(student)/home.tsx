@@ -17,6 +17,7 @@ import { Text } from "@/ui/Text";
 import { BottomNav } from "@/ui/BottomNav";
 import { ChildAvatar } from "@/ui/ChildAvatar";
 import { FingerprintOffer } from "@/ui/FingerprintOffer";
+import { OfflineBanner } from "@/ui/parts";
 import { cardShadow, colors, size } from "@/ui/theme";
 import type { StringKey } from "@/core/strings";
 
@@ -182,6 +183,7 @@ export default function Home() {
           </Summary>
         </View>
 
+        {boot.offlineAt ? <View style={{ marginTop: 12 }}><OfflineBanner at={boot.offlineAt} /></View> : null}
         {active ? <FingerprintOffer accountId={active.id} /> : null}
 
         <View style={{ paddingHorizontal: size.side, paddingTop: 24, paddingBottom: 12 }}>

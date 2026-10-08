@@ -16,7 +16,7 @@ import { ddmmyyyy, inr } from "@/core/format";
 import { useDates, useT } from "@/core/i18n";
 import { Icon } from "@/ui/Icon";
 import { Text } from "@/ui/Text";
-import { BackButton, Button, Loading, Notice } from "@/ui/parts";
+import { BackButton, Button, Loading, Notice, OfflineBanner } from "@/ui/parts";
 import { cardShadow, colors, size } from "@/ui/theme";
 
 export default function Fees() {
@@ -51,6 +51,11 @@ export default function Fees() {
             </Text>
           </View>
         </View>
+        {fees.offlineAt ? (
+          <View style={{ marginTop: 12, borderRadius: 12, overflow: "hidden" }}>
+            <OfflineBanner at={fees.offlineAt} />
+          </View>
+        ) : null}
         <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginTop: 24 }}>
           <View style={{ flex: 1 }}>
             <Text size={13} weight={600} color={colors.whiteSoft}>

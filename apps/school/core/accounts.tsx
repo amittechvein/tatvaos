@@ -14,6 +14,7 @@ import * as SecureStore from "expo-secure-store";
 import * as Device from "./device";
 import { api, School } from "./api";
 import { forget as forgetBiometric } from "./biometric";
+import { clear as clearOffline } from "./offline";
 
 export type Account = {
   id: string; // `${schoolCode}_${userId}`: also the secure-storage key suffix
@@ -137,6 +138,7 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
       if (acc && t) api.logout(acc.school.host, t).catch(() => {});
       await SecureStore.deleteItemAsync(tokenKey(target)).catch(() => {});
       await forgetBiometric(target);
+      await clearOffline(target);
       setTokens(({ [target]: _gone, ...rest }) => rest);
       const left = accounts.filter((a) => a.id !== target);
       await persist(left, target === activeId ? left[0]?.id ?? null : activeId);

@@ -29,7 +29,7 @@ export default function Timetable() {
   const periods = q.data?.is_school_open ? q.data.periods : [];
 
   return (
-    <Screen title={t("timetable")} sub={longToday(day)} right={<Icon name="timetable" size={32} />}>
+    <Screen offlineAt={q.offlineAt} title={t("timetable")} sub={longToday(day)} right={<Icon name="timetable" size={32} />}>
       <View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: size.side, paddingVertical: 12, gap: 8 }}>
           {week.map((d) => {

@@ -33,7 +33,7 @@ export default function Calendar() {
 
   return (
     <View style={{ flex: 1 }}>
-      <Screen tab title={t("calendarTitle")} right={<Icon name="navCalendar" size={26} color={colors.indigo} />}>
+      <Screen tab offlineAt={q.offlineAt} title={t("calendarTitle")} right={<Icon name="navCalendar" size={26} color={colors.indigo} />}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: size.side, paddingTop: 16 }}>
           <MonthButton label={t("prevMonth")} onPress={() => setMonth(shift(month, -1))} />
           <Text size={16} weight={800}>{months[m - 1]} {y}</Text>

@@ -35,7 +35,7 @@ export default function HomeworkList() {
   }, [q.data, today, yesterday, t, longToday]);
 
   return (
-    <Screen title={t("homeworkTitle")} right={<Icon name="homework" size={34} />}>
+    <Screen offlineAt={q.offlineAt} title={t("homeworkTitle")} right={<Icon name="homework" size={34} />}>
       <FlatList
         data={rows}
         keyExtractor={(r) => r.key}
