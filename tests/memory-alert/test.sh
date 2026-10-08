@@ -96,6 +96,11 @@ grep -q 'memory alert is BROKEN' "$T/mail.log" && ok "a reading that isn't a num
 reset; touch "$T/docker-broken"; run
 grep -q 'memory alert is BROKEN' "$T/mail.log" && ok "Docker not answering is a broken monitor, not 'no containers'" || bad "docker broken"
 
+echo "== the host label"
+reset; run; psi 12.00 0.00; MEMORY_ALERT_HOST="TatvaOS production (Mumbai)" bash "$SCRIPT" > "$T/out" 2>&1
+grep -q 'memory-alert.sh on TatvaOS production (Mumbai)' "$T/mail.log" && last_subject | grep -q 'on TatvaOS production (Mumbai)' \
+  && ok "MEMORY_ALERT_HOST names the box in the subject and the signature (its hostname is 'localhost')" || bad "host label" "$(last_subject)"
+
 echo "== rehearsal and dry run"
 reset; run; cp "$T/state" "$T/state.before"
 MEMORY_ALERT_FORCE=1 bash "$SCRIPT" > "$T/out" 2>&1

@@ -65,7 +65,10 @@ PSI="${MEMORY_ALERT_PSI:-/proc/pressure/memory}"
 MEMINFO="${MEMORY_ALERT_MEMINFO:-/proc/meminfo}"
 POSTFIX="${MEMORY_ALERT_POSTFIX:-tatvaos-postfix-1}"
 SOME_WARN=10; FULL_CRIT=5; AVAIL_WARN=15; AVAIL_CRIT=7
-HOST=$(hostname)
+# The server's own hostname is "localhost" (seen in the first dry run on
+# production, 8 Oct 2026), which tells the reader of an alert nothing. The
+# cron line sets a real label; disk-alert.sh has the same gap.
+HOST="${MEMORY_ALERT_HOST:-$(hostname)}"
 NOW() { date -u +%FT%TZ; }
 
 send() {  # $1 subject, $2 body — non-zero if Postfix did not take it
