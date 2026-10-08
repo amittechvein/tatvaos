@@ -5,6 +5,7 @@ import type { Address } from '@tatvaos/types';
 import { CATEGORY_COLOURS, type InboxLayout, type MailCategory } from '../../lib/mail';
 import { Avatar } from '../ui/Avatar';
 import { Icon } from '../ui/Icon';
+import { aiLabelName } from '../../lib/mailAi';
 
 /**
  * What a row in this list actually needs.
@@ -29,6 +30,8 @@ export interface MailListRow {
   hasAttachments: boolean;
   /** How many messages this row stands for. Absent or 1 = a single message. */
   count?: number;
+  /** TatvaOS AI's sorting label (Mail AI step 3). Absent when sorting is off. */
+  aiLabel?: string | null;
 }
 
 /**
@@ -253,6 +256,19 @@ export function MessageList({
                   ) : (
                   <span className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-ink-muted/80">
                     {m.hasAttachments && <Icon name="attach" className="h-3.5 w-3.5 shrink-0 text-ink-faint" />}
+                    {/* TatvaOS AI's label. Deliberately NOT a category chip:
+                        categories are made by people, this is a guess, and
+                        it wears the AI mark so nobody mistakes one for the
+                        other. */}
+                    {aiLabelName(m.aiLabel) && (
+                      <span
+                        className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-brand-400/50 px-1.5 py-px text-[10px] font-medium text-brand-700 dark:text-brand-300"
+                        title="Sorted by TatvaOS AI"
+                      >
+                        <Icon name="sparkle" className="h-2.5 w-2.5" />
+                        {aiLabelName(m.aiLabel)}
+                      </span>
+                    )}
                     {(() => {
                       /* categoryId rides on the API payload; the shared
                          Message type does not carry it yet - a shared-types

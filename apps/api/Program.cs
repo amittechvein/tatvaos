@@ -17,6 +17,8 @@ using TatvaOS.Api.Modules.Family.Endpoints;
 using TatvaOS.Api.Modules.Space.Endpoints;
 using TatvaOS.Api.Modules.Calendar.Endpoints;
 using TatvaOS.Api.Modules.Connect.Endpoints;
+using TatvaOS.Api.Modules.Personal;
+using TatvaOS.Api.Modules.Docs;
 using TatvaOS.Api.Workers;
 using TatvaOS.Api.Shared.Auth.Oidc;
 using TatvaOS.Api.Shared.Ai;
@@ -27,6 +29,11 @@ using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Development-only operator sign-in (Mr. Singh, 24 Sept 2026): refuse to boot
+// when its switch is on anywhere but Development. First, before anything else
+// is built. See Modules/Auth/Endpoints/DevOperatorGate.cs.
+DevOperatorGate.RefuseToStartOutsideDevelopment(builder.Environment, builder.Configuration);
 
 // ---------------------------------------------------------------------------
 //  `TatvaOS.Api --oidc-rotate` — the key-rotation runbook's one step. Runs in
@@ -87,17 +94,10 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
     {
-        o.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidAudience = builder.Configuration["Jwt:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-            ClockSkew = TimeSpan.FromSeconds(30),
-        };
+        // Defined once, in TokenIssuer, with the access-token TYPE check
+        // (typ at+jwt) that keeps other tokens signed with this key out.
+        o.TokenValidationParameters = TatvaOS.Api.Shared.Auth.TokenIssuer.ValidationParameters(
+            jwtKey, builder.Configuration["Jwt:Issuer"], builder.Configuration["Jwt:Audience"]);
     });
 
 builder.Services.AddAuthorizationBuilder()
@@ -117,6 +117,19 @@ builder.Services.AddScoped<StorageAllocator>();
 builder.Services.AddScoped<AuditWriter>();
 // What the signed-in person may do in Hire (admin / recruiter / hiring manager).
 builder.Services.AddScoped<TatvaOS.Api.Modules.Hire.HireAccess>();
+// Personal accounts (/join): the one "is this the personal house?" answer,
+// and the keyed phone fingerprint (Personal:PhoneHashKey; unset = /join closed).
+builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalHouse>();
+builder.Services.AddSingleton<TatvaOS.Api.Modules.Personal.PersonalPhone>();
+// The one "what may this person have?" answer (build plan §2.5).
+builder.Services.AddScoped<TatvaOS.Api.Shared.Plans.EffectiveSettings>();
+builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalAiService>();
+// A personal account's life after signup: deletion, inactivity, suspension (§8).
+builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalLifecycle>();
+builder.Services.AddSingleton<TatvaOS.Api.Modules.Personal.PersonalExportLink>();
+// Signup's prune, hourly: an abandoned signup's plain phone number lives a
+// day at most even while /join is shut and nobody starts one (PR 311).
+builder.Services.AddHostedService<TatvaOS.Api.Modules.Personal.PersonalSignupPruneWorker>();
 
 // ---- OpenID Connect provider (decision 0004) — stage 1: the stores -------
 // OpenIddict's core with EF Core storage on our own entities, and the two
@@ -360,7 +373,28 @@ builder.Services.AddHttpClient();
 // SCOPED since 27 Aug 2026: consent is per-organisation, so the gateway
 // reads the current tenant's allow_ai flag (fail-closed) — which needs the
 // scoped TenantContext and AppDbContext. Nothing else changed.
-builder.Services.AddScoped<IAiGateway, OpenAiGateway>();
+// IAiGateway resolves to the metering wrapper, and ONLY to it. The provider
+// gateway is deliberately NOT registered: MeteredAiGateway constructs its own
+// private copy, so no module can inject the provider by its concrete type and
+// walk past the meter (Mr. Singh on PR 280). tests/ai/gateway-not-bypassable.sh
+// fails if the provider class is named anywhere else.
+builder.Services.AddScoped<IAiGateway, MeteredAiGateway>();
+// Process memory only. First user: Mail's suggested replies, so reopening a
+// message does not send it to the AI provider again (MailAiEndpoints).
+builder.Services.AddMemoryCache();
+
+// Docs' live rooms. SINGLETON on purpose — the rooms ARE the shared state
+// every open editor of a document must find; it creates its own scopes for
+// database work (see DocsLiveHub's header, and its single-process note).
+builder.Services.AddSingleton<DocsLiveHub>();
+// Makes "exactly one API container" loud: only the lock holder serves live
+// editing (DocsInstanceGuard's header; decision 0008's deployment rule).
+builder.Services.AddSingleton<DocsInstanceGuard>();
+// Docs' file is built by the render service (apps/render), never taken from a
+// browser (decision 0011 condition 1). Its own 10 s limit, plus the network.
+builder.Services.AddHttpClient<TatvaOS.Api.Modules.Docs.DocsRenderClient>(c =>
+    c.Timeout = TatvaOS.Api.Modules.Docs.DocsRenderClient.Timeout + TimeSpan.FromSeconds(3));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DocsInstanceGuard>());
 
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to
@@ -380,7 +414,10 @@ builder.Services.AddSingleton<SignupVerifier>();
 // credential saved in the console takes effect on the next request with no
 // cache to invalidate and no restart.
 builder.Services.AddHttpClient();
+builder.Services.AddSingleton<SettingsCrypto>();
 builder.Services.AddScoped<SettingsReader>();
+builder.Services.AddScoped<TatvaOS.Api.Modules.Billing.InvoiceIssuer>();
+builder.Services.AddHttpClient<TatvaOS.Api.Modules.Billing.RazorpayClient>();
 builder.Services.AddScoped<SystemMailer>();
 builder.Services.AddScoped<ISmsSender, SmsSender>();
 
@@ -398,6 +435,10 @@ builder.Services.AddHostedService<StorageReconcileWorker>();
 // REPORTS (never deletes) blobs no row points at. SPACE_FAULT_MATRIX #1 and
 // #3 — both invisible failures on the filesystem Mail also writes to.
 builder.Services.AddHostedService<SpaceBlobSweepWorker>();
+
+// Domain claims unverified for thirty days are abandoned (Mr. Singh, 24 Sept
+// 2026). Daily, never touching a verified or superseded row.
+builder.Services.AddHostedService<DomainClaimSweepWorker>();
 
 // Answers Postfix's quota question at RCPT time — the last moment a refusal
 // still leaves the message with the sender. Starts in observe-only mode and
@@ -430,6 +471,14 @@ builder.Services.AddHostedService<VacationReplyWorker>();
 // Calendar reminders. Polls every minute and records every send, rather than
 // scheduling in-memory timers that a deploy would silently swallow.
 builder.Services.AddHostedService<CalendarReminderWorker>();
+// Decision 0009: ends the 48-hour hold on administrator-set recovery emails.
+// Crosses organisations through a SECURITY DEFINER function (the 0007 worker
+// rule); tests/recovery-admin/test-admin-recovery-email.sh runs it with a hold due.
+builder.Services.AddHostedService<RecoveryHoldWorker>();
+
+// TatvaOS AI sorts new inbox mail (Mail AI step 3). Does nothing unless an
+// organisation has switched sorting on; see the worker's header for its limits.
+builder.Services.AddHostedService<MailTriageWorker>();
 
 // iMIP: what Mail's ingest calls when a delivered message carries a calendar
 // reply (docs/MAIL_IMIP_SEAM.md §4). Scoped, because it runs inside the
@@ -453,6 +502,11 @@ builder.Services.AddScoped<TatvaOS.Api.Modules.Calendar.ICalendarImipSink,
 builder.Services.AddHostedService<ConnectNotesWorker>();
 // Hire: deletes candidates past their retention period (Amit, 24 Sept 2026).
 builder.Services.AddHostedService<TatvaOS.Api.Workers.HireRetentionWorker>();
+// Personal accounts (build plan §4.5, §5): a personal host's meeting ends at
+// their plan's time; the AI trial's day-12 reminder and end note.
+builder.Services.AddHostedService<PersonalMeetingLimitWorker>();
+builder.Services.AddHostedService<PersonalTrialWorker>();
+builder.Services.AddHostedService<PersonalLifecycleWorker>();
 
 // The public-link resolve is the one anonymous, internet-reachable route
 // on the platform. Per-IP fixed window. Behind Caddy the peer address is
@@ -628,6 +682,61 @@ builder.Services.AddRateLimiter(o =>
             });
     });
 
+    // The public careers pages (decision 0010 §5): 120 reads a minute per
+    // address, keyed on the rightmost X-Forwarded-For like every limiter here.
+    //
+    // ⚠ CDN WARNING (Mr. Singh, 24 Sept 2026). Rightmost XFF is the real client
+    // ONLY because Caddy is the one proxy in front. Put Cloudflare or any CDN
+    // in front of the careers pages — the natural next step for a public page
+    // — and the rightmost entry becomes the CDN's own address: every visitor
+    // on earth then shares one 120-a-minute bucket and the page is down for
+    // all of them. Whoever adds a CDN must reconfigure every limiter here IN
+    // THE SAME CHANGE (the CDN's client-IP header, trusted only from its
+    // published ranges). Also in docs/DEPLOY_RUNBOOK.md §4.
+    o.AddPolicy("careers-read", httpContext =>
+    {
+        var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
+        var client = string.IsNullOrEmpty(xff)
+            ? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : xff.Split(',')[^1].Trim();
+        return RateLimitPartition.GetFixedWindowLimiter($"careers:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 120,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
+    // /join (personal signup, build plan §3). Anonymous and internet-reachable
+    // like the others, same rightmost-XFF key and the same CDN warning above.
+    // "join": 30 a minute per address across the whole flow — a person makes
+    // a handful of calls. The SMS limits proper are in JoinEndpoints, counted
+    // in the database per number, per address and platform-wide.
+    // "join-address": the availability check answers "does this address
+    // exist", so it is held to 20 a minute to keep it from listing them —
+    // enough for a person typing (the page waits for a pause before asking).
+    o.AddPolicy("join", httpContext =>
+    {
+        var client = TatvaOS.Api.Shared.ClientIp.From(httpContext) ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter($"join:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
+    o.AddPolicy("join-address", httpContext =>
+    {
+        var client = TatvaOS.Api.Shared.ClientIp.From(httpContext) ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter($"join-address:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
     o.AddPolicy("space-public-links", httpContext =>
     {
         var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
@@ -638,6 +747,26 @@ builder.Services.AddRateLimiter(o =>
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
+
+    // Connect recording share LINKS (Connect lane, 26 Sept 2026). Tighter than
+    // the meeting door's 60: this is where a share password is guessed, and a
+    // share password may be as short as four characters. 20 a minute is still
+    // more than a person opening a link and renewing a playback ever needs.
+    // Rightmost X-Forwarded-For, like every limiter here.
+    o.AddPolicy("connect-shared-links", httpContext =>
+    {
+        var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
+        var client = string.IsNullOrEmpty(xff)
+            ? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : xff.Split(',')[^1].Trim();
+        return RateLimitPartition.GetFixedWindowLimiter($"connect-shared:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             });
@@ -683,6 +812,21 @@ using (var startupScope = app.Services.CreateScope())
             $"ASPNETCORE_ENVIRONMENT is '{app.Environment.EnvironmentName}'. That logging prints every " +
             "query parameter — hashed secrets and token hashes included — and is only ever meant for " +
             "Development. Fix the environment on this box, or the code that enabled it.");
+
+    // The key that fingerprints phone numbers decides whether one phone can
+    // get a second personal account and a second AI trial (Mr. Singh on
+    // PR 311: protect it like the backup passphrase). Missing outside
+    // Development = refuse to start, not run with /join quietly shut. It is
+    // generated once, lives in infra/docker/.env (so in every backup's
+    // env.txt), and must NEVER change: docs/runbooks/backup-and-restore.md,
+    // "Keys that must never change".
+    if (!app.Environment.IsDevelopment()
+        && !startupScope.ServiceProvider.GetRequiredService<TatvaOS.Api.Modules.Personal.PersonalPhone>().Configured)
+        throw new InvalidOperationException(
+            "Refusing to start: Personal:PhoneHashKey is missing or shorter than 32 characters, and " +
+            $"ASPNETCORE_ENVIRONMENT is '{app.Environment.EnvironmentName}'. Set PERSONAL_PHONE_HASH_KEY in " +
+            "infra/docker/.env to the key already in use — NEVER a new one if personal accounts exist: " +
+            "a changed key lets every phone sign up again.");
 }
 
 // ---------------------------------------------------------------------------
@@ -710,8 +854,8 @@ else
 //  above read that header themselves and take its LAST entry, which is the
 //  one Caddy appended; this middleware would consume that entry and leave any
 //  client-supplied ones in front of it for the limiters to trust. Audit rows
-//  keep recording Caddy's address as they do today; a real-client-IP change
-//  is its own decision, not a side effect of the provider.
+//  read the same last entry themselves (AuditWriter, through ClientIp) since
+//  29 Sept 2026; before that they recorded Caddy's address.
 //
 //  No known-proxy list, on purpose: the API publishes no port, so the only
 //  thing that can reach it is Caddy on the compose network, whose container
@@ -741,7 +885,16 @@ app.UseAuthentication();
 // BEFORE the endpoints — they hit the database and need the context set.
 app.UseMiddleware<TenantMiddleware>();
 app.UseAuthorization();
+// Strangers must not see each other (personal accounts, build plan §6): the
+// organisation-wide routes a personal-house account may never call. After
+// authorization, so an anonymous caller still gets 401, not this.
+app.UseMiddleware<PersonalGuard>();
 app.UseRateLimiter();
+
+// Docs' live channel (/api/docs/{id}/live) is the one WebSocket the API
+// serves. The keep-alive ping stops Caddy and home routers from reaping an
+// editor that is open but idle; the browser reconnects if it goes anyway.
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(25) });
 
 // Reads Auth:CookieDomain. Unset locally and on staging (one host serves
 // everything); ".tatvaos.com" in production, so a session started in Core is
@@ -749,13 +902,21 @@ app.UseRateLimiter();
 TatvaOS.Api.Modules.Auth.Endpoints.AuthEndpoints.ConfigureCookies(app.Configuration);
 
 app.MapAuthEndpoints();
+// Maps nothing unless Development AND DevOperatorSignIn__Enabled — see the file.
+app.MapDevOperatorSignIn();
 app.MapMfaEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
+app.MapRecoveryEmailAdminEndpoints();   // decision 0009
 app.MapOidcApplicationEndpoints();
 app.MapOidcEndpoints();
 app.MapDomainEndpoints();
 app.MapSignupEndpoints();
+app.MapJoinEndpoints();
+app.MapReservedUsernameEndpoints();
+app.MapRetiredAddressEndpoints();
+app.MapPersonalPlanEndpoints();
+app.MapPersonalLifecycleEndpoints();
 app.MapSettingsEndpoints();
 app.MapDepartmentEndpoints();
 // Locations and designations: Phase 0 of Hire & People (24 Sept 2026).
@@ -765,6 +926,8 @@ TatvaOS.Api.Modules.Hire.JobOpeningEndpoints.MapJobOpeningEndpoints(app);
 TatvaOS.Api.Modules.Hire.HireTeamEndpoints.MapHireTeamEndpoints(app);
 // Candidates, applications and the pipeline (24 Sept 2026).
 TatvaOS.Api.Modules.Hire.CandidateEndpoints.MapCandidateEndpoints(app);
+// The public careers page and its admin setup (decision 0010, switched off).
+TatvaOS.Api.Modules.Hire.CareersEndpoints.MapCareersEndpoints(app);
 app.MapStorageEndpoints();
 app.MapAuditEndpoints();
 // Shared mailboxes are PROVISIONING — the same act as creating a person, so
@@ -784,6 +947,14 @@ app.MapMyStorageEndpoints();
 // The organisation's AI consent switch — the screen for allow_ai, so "can we
 // turn it off ourselves" is answered by a toggle rather than a promise.
 app.MapOrgAiEndpoints();
+// The operator's read of an organisation's AI use (the limits are settings).
+app.MapOrgAiUsageEndpoints();
+// Offering Mail AI to one organisation, and resetting its own Mail AI with it.
+app.MapOrgMailAiOfferEndpoints();
+app.MapOrganisationDetailEndpoints();
+app.MapPlanFeatureEndpoints();
+TatvaOS.Api.Modules.Billing.BillingEndpoints.MapBillingEndpoints(app);
+TatvaOS.Api.Modules.Billing.PaymentEndpoints.MapPaymentEndpoints(app);
 // Calendar. Recurrence is expanded at read time, never stored — see
 // Modules/Calendar/Recurrence.cs.
 app.MapCalendarEndpoints();
@@ -791,11 +962,22 @@ app.MapMailEndpoints();
 // Mail categories - the colour system. A name and a colour somebody made for
 // themselves; filters apply them, nothing infers them (see the endpoint header).
 app.MapMailCategoryEndpoints();
+// TatvaOS AI in Mail — Help me write. Governed by allow_ai AND allow_mail_ai,
+// both enforced inside the AI gateway (AiProductSwitch).
+app.MapMailAiEndpoints();
 app.MapFamilyEndpoints();
 app.MapSpaceEndpoints();
 app.MapSpaceDriveEndpoints();
 app.MapSpaceLinkEndpoints();
 app.MapSpaceThumbnailEndpoints();
+// Docs: collaborative documents, each one a Space file.
+app.MapDocsEndpoints();
+app.MapDocsAdminEndpoints();
+// Sheets' own per-organisation switch, beside Docs' (SheetsSwitch.cs).
+app.MapSheetsAdminEndpoints();
+// Sheets: spreadsheets are Docs files too (DocsFormat.SpreadsheetMimeType);
+// only their AI actions need endpoints of their own.
+app.MapSheetsAiEndpoints();
 
 // Connect. Meetings live in this monolith; only the MEDIA is a separate
 // container. The guest group and the LiveKit webhook are anonymous and
@@ -839,6 +1021,8 @@ app.MapAiStatusEndpoints();
 //  the variables after the first start.
 // ---------------------------------------------------------------------------
 await BootstrapAdmin.EnsureAsync(app.Services, app.Logger);
+// Development-only test switch for the Mail AI offer button (ignored elsewhere, loudly).
+TatvaOS.Api.Shared.Ai.MailAiPrivacyText.ConfigureForTests(app.Environment, app.Configuration, app.Logger);
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }))
    .AllowAnonymous()
@@ -850,6 +1034,17 @@ app.MapGet("/health/db", async (AppDbContext db, CancellationToken ct) =>
     return canConnect ? Results.Ok(new { database = "ok" })
                       : Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
 }).AllowAnonymous().WithTags("Operations");
+
+// Fails the boot if PersonalGuard names a route that is not mapped: a rename
+// would otherwise leave its replacement open to every personal account.
+PersonalGuard.Verify(((IEndpointRouteBuilder)app).DataSources);
+
+// Every operator write route must carry its transaction (OperatorWriteTransaction).
+// Logged once the routes exist: a CRITICAL line names any that do not.
+app.Lifetime.ApplicationStarted.Register(() =>
+    TatvaOS.Api.Shared.Data.OperatorWriteTransaction.Report(
+        ((IEndpointRouteBuilder)app).DataSources,
+        app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("OperatorWriteTransaction")));
 
 app.Run();
 

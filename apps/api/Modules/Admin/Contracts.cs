@@ -46,7 +46,26 @@ public sealed record UpsertPlanRequest(
     int? MaxDomains,
     string[]? IncludedProducts,
     decimal? PricePerUserMonthly,
-    decimal? PriceMonthly);
+    decimal? PriceMonthly,
+    // AI credits (26 Sept 2026): the same per-user / pooled choice as storage.
+    // Optional so an older form that does not send them leaves them alone.
+    string? AiCreditModel = null,         // "per_user" | "pooled"
+    int? AiCreditsPerUser = null,
+    int? AiCreditsPooled = null,
+    // Yearly prices (billing, 26 Sept 2026). Null = 12 × monthly.
+    decimal? PricePerUserYearly = null,
+    decimal? PriceYearly = null,
+    // Plan features (26 Sept 2026). All three null = leave the features as
+    // they are. AllFeatures true = "everything in the included modules" (the
+    // column goes back to NULL); otherwise IncludedFeatures is the list.
+    // FeatureLimits replaces the plan's limits when sent; a missing code =
+    // no limit.
+    string[]? IncludedFeatures = null,
+    bool? AllFeatures = null,
+    Dictionary<string, long>? FeatureLimits = null,
+    // "organisation" (default) or "personal" (20260926-z-personal-plans.sql).
+    // Read on create only; a plan never changes audience.
+    string? Audience = null);
 
 /// <summary>
 /// Edit an organisation's identity and owner contact. Every field optional —
@@ -102,6 +121,13 @@ public sealed record UpdateUserRequest(
 /// and stores the bytes.
 /// </summary>
 public sealed record SetAvatarRequest(string DataUrl);
+
+/// <summary>
+/// "Which of these people are colleagues with a photo?" — by email address
+/// (Mail, Contacts) or by user id (Connect, whose participants carry one).
+/// See UserEndpoints.PhotoLookupAsync.
+/// </summary>
+public sealed record PhotoLookupRequest(List<string>? Emails, List<Guid>? UserIds);
 
 public sealed record BulkCreateUserRequest(
     // The fallback domain, for a file of bare usernames. NULL is normal: a CSV
@@ -165,7 +191,21 @@ public sealed record UserResponse(
     // a server that predates them; the dialog then leaves the button enabled
     // and lets the server's refusal speak.
     bool? HasPassword = null,
-    bool? HasRecoveryEmail = null);
+    bool? HasRecoveryEmail = null,
+    // Decision 0009, for the Edit dialog. Masked, never the address itself.
+    string? RecoveryEmailMasked = null,
+    RecoveryChangeInfo? RecoveryChange = null,
+    // This person is an administrator whose recovery-email change was reversed
+    // by the person it belonged to; they cannot change recovery emails until
+    // an owner clears it.
+    bool? RecoveryChangesSuspended = null);
+
+/// <summary>
+/// An administrator's recovery-email change in flight (decision 0009).
+/// Status "pending" = waiting for the confirmation link; "held" = confirmed,
+/// takes effect at HoldUntil. NewMasked is the new address, masked.
+/// </summary>
+public sealed record RecoveryChangeInfo(string Status, string NewMasked, DateTimeOffset? HoldUntil);
 
 /// <summary>
 /// What the people list shows about a pending invitation (decision 0005).

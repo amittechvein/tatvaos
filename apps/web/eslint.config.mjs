@@ -40,6 +40,29 @@ const config = [
 
   {
     // ------------------------------------------------------------------
+    //  next/font/google downloads the font from Google during `next build`,
+    //  and a failed download fails the build — CI red on 2 and 6 Oct 2026
+    //  with "Cannot read properties of null (reading '1')" and no code at
+    //  fault. The font now lives in app/fonts/; see plus-jakarta-sans.css.
+    // ------------------------------------------------------------------
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'next/font/google',
+              message:
+                'Fetched from Google at build time; a failed fetch fails CI. Put the files in app/fonts/ (see plus-jakarta-sans.css).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  {
+    // ------------------------------------------------------------------
     //  The one rule that is a security control rather than a style choice.
     //
     //  dangerouslySetInnerHTML on untrusted mail content is how a cross-site

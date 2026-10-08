@@ -132,6 +132,15 @@ public static class MailSender
         AuditWriter audit,
         CancellationToken ct)
     {
+        // A personal account suspended for abuse (build plan §8) can still
+        // sign in and download its data, but sends nothing — checked HERE, the
+        // one path webmail, the send API, calendar and meeting invitations all
+        // take, so no caller can forget it.
+        if (box.UserId is Guid owner && await db.PersonalAccounts.IgnoreQueryFilters().AsNoTracking()
+                .AnyAsync(a => a.UserId == owner && a.SuspendedAt != null, ct))
+            return new SendResult(SendOutcome.Refused, null, null,
+                "This account can't send mail right now. You can still read your mail and download your data.");
+
         // Whether this is somebody else's queue changes the display name and
         // the audit trail. It changes nothing else: the message is built,
         // submitted and filed through exactly the same path either way.
@@ -145,7 +154,23 @@ public static class MailSender
         //  client picks from; attachments make it multipart/mixed around that.
         //  MimeKit assembles the right structure from what we set here.
         var builder = new BodyBuilder();
-        if (!string.IsNullOrWhiteSpace(s.BodyHtml)) builder.HtmlBody = s.BodyHtml;
+        if (!string.IsNullOrWhiteSpace(s.BodyHtml))
+        {
+            // Pictures in the body go out as inline attachments (cid:), not as
+            // data: URIs, which Gmail does not show and Outlook blocks. With
+            // any LinkedResources, MimeKit wraps the HTML in multipart/related.
+            // See OutgoingInlineImages for why this exists.
+            var (html, inline) = OutgoingInlineImages.Extract(
+                s.BodyHtml, box.Address[(box.Address.IndexOf('@') + 1)..]);
+            builder.HtmlBody = html;
+            for (var i = 0; i < inline.Count; i++)
+            {
+                var img = inline[i];
+                var part = builder.LinkedResources.Add(
+                    img.FileName(i + 1), img.Bytes, new ContentType("image", img.Subtype));
+                part.ContentId = img.ContentId;
+            }
+        }
         if (!string.IsNullOrWhiteSpace(s.BodyText)) builder.TextBody = s.BodyText;
         else if (string.IsNullOrWhiteSpace(s.BodyHtml)) builder.TextBody = "";
 

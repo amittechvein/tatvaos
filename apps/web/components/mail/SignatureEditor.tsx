@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { cleanPastedHtml } from '@/lib/pasteHtml';
-import { cleanSignatureHtml } from '@/lib/signatureHtml';
+import { cleanSignatureHtml, cleanSignatureHtmlReport } from '@/lib/signatureHtml';
+import { formatHtmlSource } from '@/lib/composeHtml';
+import { HtmlSourceEditor } from './HtmlSourceEditor';
 
 /**
  * The signature editor.
@@ -102,6 +104,11 @@ export default function SignatureEditor({
   const [imageWidth, setImageWidth] = useState('120');
   const [imageAlt, setImageAlt] = useState('');
   const [imageError, setImageError] = useState<string | null>(null);
+  // The HTML editor (Amit, 25 Sept 2026: "add html editor also in signature").
+  // null while editing normally. The rich editor stays mounted underneath.
+  const [htmlSource, setHtmlSource] = useState<string | null>(null);
+  const [removedCode, setRemovedCode] = useState<string[]>([]);
+  const htmlSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
    * Seeding, once.
@@ -178,6 +185,46 @@ export default function SignatureEditor({
     setImageOpen(false);
     setImageUrl('https://');
     setImageAlt('');
+  }
+
+  /**
+   * Into and out of the HTML view. Out is where the source is cleaned — with
+   * THIS editor's rules (cleanSignatureHtml: no embedded pictures, logos by
+   * https address), not the composer's. If the clean removed anything the view
+   * stays on the source with a notice naming it; a second press goes back.
+   */
+  function toggleHtml() {
+    const el = editorRef.current;
+    if (!el) return;
+    if (htmlSource === null) {
+      setRemovedCode([]);
+      setHtmlSource(formatHtmlSource(el.innerHTML));
+      return;
+    }
+    if (htmlSyncTimer.current) clearTimeout(htmlSyncTimer.current);
+    const r = cleanSignatureHtmlReport(htmlSource);
+    el.innerHTML = r.html;
+    report();
+    if (r.removed.length > 0) {
+      setRemovedCode(r.removed);
+      setHtmlSource(formatHtmlSource(r.html));
+      return;
+    }
+    setRemovedCode([]);
+    setHtmlSource(null);
+  }
+
+  function onHtmlSourceChange(next: string) {
+    setHtmlSource(next);
+    // Saving must work from this view too, so the cleaned HTML is reported up
+    // as it is typed — the same thing the rich editor reports on each input.
+    if (htmlSyncTimer.current) clearTimeout(htmlSyncTimer.current);
+    htmlSyncTimer.current = setTimeout(() => {
+      const el = editorRef.current;
+      if (!el) return;
+      el.innerHTML = cleanSignatureHtml(next);
+      report();
+    }, 400);
   }
 
   /**
@@ -279,6 +326,11 @@ export default function SignatureEditor({
         <Tool label="Clear formatting" onClick={() => cmd('removeFormat')} disabled={disabled}>
           <span className="text-[13px] font-medium">Tx</span>
         </Tool>
+
+        <Divider />
+        <Tool label={htmlSource !== null ? 'Back to formatted signature' : 'Edit HTML'} onClick={toggleHtml} disabled={disabled}>
+          <span className={`font-mono text-[11px] font-bold ${htmlSource !== null ? 'text-brand-600' : ''}`}>&lt;/&gt;</span>
+        </Tool>
       </div>
 
       {/* ---- Insert-image form --------------------------------------- */}
@@ -338,6 +390,16 @@ export default function SignatureEditor({
       )}
 
       {/* ---- The editor ---------------------------------------------- */}
+      {htmlSource !== null && (
+        <HtmlSourceEditor
+          value={htmlSource}
+          onChange={onHtmlSourceChange}
+          removed={removedCode}
+          onDismissRemoved={() => setRemovedCode([])}
+          minHeightClass="min-h-[10rem]"
+          hint="Tables, inline style=&quot;…&quot; and https:// pictures work in every mail app. Scripts, forms, <style> blocks and embedded pictures are not kept."
+        />
+      )}
       <div
         ref={editorRef}
         contentEditable={!disabled}
@@ -349,7 +411,7 @@ export default function SignatureEditor({
         onInput={report}
         onBlur={report}
         onPaste={onPaste}
-        className="sig-editor scroll-thin min-h-[10rem] w-full resize-y overflow-auto px-3 py-2.5 text-sm text-ink outline-none"
+        className={`sig-editor scroll-thin min-h-[10rem] w-full resize-y overflow-auto px-3 py-2.5 text-sm text-ink outline-none ${htmlSource !== null ? 'hidden' : ''}`}
       />
 
       {/* The placeholder is CSS rather than state: a contenteditable that

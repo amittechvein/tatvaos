@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ═══════════════════════════════════════════════════════════════════════
+     THE HTML DOCS STORES IS WRITTEN BY US, NOT BY THE BROWSER.
+
+     25 Sept 2026 (Mr. Singh's review of PR 273): the checkpoint endpoint
+     stored whatever HTML an editor-level caller sent, and Space served it.
+     apps/api/Modules/Docs/DocsHtml.cs now rewrites it from an allowlist.
+
+     Same choices as tests/email-plaintext: the production file is LINKED,
+     no test framework (`dotnet run`, read the last line), not in any
+     solution, never published, not in CI (a workflow change goes to
+     Mr. Singh).
+    ═══════════════════════════════════════════════════════════════════════
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Tests.DocsHtml</RootNamespace>
+    <AssemblyName>docs-html-test</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The production file itself. Not a copy. -->
+    <Compile Include="../../apps/api/Modules/Docs/DocsHtml.cs" Link="DocsHtml.cs" />
+    <!-- A page made by the real editor (see the note at its top). -->
+    <None Include="editor-page.html" CopyToOutputDirectory="Always" />
+    <!-- Attacks written by other people (corpus/README.md says whose). -->
+    <None Include="corpus/*.txt" CopyToOutputDirectory="Always" />
+  </ItemGroup>
+
+</Project>

@@ -102,6 +102,39 @@ public sealed class HireAccess(AppDbContext db, TenantContext tenant, IHttpConte
         return q.Where(_ => false);
     }
 
+    /// <summary>
+    /// What the PUBLIC careers page may list: open jobs, not past their
+    /// closing date, of the organisation the request was scoped to by
+    /// hire.resolve_careers_site(). Drafts, on-hold and closed jobs are never
+    /// in it. The caller projects to the public fields (CareersEndpoints).
+    /// </summary>
+    public IQueryable<JobOpening> PublicJobs(DateOnly today) =>
+        db.Set<JobOpening>().Where(j => j.Status == "open" && j.Slug != null
+                                     && (j.ClosingDate == null || j.ClosingDate >= today));
+
+    /// <summary>This organisation's careers site, or null if not set up.</summary>
+    public Task<HireCareersSite?> CareersSiteAsync(CancellationToken ct) =>
+        db.Set<HireCareersSite>().AsNoTracking().FirstOrDefaultAsync(ct);
+
+    /// <summary>Creates or updates this organisation's careers site (validated by the caller).</summary>
+    public async Task SaveCareersSiteAsync(string slug, string name, string? contact, bool enabled, CancellationToken ct)
+    {
+        var row = await db.Set<HireCareersSite>().FirstOrDefaultAsync(ct);
+        var now = DateTimeOffset.UtcNow;
+        if (row is null)
+        {
+            row = new HireCareersSite { TenantId = tenant.TenantId, CreatedAt = now };
+            db.Set<HireCareersSite>().Add(row);
+        }
+        row.Slug = slug;
+        row.DisplayName = name;
+        row.ErasureContact = contact;
+        row.IsEnabled = enabled;
+        row.UpdatedBy = tenant.UserId;
+        row.UpdatedAt = now;
+        await db.SaveChangesAsync(ct);
+    }
+
     // ------------------------------------------------------------ candidates
 
     /// <summary>
@@ -273,8 +306,27 @@ public sealed class HireAccess(AppDbContext db, TenantContext tenant, IHttpConte
 
     /// <summary>
     /// This organisation's pipeline, in order — created with the defaults the
-    /// first time anyone needs it. A unique (tenant, key) index makes two
-    /// first requests at once safe: the loser's insert fails and it re-reads.
+    /// first time anyone needs it.
+    ///
+    /// TWO FIRST REQUESTS AT ONCE (Mr. Singh's question on PR 267). The
+    /// unique (tenant, key) index makes a second set of twelve impossible.
+    /// What it does not do is give the loser an answer, and the first version
+    /// of this method got that wrong: it added twelve entities and caught
+    /// DbUpdateException, expecting "duplicate key". But EF sorts a batch by
+    /// primary key, the keys were random Guids, so two requests inserted the
+    /// same twelve stages in DIFFERENT orders, each ended up holding a row the
+    /// other was waiting for, and Postgres killed one with 40P01 "deadlock
+    /// detected" — which EF wraps in InvalidOperationException, not
+    /// DbUpdateException. Nine of ten simultaneous first requests answered
+    /// 500 (tests/hire step 18, 28 Sept 2026). Never two sets; just an error
+    /// page for whoever lost.
+    ///
+    /// So: ONE statement, rows ALWAYS in the same order, ON CONFLICT DO
+    /// NOTHING. The loser waits for the winner's first row, skips all twelve,
+    /// and reads the winner's. Nothing to catch, so nothing is caught — a
+    /// failure here is a real one and should be seen. It also no longer calls
+    /// SaveChanges, which would have saved whatever else the caller had
+    /// pending.
     /// </summary>
     public async Task<List<HirePipelineStage>> PipelineAsync(CancellationToken ct)
     {
@@ -282,25 +334,18 @@ public sealed class HireAccess(AppDbContext db, TenantContext tenant, IHttpConte
             .OrderBy(s => s.Position).ToListAsync(ct);
         if (stages.Count > 0) return stages;
 
-        var now = DateTimeOffset.UtcNow;
-        for (var i = 0; i < DefaultStages.Length; i++)
-            db.Set<HirePipelineStage>().Add(new HirePipelineStage
-            {
-                Id = Guid.NewGuid(), TenantId = tenant.TenantId,
-                Key = DefaultStages[i].Key, Name = DefaultStages[i].Name,
-                Position = (i + 1) * 10, IsFinal = i == DefaultStages.Length - 1,
-                IsActive = true, CreatedAt = now,
-            });
-        try
-        {
-            await db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateException)
-        {
-            // Another request created them first. Forget ours and read theirs.
-            foreach (var e in db.ChangeTracker.Entries<HirePipelineStage>().ToList())
-                e.State = EntityState.Detached;
-        }
+        var tenantId = tenant.TenantId;
+        var keys = DefaultStages.Select(s => s.Key).ToArray();
+        var names = DefaultStages.Select(s => s.Name).ToArray();
+        var last = DefaultStages.Length;
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO hire.pipeline_stages (tenant_id, key, name, position, is_final)
+            SELECT {tenantId}, s.key, s.name, (s.ord * 10)::int, s.ord = {last}
+              FROM unnest({keys}, {names}) WITH ORDINALITY AS s(key, name, ord)
+             ORDER BY s.ord
+            ON CONFLICT (tenant_id, key) DO NOTHING
+            """, ct);
+
         return await db.Set<HirePipelineStage>().AsNoTracking()
             .OrderBy(s => s.Position).ToListAsync(ct);
     }

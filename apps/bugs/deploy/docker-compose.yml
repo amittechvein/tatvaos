@@ -1,0 +1,32 @@
+# TatvaOS Bugs on the production server — its OWN compose project
+# (~/tatvaos-bugs, project name "tatvaos-bugs"), so the product's
+# deploy.sh never builds, restarts or prunes it, and this never touches theirs.
+#
+# It joins the product's Caddy network (external) so Caddy can reach
+# bugs:3000. No ports are published: the only way in is through Caddy.
+#
+# .env beside this file (mode 600) holds OIDC_CLIENT_ID and
+# BOOTSTRAP_ADMIN_EMAILS. No secret lives in it: the SSO client is public
+# (PKCE), and the Mail API key is pasted into the app's Settings by an admin.
+name: tatvaos-bugs
+services:
+  bugs:
+    build: ../
+    container_name: tatvaos-bugs
+    restart: unless-stopped
+    environment:
+      PUBLIC_URL: https://bug.tatvaos.com
+      OIDC_ISSUER: https://core.tatvaos.com/
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?OIDC_CLIENT_ID must be set}
+      BOOTSTRAP_ADMIN_EMAILS: ${BOOTSTRAP_ADMIN_EMAILS:?BOOTSTRAP_ADMIN_EMAILS must be set}
+    volumes:
+      - bugsdata:/data
+    networks:
+      caddynet:
+        aliases: [bugs]
+volumes:
+  bugsdata:
+networks:
+  caddynet:
+    external: true
+    name: ${CADDY_NETWORK:?CADDY_NETWORK must be set (the product stack's network)}

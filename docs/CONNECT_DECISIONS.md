@@ -168,7 +168,7 @@ HTTP; none of this needs the button.
 | 4 | Suspended organisation | Refused | Not implemented in `resolve_share_token` today — see below |
 | 5 | Wrong recording | A share for recording A must not authorise recording B, even in the same meeting | `meeting_id` is denormalised onto the share for exactly this check |
 | 6 | **Participant with no share at all** | **Still reads the recording** | The baseline never moves. `SeenMeetingAsync` decides it and nothing here may override it. The likeliest invariant for a future change to break |
-| 7 | **Named grant across organisations** | Reader in tenant B reads a recording owned by tenant A, and **cannot list who else it was shared with** | The only reason `share_for_user` is SECURITY DEFINER. The second half is enforced by what the RLS policy omits, which makes it invisible |
+| 7 | **Named grant across organisations** | Reader in tenant B reads a recording owned by tenant A, and **cannot list who else it was shared with** | The only reason `share_access_for_user` is SECURITY DEFINER (until 28 Sept 2026 this row named `share_for_user`, superseded on 26 Sept and dropped on 28 Sept as unused). The second half is enforced by what the RLS policy omits, which makes it invisible |
 | 8 | **The switch flipped off while a link is live** | The existing link stops resolving immediately; the row is not deleted; flipping back on resumes it | Read-time enforcement. Verified by me in a sandbox, never against the deployed system |
 | 9 | **An anonymous read is logged** | A row appears in `recording_access_log` with the tenant, recording and level taken from the share, `subject_user_id` NULL | Not an authorisation outcome, so nobody thinks to test it — and a public link with no record of who opened it is the failure that matters after the fact |
 
@@ -214,6 +214,102 @@ in `recording_access_log`.
 - The switch: `connect.tenant_settings.allow_public_recording_links`,
   default **false**, no backfill. A missing row reads as off.
 - Client, already shipped and waiting: `Recordings.tsx`, `list.sharing`
+
+### Update, 26 September 2026 — the read side is built, the matrix is a script
+
+Amit asked for recording sharing with all four levels, and for named people to
+be emailed. Building the reader's half (the part that was never written: the
+routes and pages a person who was *given* a share uses) and running the matrix
+against a database built from nothing found **six defects in the code above,
+every one of which would have broken the feature the day it was switched on**:
+
+| # | Defect | What it would have done |
+|---|---|---|
+| 1 | `recording_shares_cap_expiry()` read `r.tenant_id`; recordings has none | Every share with an expiry failed — no password or public link could ever be made |
+| 2 | `resolve_share_token()` revoked from PUBLIC, never granted to `tatvaos_app` | Every link holder: 500 |
+| 3 | Password hash read with no tenant scope on the anonymous path | Every password link refused its own password |
+| 4 | `AllowedAsync` read the share's level under the *reader's* RLS | Named readers in another organisation always refused (case 7) |
+| 5 | `User` carries an EF tenant query filter; named lookup did not bypass it | Naming anyone outside the organisation: "does not have a TatvaOS account" |
+| 6 | No EF relationship between share and grant | The first named share ever made failed on the foreign key |
+
+Plus case 4 (suspension), now implemented as `t.status IN ('active','trial')`,
+the same clause `resolve_meeting_code` uses; and the access log now writes
+through `log_recording_access()` — the EF insert it used would have been
+refused by `WITH CHECK` for exactly the readers it exists to record, and the
+failure was swallowed (case 9).
+
+**Where it stands.** The nine cases are `tests/connect-recording-share/test-matrix.sh`
+(86 checks, each refusal beside a control that succeeds). They pass locally.
+Calibrated: removing the suspension clause turns exactly the 4 case-4 checks
+red; removing the per-request ticket re-check turns exactly the 4 "a ticket in
+a player stops at once" checks red.
+
+**That is not yet the condition above**, which says a *deployed* system. So the
+Share button has its own switch, `Connect:RecordingSharingOffered`
+(`CONNECT_RECORDING_SHARING_OFFERED`, default **false**). The code can be
+deployed dark, the matrix run against production — none of it needs the
+button — and only then is the button switched on, by configuration.
+
+### Mr. Singh's ruling on PR 312, 26 September 2026
+
+Accepted, with two fixes before merge and three changes, all now in the PR:
+
+- **Wrong passwords are counted per link.** Ten in any rolling hour and the
+  link refuses everybody, the right password included, until the oldest of
+  the ten is an hour old; the host sees "Someone has been guessing this
+  link's password" beside the share. The per-address rate limit alone was
+  walked around by guessing from many addresses — proved: with the count
+  removed, 25 guesses from 25 addresses were all merely "wrong" and the right
+  password then opened the recording.
+- **A share password is at least 8 characters, and the dialog offers to
+  generate one.** This is the one exception to "one password rule in the
+  product", and the reason is the lifetime: a meeting password guards an
+  hour; a share password guards a recording for weeks, against guessing
+  that has all of that time.
+- **Dark means the routes refuse.** With `RecordingSharingOffered` off,
+  creating a share or adding people to one is refused — before any address is
+  looked up — except for organisations in `Connect:RecordingSharingTestTenants`
+  (`CONNECT_RECORDING_SHARING_TEST_TENANTS`). Reading, revoking and opening are
+  never gated.
+- **Looking people up is limited and audited:** 30 new addresses per host per
+  rolling hour, exact match only, every lookup (found or not) written to the
+  host organisation's audit log as `connect.recording.share_lookup`. That log
+  is also the counter. People already on the share cost nothing.
+- **`share_access_for_user()` reads the reader's organisation from
+  `core.users` itself** rather than trusting a parameter.
+- The public-links switch now says a school's recording can show children,
+  and that anyone with a public link can save a copy stopping it won't recall.
+
+**The production matrix, as ruled:** fixtures created through the product,
+never by writing to the production database; Techvein and a second test
+organisation on the allow-list; a real short meeting with a real recording;
+Amit's Gmail as the outside named reader (which also shows where the email
+lands); reads only on Amit's go. Afterwards every test share is revoked, the
+result is written here, and the button is switched on by configuration.
+Order: fixes → Mr. Singh reads → merge → Amit's go + no live meeting → hand
+deploy, dark → production matrix → switch on. The deploy report says "not
+purely additive: replaces unused definer functions".
+
+### Switched on, 27 September 2026 — BEFORE the production matrix
+
+What happened, in order:
+- 26 Sept 11:52Z: #312 deployed dark (`7f2de67`).
+- 12:34Z: stage 1. The test list was Techvein and Trineetra by Techvein.
+- 16:53Z: #323 deployed (`c7cb110`): visible fields, colour per level, and a branded link page.
+
+Amit used sharing on production and reported "all work perfectly".
+
+On 27 Sept he chose to switch the button on for every organisation **before
+the production matrix was run**. He was told what it covers that ordinary use
+does not: revocation mid-playback, expiry, suspension, the password pause,
+public links switched off while live, and the access log. That is an override
+of this section's order, recorded here, and it was his decision to make.
+
+Now set: `CONNECT_RECORDING_SHARING_OFFERED=true`, and the test list is removed.
+The server's `.env` was backed up first, as `.env.before-sharing-on-*`.
+
+**Still owed:** the production matrix, run by the rules above now that sharing
+is on for everyone. Its result is to be written here.
 
 ---
 

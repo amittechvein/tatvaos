@@ -52,28 +52,77 @@ qapp() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────
-#  THE COUNTS BELOW MOVED ON 2026-08-18, WHEN 20260902-connect-recording.sql
-#  ADDED recordings, transcripts AND meeting_notes.
+#  EXACT, BUT AGAINST THE REPOSITORY RATHER THAN AGAINST A NUMBER.
 #
-#  They are still EXACT rather than "at least", deliberately. An exact count
-#  catches a table or a function that should not be there — a half-applied
-#  migration, or an object left behind by an experiment — and that is the
-#  whole reason to assert a number instead of a truthy check. Update them
-#  when a migration adds something; do not relax them.
+#  Until 28 Sept 2026 this section asserted fixed totals: 7 tables, 12 SECURITY
+#  DEFINER functions, 7 forced tables, 7 policies. They were exact on purpose -
+#  an exact count catches a half-applied migration AND an object that should
+#  not be there - and "update them when a migration adds something" was the
+#  rule. Nobody did: by September production had 16 tables, about 30 definers
+#  and 15 policies, and every run printed four FAILs on a healthy box. A check
+#  that is always red teaches people to skim past red, which is worse than no
+#  check (the same lesson as the nullif line below, learned twice).
+#
+#  So the expected set is now DERIVED: replay local/postgres/init/*.sql in the
+#  order deploy.sh applies them (the same glob), adding what each CREATE makes
+#  and removing what each DROP removes. The database must hold exactly that
+#  set - a name missing means a migration did not apply; a name extra means an
+#  object nothing in this checkout creates (an experiment, an unmerged branch
+#  applied by hand, a function that was meant to be dropped). Both directions
+#  print the names. Nothing here needs editing when a migration adds a table.
+#
+#  Limits, stated rather than discovered: names only (not signatures or
+#  columns), and only statements that start a line - a CREATE built inside a
+#  DO block's EXECUTE string is invisible to it. Connect has none today.
 # ─────────────────────────────────────────────────────────────────────────
-echo "== the migration landed =="
-n=$(q "SELECT count(*) FROM information_schema.tables WHERE table_schema='connect'")
-[ "${n:-0}" -eq 7 ] && ok "7 connect tables" \
-                    || bad "expected 7 connect tables, found ${n:-0} — 4 means 20260902-connect-recording.sql has not applied"
+INIT_GLOB=(local/postgres/init/*.sql)
 
-# Twelve: the guest path's three, webhook_meeting_tenant — added when the
-# first headless webhook test proved the handler's ordinary lookup read zero
-# rows under forced RLS and acknowledged every event while writing nothing —
-# and the recording lane's eight, which are the notes worker's pre-tenant
-# reads and the storage functions.
-n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
-        WHERE ns.nspname='connect' AND p.prosecdef")
-[ "${n:-0}" -eq 12 ] && ok "12 SECURITY DEFINER functions" || bad "expected 12 definer functions, found ${n:-0} — 3 means the webhook fix has not applied, 4 means the recording migration has not"
+# $1 = table | function. Prints the connect.<name>s the init files leave behind.
+expected_objects() {
+    awk -v k="$1" '
+        { l = tolower($0) }
+        l ~ "^[ \t]*create (or replace )?" k " (if not exists )?connect\\.[a-z_0-9]+" {
+            match(l, /connect\.[a-z_0-9]+/); have[substr(l, RSTART + 8, RLENGTH - 8)] = 1
+        }
+        l ~ "^[ \t]*drop " k " (if exists )?connect\\.[a-z_0-9]+" {
+            match(l, /connect\.[a-z_0-9]+/); delete have[substr(l, RSTART + 8, RLENGTH - 8)]
+        }
+        END { for (n in have) print n }' "${INIT_GLOB[@]}" | sort -u
+}
+
+# Rows, not a count: q() squashes whitespace, so this has its own reader.
+qlist() {
+    "${COMPOSE[@]}" exec -T postgres psql -U postgres -d tatvaos_mail -tAc "$1" \
+        2>/dev/null | tr -d '\r' | grep -v '^$' | sort -u
+}
+
+# $1 = what, $2 = expected list, $3 = actual list
+same_set() {
+    local missing extra
+    missing=$(comm -23 <(printf '%s\n' "$2") <(printf '%s\n' "$3") | grep -v '^$' | tr '\n' ' ')
+    extra=$(comm -13 <(printf '%s\n' "$2") <(printf '%s\n' "$3") | grep -v '^$' | tr '\n' ' ')
+    local n; n=$(printf '%s\n' "$2" | grep -c .)
+    if [ "$n" -eq 0 ]; then
+        # An empty expectation would make "the database is empty" pass.
+        bad "found no connect $1s in ${INIT_GLOB[0]%/*} - is this the repo root?"
+    elif [ -z "$missing$extra" ]; then
+        ok "exactly the $n connect $1s the init files create"
+    else
+        [ -n "$missing" ] && bad "connect $1s the init files create but the database lacks (a migration did not apply): $missing"
+        [ -n "$extra" ]   && bad "connect $1s in the database that nothing in this checkout creates (left behind, or applied from another branch): $extra"
+    fi
+}
+
+echo "== the migrations landed, and nothing else did =="
+TABLES_WANT=$(expected_objects table)
+TABLES_HAVE=$(qlist "SELECT c.relname FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
+                      WHERE ns.nspname='connect' AND c.relkind IN ('r','p')")
+same_set table "$TABLES_WANT" "$TABLES_HAVE"
+
+FUNCS_WANT=$(expected_objects function)
+FUNCS_HAVE=$(qlist "SELECT p.proname FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
+                     WHERE ns.nspname='connect'")
+same_set function "$FUNCS_WANT" "$FUNCS_HAVE"
 
 # The two columns this migration adds to tables it does not own. If either is
 # missing the deploy applied an older copy of the file.
@@ -83,14 +132,25 @@ n=$(q "SELECT count(*) FROM information_schema.columns
 [ "${n:-0}" -eq 2 ] && ok "allow_connect_guests + calendar_event_id present" \
                     || bad "expected both added columns, found ${n:-0} — an old migration ran"
 
-echo "== RLS is enabled AND forced on every connect table =="
-n=$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
-        WHERE ns.nspname='connect' AND c.relrowsecurity AND c.relforcerowsecurity")
-[ "${n:-0}" -eq 7 ] && ok "all 7 tables ENABLE + FORCE row level security" \
-                    || bad "only ${n:-0} of 7 tables are forced — a table without FORCE is readable by its owner"
+echo "== RLS is enabled AND forced on every connect table, and each has a policy =="
+# Every table, by name - not "7 of 7". A new table that forgot FORCE is named.
+bare=$(qlist "SELECT c.relname FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
+               WHERE ns.nspname='connect' AND c.relkind IN ('r','p')
+                 AND NOT (c.relrowsecurity AND c.relforcerowsecurity)" | tr '\n' ' ')
+nt=$(printf '%s\n' "$TABLES_HAVE" | grep -c .)
+[ -z "$bare" ] && [ "$nt" -gt 0 ] && ok "all $nt tables ENABLE + FORCE row level security" \
+               || bad "not forced (readable by their owner, or by everyone if RLS is off): ${bare:-no tables found at all}"
 
-POLICIES=$(q "SELECT count(*) FROM pg_policies WHERE schemaname='connect' AND policyname='tenant_isolation'")
-[ "${POLICIES:-0}" -eq 7 ] && ok "7 tenant_isolation policies" || bad "expected 7 policies, found ${POLICIES:-0}"
+# RLS forced with no policy reads as zero rows for everyone - not a leak, but
+# a feature that silently returns nothing, which is this codebase's usual bug.
+nopol=$(qlist "SELECT c.relname FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
+                WHERE ns.nspname='connect' AND c.relkind IN ('r','p')
+                  AND NOT EXISTS (SELECT 1 FROM pg_policies p
+                                   WHERE p.schemaname='connect' AND p.tablename=c.relname)" | tr '\n' ' ')
+[ -z "$nopol" ] && ok "every table has at least one policy" \
+                || bad "tables with RLS and no policy - every read returns zero rows: $nopol"
+
+POLICIES=$(q "SELECT count(*) FROM pg_policies WHERE schemaname='connect'")
 
 echo "== the nullif() guard is present in every policy =="
 # Without it an unset tenant sends '' and a bare ::uuid cast THROWS, taking the
@@ -99,17 +159,20 @@ echo "== the nullif() guard is present in every policy =="
 # upper case, so a case-sensitive match silently reports zero — which is what
 # it did the first time this check was written.
 #
-# COMPARED AGAINST THE POLICY COUNT, NOT AGAINST A NUMBER.
+# BY NAME, AND OVER EVERY POLICY IN THE SCHEMA.
 #
-# This line used to say 4. When 20260902 added three tables the four counts
-# above were updated and this fifth one was missed, so a correct database
-# reported "only 7 of 4 policies use nullif" — a red FAIL on a healthy box,
-# which is the fastest way to teach somebody to skim past this script's
-# output. Deriving it from POLICIES means the two can never disagree again,
-# whatever the next migration adds.
-n=$(q "SELECT count(*) FROM pg_policies WHERE schemaname='connect' AND qual ILIKE '%nullif%'")
-[ "${n:-0}" -eq "${POLICIES:-0}" ] && ok "all ${n} policies use nullif(current_setting(...), '')" \
-                    || bad "only ${n:-0} of ${POLICIES:-0} policies use nullif — check the migration"
+# This line once said "4" and was missed when three tables were added, so a
+# correct database reported "only 7 of 4 policies use nullif". It was then
+# compared against the count of policies NAMED tenant_isolation - which let a
+# policy with any other name (meeting_chat had one until 28 Sept) go
+# unchecked. Now every policy counts, and any without the guard is named; a
+# WITH CHECK clause, where there is one, needs it too.
+unguarded=$(qlist "SELECT tablename || '.' || policyname FROM pg_policies
+                    WHERE schemaname='connect'
+                      AND (coalesce(qual, '') NOT ILIKE '%nullif%'
+                           OR (with_check IS NOT NULL AND with_check NOT ILIKE '%nullif%'))" | tr '\n' ' ')
+[ -z "$unguarded" ] && [ "${POLICIES:-0}" -gt 0 ] && ok "all ${POLICIES} policies use nullif(current_setting(...), '')" \
+                    || bad "policies without the nullif guard: ${unguarded:-no policies found at all}"
 
 echo "== the app role cannot read across tenants without context =="
 n=$(qapp "SELECT count(*) FROM connect.meetings")
@@ -211,7 +274,7 @@ if [ "$a" != "$b" ]; then
     echo "        malformed: $b"
 elif [ -z "$a" ]; then
     bad "no answer at all from https://${DOM}/api/connect/g/... — check: docker compose logs api caddy"
-elif ! printf '%s' "$a" | grep -q 'This meeting link does not work'; then
+elif ! grep -q 'This meeting link does not work' <<< "$a"; then
     # Identical answers are necessary but not sufficient: if the route is not
     # registered at all, BOTH get the same generic 404 from the web app and
     # this check would pass while the guest path does not exist.
