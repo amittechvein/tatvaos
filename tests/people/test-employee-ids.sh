@@ -24,9 +24,6 @@ API="http://localhost:$PORT"
 SCRATCH="$(cd "$(dirname "$0")/../.." && pwd)/.tmp/empid-$$"; mkdir -p "$SCRATCH"; LOG="$SCRATCH/api.log"
 TECHVEIN='11111111-1111-1111-1111-111111111111'
 SCHOOL='22222222-2222-2222-2222-222222222222'
-OWNER_ID='d1111111-1111-1111-1111-111111111111'     # Techvein org_owner
-EMPLOYEE_ID='d1111111-1111-1111-1111-111111111112'  # Techvein employee
-PRINCIPAL_ID='d2222222-2222-2222-2222-222222222222' # ABC School admin
 
 TDB_USED=""
 if [ -z "${TATVAOS_PSQL:-}" ]; then
@@ -107,19 +104,28 @@ API_PID=$!
 for _ in $(seq 1 150); do curl -s -o /dev/null -w "%{http_code}" "$API/health" 2>/dev/null | grep -q 200 && break; sleep 1; done
 curl -s -o /dev/null -w "%{http_code}" "$API/health" | grep -q 200 && pass "API up" || { fail "API did not start"; tail -5 "$LOG"; exit 1; }
 
+# The three standard test phones (tests/support/test-phones.sh), and ONLY
+# those. The first version of this suite gave the owner a number of its own;
+# on CI's shared database the owner kept it, and the next suite (0009), which
+# sets +919999900001 only where the phone is empty, could not sign in
+# (PR 409, run 37816891716). A suite must leave the people as it found them.
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 signin() {
-    local id="$1" phone="$2" code
-    PG "UPDATE core.users SET phone='$phone', login_otp_sent_at=NULL, login_otp_attempts=0 WHERE id='$id'" >/dev/null
+    local phone="$1" code
+    PG "UPDATE core.users SET login_otp_sent_at=NULL, login_otp_attempts=0 WHERE phone='$phone'" >/dev/null
     code=$(curl -s -X POST "$API/api/auth/otp/request" -H 'Content-Type: application/json' -d "{\"phone\":\"$phone\"}" | j "d.get('devCode') or ''")
     curl -s -X POST "$API/api/auth/otp/verify" -H 'Content-Type: application/json' \
          -d "{\"phone\":\"$phone\",\"code\":\"$code\"}" | j "d.get('accessToken') or ''"
 }
 # The seed predates the role names the policy uses (as test-careers.sh notes).
-PG "UPDATE core.users SET role='org_owner' WHERE id='$OWNER_ID' AND role='owner'" >/dev/null
-PG "UPDATE core.users SET role='org_admin' WHERE id='$PRINCIPAL_ID' AND role='admin'" >/dev/null
-TOKEN=$(signin "$OWNER_ID" '+919999900041')
-EMP=$(signin "$EMPLOYEE_ID" '+919999900042')
-OTHER=$(signin "$PRINCIPAL_ID" '+919999900043')
+PG "UPDATE core.users SET role='org_owner' WHERE email='amit@techvein.local' AND role='owner'" >/dev/null
+PG "UPDATE core.users SET role='org_admin' WHERE email='principal@abcschool.local' AND role='admin'" >/dev/null
+same "the employee really is not an administrator" \
+    "$(PG "SELECT (role NOT IN ('org_owner','org_admin','owner','admin'))::text FROM core.users WHERE email='hr@techvein.local'")" "true"
+TOKEN=$(signin '+919999900001')
+EMP=$(signin '+919999900002')
+OTHER=$(signin '+919999900003')
 [ -n "$TOKEN" ] && pass "signed in as the Techvein owner" || { fail "owner sign-in failed"; exit 1; }
 [ -n "$EMP" ]   && pass "signed in as a Techvein employee" || fail "employee sign-in failed"
 [ -n "$OTHER" ] && pass "signed in as the ABC School admin" || fail "School admin sign-in failed"
