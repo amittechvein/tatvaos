@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 // Unit checks for the app's own logic (SRS section 12). Run: pnpm test
 import { parseHtml } from "../ui/RichText";
 import { codeFrom } from "../core/schoolCode";
