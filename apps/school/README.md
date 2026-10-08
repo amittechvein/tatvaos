@@ -51,3 +51,27 @@ npx tsc --noEmit
   `app.enabled: false` and the app shows "has not switched on the app yet".
 - Hindi, Bengali and Punjabi text in `core/strings.ts` needs a native speaker's check before a
   store release.
+
+## Separate from Connect (apps/mobile)
+
+TatvaOS School and the Connect app have no connection, and CI checks it
+(`scripts/check-app-separation.js`, workflow `school-app-separation.yml`):
+
+- No imports either way, no shared package (this app has its own `package.json` and lockfile).
+- Its own identity: app ID `com.techvein.tatvaos.school` (Android and iOS), name "TatvaOS School",
+  slug `tatvaos-school`, scheme `tatvaosschool`, its own icons (`scripts/make-icons.py`).
+- Its own Expo (EAS) project, Firebase app and Apple push key. Never reuse Connect's.
+- It calls only the TatvaOS school backend (TechveinERP), plus Razorpay's checkout page for that
+  backend's fee payments and Expo's push service.
+
+Build settings, all School's own and kept in the School EAS project, never in Git:
+
+| Name | What |
+|---|---|
+| `EAS_PROJECT_ID` | The School EAS project's id (push tokens, updates) |
+| `GOOGLE_SERVICES_JSON` | EAS secret *file*: School's own Firebase `google-services.json` |
+| `EXPO_PUBLIC_DEV_API` | Development only: a backend on the developer's PC |
+
+Build profiles are in `eas.json`: `preview` (installable APK, channel `preview`) and
+`production` (app bundle for the stores, channel `production`). Build from this folder only:
+`npx eas build --profile preview --platform android`.

@@ -1,0 +1,29 @@
+# TatvaOS School (apps/school) and the Connect app (apps/mobile) must have no connection: no
+# imports either way, no shared package, no shared app ID, Expo slug or URL scheme. This fails
+# the check when that changes. The rule and the script: apps/school/scripts/check-app-separation.js
+name: School app separation
+
+on:
+  pull_request:
+    paths:
+      - "apps/school/**"
+      - "apps/mobile/**"
+      - ".github/workflows/school-app-separation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/school/**"
+      - "apps/mobile/**"
+      - ".github/workflows/school-app-separation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  separation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: apps/school and apps/mobile share nothing
+        run: node apps/school/scripts/check-app-separation.js
