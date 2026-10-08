@@ -243,8 +243,14 @@ export const api = {
     call(host, "/api/mobile/v1/auth/otp/reset", { method: "POST", body: { resetToken, newPassword, confirmPassword: newPassword } }),
   leaveTypes: (host: string, token: string) =>
     call<{ data: LeaveType[] }>(host, "/api/attendance/leave-types", { token }).then((r) => r.data),
-  applyLeave: (host: string, token: string, body: { leave_type_id: number; start_date: string; end_date: string; reason: string }) =>
-    call(host, "/api/attendance/leave-applications", { method: "POST", token, body }),
+  applyLeave: (host: string, token: string, body: { leave_type_id: number; start_date: string; end_date: string; reason: string }, files: { uri: string; name: string; type: string }[] = []) => {
+    if (!files.length) return call(host, "/api/attendance/leave-applications", { method: "POST", token, body });
+    // with a note: JPG, PNG or PDF, 5 MB each, at most 5 (the website's leave rule)
+    const form = new FormData();
+    for (const [k, v] of Object.entries(body)) form.append(k, String(v));
+    for (const f of files) form.append("attachments", f as unknown as Blob);
+    return callForm(host, "/api/attendance/leave-applications", token, form);
+  },
   timetableDay: (host: string, token: string, date: string) =>
     call<{ data: TimetableDay }>(host, "/api/timetable/views/daily", { token, query: { date } }).then((r) => r.data),
   reportCards: (host: string, token: string) => call<{ data: ReportCard[] }>(host, "/api/exam-hub/my-report-cards", { token }).then((r) => r.data),
