@@ -166,7 +166,11 @@ export default function HireSettingsPage() {
 
       {confirm && (
         <Modal
-          title={confirm.deletes === 0 ? `Shorten to ${confirm.days} days?` : `This will delete ${confirm.deletes} candidate${confirm.deletes === 1 ? '' : 's'}`}
+          title={confirm.deletes === 0 ? `Shorten to ${confirm.days} days?`
+            : s.sweepOn ? `This will delete ${confirm.deletes} candidate${confirm.deletes === 1 ? '' : 's'}`
+            // Seen in the browser 8 Oct: with the sweep off, "This will delete"
+            // in the title contradicted the sentence under it.
+            : `${confirm.deletes} candidate${confirm.deletes === 1 ? '' : 's'} would be deleted once automatic deletion is on`}
           busy={busy}
           onClose={() => setConfirm(null)}
           footer={
