@@ -2,7 +2,7 @@
 // Unit checks for the app's own logic (SRS section 12). Run: pnpm test
 import { parseHtml } from "../ui/RichText";
 import { codeFrom } from "../core/schoolCode";
-import { ddmmyyyy, inr } from "../core/format";
+import { ddmmyyyy, inr, tenDigits } from "../core/format";
 import { strongEnough } from "../ui/PasswordForm";
 import { appRouteFor } from "../core/links";
 import { strings, LANGS } from "../core/strings";
@@ -63,6 +63,21 @@ describe("Indian formats (NF-10)", () => {
     expect(ddmmyyyy("2026-10-07")).toBe("07/10/2026");
     expect(ddmmyyyy("2026-10-07T18:30:00.000Z")).toBe("07/10/2026");
     expect(ddmmyyyy(null)).toBe("");
+  });
+});
+
+describe("mobile number for OTP sign-in", () => {
+  it("keeps the ten digits however it is typed", () => {
+    expect(tenDigits("9876543210")).toBe("9876543210");
+    expect(tenDigits("+91 98765 43210")).toBe("9876543210");
+    expect(tenDigits("098765 43210")).toBe("9876543210");
+    expect(tenDigits("919876543210")).toBe("9876543210");
+  });
+  it("refuses what is not an Indian mobile", () => {
+    expect(tenDigits("12345")).toBeNull();
+    expect(tenDigits("5876543210")).toBeNull();
+    expect(tenDigits("98765432101")).toBeNull();
+    expect(tenDigits("")).toBeNull();
   });
 });
 

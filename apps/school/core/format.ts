@@ -26,3 +26,9 @@ export function ddmmyyyy(iso: string | null | undefined): string {
 export function todayIndia(): string {
   return new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10);
 }
+
+/** The ten digits of an Indian mobile number, or null ("+91 98765 43210" → "9876543210"). */
+export function tenDigits(input: string): string | null {
+  const d = input.replace(/\D/g, "").replace(/^(91|0)(?=\d{10}$)/, "");
+  return /^[6-9]\d{9}$/.test(d) ? d : null;
+}

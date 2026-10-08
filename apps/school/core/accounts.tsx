@@ -12,7 +12,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { AppState } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import * as Device from "./device";
-import { api, School } from "./api";
+import { api, LoginAnswer, School } from "./api";
 import { forget as forgetBiometric } from "./biometric";
 import { clear as clearOffline } from "./offline";
 
@@ -51,6 +51,8 @@ type Ctx = {
   token: string | null;
   chooseSchool: (s: School | null) => Promise<void>;
   signIn: (s: School, username: string, password: string, keep: boolean) => Promise<Account>;
+  /** Saves a login the server has already answered (sign in with mobile OTP). */
+  addLogin: (s: School, r: LoginAnswer, keep: boolean) => Promise<Account>;
   signOut: (id?: string) => Promise<void>;
   switchTo: (id: string) => Promise<void>;
   tokenOf: (id: string) => string | null;
@@ -106,9 +108,8 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
     else await SecureStore.deleteItemAsync(K_SCHOOL);
   }, []);
 
-  const signIn = useCallback(
-    async (s: School, username: string, password: string, keep: boolean) => {
-      const r = await api.login(s.host, username.trim(), password, Device.name());
+  const addLogin = useCallback(
+    async (s: School, r: LoginAnswer, keep: boolean) => {
       const acc: Account = {
         id: `${s.code}_${r.user.id}`,
         school: s,
@@ -126,6 +127,12 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
       return acc;
     },
     [accounts, chooseSchool, persist],
+  );
+
+  const signIn = useCallback(
+    async (s: School, username: string, password: string, keep: boolean) =>
+      addLogin(s, await api.login(s.host, username.trim(), password, Device.name()), keep),
+    [addLogin],
   );
 
   const signOut = useCallback(
@@ -176,12 +183,13 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
       token: active ? tokens[active.id] : null,
       chooseSchool,
       signIn,
+      addLogin,
       signOut,
       switchTo,
       tokenOf: (id) => tokens[id] ?? null,
       passwordChanged,
     }),
-    [ready, school, accounts, active, tokens, chooseSchool, signIn, signOut, switchTo, passwordChanged],
+    [ready, school, accounts, active, tokens, chooseSchool, signIn, addLogin, signOut, switchTo, passwordChanged],
   );
   return <AccountsContext.Provider value={value}>{children}</AccountsContext.Provider>;
 }

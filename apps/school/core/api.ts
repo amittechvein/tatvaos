@@ -130,6 +130,9 @@ export async function callForm<T = any>(host: string, path: string, token: strin
 
 export type School = { code: string; name: string; city: string | null; logoUrl: string | null; host: string };
 
+export type OtpLoginChoice = { id: number; name: string; role: "STUDENT" | "EMPLOYEE" | "ADMIN"; detail: string };
+export type OtpLoginAnswer = { choose: true; token: string; accounts: OtpLoginChoice[] };
+
 export type LoginAnswer = {
   token: string;
   expiresInDays: number;
@@ -206,6 +209,19 @@ export const api = {
       body: { username, password, device: { platform: PLATFORM, appVersion: APP_VERSION, name: deviceName } },
     }),
   logout: (host: string, token: string) => call(host, "/api/mobile/v1/auth/logout", { method: "POST", token }),
+  // Sign in with mobile OTP: a code to the number, then either a login or a list to choose from
+  loginOtpRequest: (host: string, mobile: string) =>
+    call<{ sentTo: string; expiresInMinutes: number }>(host, "/api/mobile/v1/auth/login-otp/request", { method: "POST", body: { mobile } }),
+  loginOtpVerify: (host: string, mobile: string, otp: string, deviceName: string) =>
+    call<LoginAnswer | OtpLoginAnswer>(host, "/api/mobile/v1/auth/login-otp/verify", {
+      method: "POST",
+      body: { mobile, otp, device: { platform: PLATFORM, appVersion: APP_VERSION, name: deviceName } },
+    }),
+  loginOtpChoose: (host: string, token: string, userId: number, deviceName: string) =>
+    call<LoginAnswer>(host, "/api/mobile/v1/auth/login-otp/choose", {
+      method: "POST",
+      body: { token, userId, device: { platform: PLATFORM, appVersion: APP_VERSION, name: deviceName } },
+    }),
 
   bootstrap: (host: string, token: string) => call<{ data: Bootstrap }>(host, "/api/mobile/v1/bootstrap", { token }).then((r) => r.data),
   attendance: (host: string, token: string, month: string) =>

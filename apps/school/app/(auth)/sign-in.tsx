@@ -2,6 +2,7 @@
 // child's student login. The server counts wrong passwords (5 in a row lock the username for 15
 // minutes) and its message is shown as sent. Also used to add a second child (B-02): signing in
 // here adds the login to the phone and opens it, and the other logins stay signed in.
+// "Sign in with mobile OTP" (otp-sign-in.tsx) is the other way in, by the number the school has.
 
 import React, { useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
@@ -153,6 +154,7 @@ export default function SignIn() {
           </View>
           {message ? <Notice text={message.text} tone={message.tone} /> : null}
           <Button label={t("signIn")} onPress={submit} busy={busy} />
+          <Button label={t("otpSignIn")} kind="outline" onPress={() => router.push({ pathname: "/otp-sign-in", params: { keep: keep ? "1" : "0" } })} disabled={busy} />
           <Text size={12} weight={500} color={colors.textSoft} style={{ textAlign: "center", lineHeight: 18, marginTop: 4 }}>
             {t("parentsHint")}
             {"\n"}
