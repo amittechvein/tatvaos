@@ -8,36 +8,12 @@ import { useAccounts } from "@/core/accounts";
 import { routeFor } from "@/core/nav";
 import { isOn } from "@/core/biometric";
 import { useT } from "@/core/i18n";
-import { Icon } from "@/ui/Icon";
+import { BrandLogo } from "@/ui/BrandLogo";
 import { Text } from "@/ui/Text";
 import { useReduceMotion } from "@/ui/parts";
 import { colors } from "@/ui/theme";
 
 const SPLASH_MS = 2500;
-
-function Ring({ delay, run }: { delay: number; run: boolean }) {
-  const v = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (!run) return;
-    const loop = Animated.loop(Animated.timing(v, { toValue: 1, duration: 2400, delay, easing: Easing.out(Easing.quad), useNativeDriver: true }));
-    loop.start();
-    return () => loop.stop();
-  }, [run, delay, v]);
-  return (
-    <Animated.View
-      style={{
-        position: "absolute",
-        width: 112,
-        height: 112,
-        borderRadius: 34,
-        borderWidth: 2,
-        borderColor: "rgba(242,154,31,0.6)",
-        opacity: run ? v.interpolate({ inputRange: [0, 1], outputRange: [0.6, 0] }) : 0,
-        transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.7, 2.4] }) }],
-      }}
-    />
-  );
-}
 
 export default function Splash() {
   const { t } = useT();
@@ -75,29 +51,11 @@ export default function Splash() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.navy, alignItems: "center", justifyContent: "center" }}>
-      <View style={{ width: 112, height: 112, alignItems: "center", justifyContent: "center" }}>
-        <Ring delay={0} run={!reduce} />
-        <Ring delay={800} run={!reduce} />
-        <Ring delay={1600} run={!reduce} />
-        <Animated.View
-          style={{
-            width: 112,
-            height: 112,
-            borderRadius: 34,
-            backgroundColor: colors.saffron,
-            alignItems: "center",
-            justifyContent: "center",
-            opacity: pop,
-            transform: [{ scale: pop.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] }) }],
-          }}
-        >
-          <Icon name="logo" size={60} />
-        </Animated.View>
-      </View>
+      {/* the TatvaOS School logo from the brand kit (on navy: the -ondark artwork) */}
+      <Animated.View style={{ opacity: pop, transform: [{ scale: pop.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }] }}>
+        <BrandLogo name="verticalOndark" width={220} />
+      </Animated.View>
       <Animated.View style={{ alignItems: "center", opacity: rise, transform: [{ translateY: rise.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }] }}>
-        <Text accessibilityRole="header" size={34} weight={800} color={colors.white} style={{ marginTop: 36 }}>
-          Tatva<Text size={34} weight={800} color={colors.saffron}>OS</Text> School
-        </Text>
         <Text size={15} weight={500} color={colors.whiteSoft} style={{ marginTop: 8 }}>
           {t("tagline")}
         </Text>

@@ -12,6 +12,7 @@ import { IconName } from "@/ui/icons";
 import { Text } from "@/ui/Text";
 import { Button, useReduceMotion } from "@/ui/parts";
 import { LanguagePicker } from "@/ui/LanguagePicker";
+import { BrandLogo } from "@/ui/BrandLogo";
 import { colors } from "@/ui/theme";
 
 function Float({ delay, children, style }: { delay: number; children: React.ReactNode; style: object }) {
@@ -59,14 +60,7 @@ export default function Welcome() {
       <View style={{ position: "absolute", left: -90, top: 300, width: 240, height: 240, borderRadius: 120, borderWidth: 36, borderColor: "rgba(255,255,255,0.04)" }} />
       <ScrollView contentContainerStyle={{ flexGrow: 1, paddingTop: insets.top + 16, paddingBottom: insets.bottom + 24 }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 24 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-            <View style={{ width: 36, height: 36, borderRadius: 11, backgroundColor: colors.saffron, alignItems: "center", justifyContent: "center" }}>
-              <Icon name="logo" size={20} />
-            </View>
-            <Text size={18} weight={800} color={colors.white}>
-              Tatva<Text size={18} weight={800} color={colors.saffron}>OS</Text>
-            </Text>
-          </View>
+          <BrandLogo name="horizontalOndark" width={150} />
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={t("chooseLanguage")}

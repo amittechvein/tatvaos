@@ -7,8 +7,8 @@ const config: ExpoConfig = {
   slug: "tatvaos-school",
   version: "1.0.0",
   orientation: "portrait",
-  // School's own icons (scripts/make-icons.py), not the Connect app's
-  icon: "./assets/icon.png",
+  // School's own icons from the TatvaOS brand kit (assets/brand), never the Connect app's
+  icon: "./assets/brand/icon-1024.png",
   scheme: "tatvaosschool",
   userInterfaceStyle: "light",
   backgroundColor: "#1B2363",
@@ -20,7 +20,11 @@ const config: ExpoConfig = {
   android: {
     package: "com.techvein.tatvaos.school",
     versionCode: 1,
-    adaptiveIcon: { foregroundImage: "./assets/adaptive-icon.png", backgroundColor: "#F59E0B" },
+    adaptiveIcon: {
+      foregroundImage: "./assets/brand/adaptive-foreground-432.png",
+      monochromeImage: "./assets/brand/adaptive-monochrome-432.png",
+      backgroundColor: "#FFFFFF",
+    },
     // School's own Firebase app: the file comes from the EAS secret file GOOGLE_SERVICES_JSON at
     // build time and is never committed (see .gitignore). Builds without it simply have no push.
     ...(process.env.GOOGLE_SERVICES_JSON ? { googleServicesFile: process.env.GOOGLE_SERVICES_JSON } : {}),
@@ -33,9 +37,9 @@ const config: ExpoConfig = {
     "expo-secure-store",
     "expo-localization",
     "expo-font",
-    ["expo-splash-screen", { backgroundColor: "#1B2363", image: "./assets/splash-icon.png", imageWidth: 112 }],
+    ["expo-splash-screen", { image: "./assets/brand/splash-icon-1024.png", imageWidth: 180, backgroundColor: "#FFFFFF" }],
     // push: needs the TatvaOS School EAS project; Firebase config (google-services.json) is supplied per build
-    ["expo-notifications", { color: "#1B2363" }],
+    ["expo-notifications", { icon: "./assets/brand/notification-icon-96.png", color: "#1580E2" }],
     ["expo-local-authentication", { faceIDPermission: "TatvaOS School uses Face ID to open the app, only if you turn it on." }],
     // camera only for scanning the school's QR code (FR-C01), asked for at that moment
     ["expo-camera", { cameraPermission: "TatvaOS School uses the camera only to scan your school's QR code.", recordAudioAndroid: false }],

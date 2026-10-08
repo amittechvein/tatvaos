@@ -15,6 +15,7 @@ import { useT } from "@/core/i18n";
 import { Icon } from "@/ui/Icon";
 import { Text } from "@/ui/Text";
 import { SchoolBadge } from "@/ui/SchoolBadge";
+import { BrandLogo } from "@/ui/BrandLogo";
 import { Button, Field, Notice } from "@/ui/parts";
 import { colors, size } from "@/ui/theme";
 
@@ -63,9 +64,7 @@ export default function SignIn() {
         <View style={{ paddingTop: insets.top + 12, paddingHorizontal: 24, paddingBottom: 28, alignItems: "center", overflow: "hidden" }}>
           <View style={{ position: "absolute", right: -80, top: -60, width: 260, height: 260, borderRadius: 130, backgroundColor: "rgba(255,255,255,0.05)" }} />
           <View style={{ alignSelf: "stretch", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <Text size={16} weight={800} color={colors.white}>
-              Tatva<Text size={16} weight={800} color={colors.saffron}>OS</Text>
-            </Text>
+            <BrandLogo name="horizontalOndark" width={130} />
             <Pressable
               accessibilityRole="button"
               onPress={() => router.push("/find-school")}

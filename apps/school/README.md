@@ -59,7 +59,7 @@ TatvaOS School and the Connect app have no connection, and CI checks it
 
 - No imports either way, no shared package (this app has its own `package.json` and lockfile).
 - Its own identity: app ID `com.techvein.tatvaos.school` (Android and iOS), name "TatvaOS School",
-  slug `tatvaos-school`, scheme `tatvaosschool`, its own icons (`scripts/make-icons.py`).
+  slug `tatvaos-school`, scheme `tatvaosschool`, its own icons and logos from the TatvaOS brand kit in `assets/brand/` (the logos are drawn from `assets/brand/svg` through `ui/brand.ts`; after replacing an SVG, run `node scripts/brand-svgs.js`).
 - Its own Expo (EAS) project, Firebase app and Apple push key. Never reuse Connect's.
 - It calls only the TatvaOS school backend (TechveinERP), plus Razorpay's checkout page for that
   backend's fee payments and Expo's push service.
