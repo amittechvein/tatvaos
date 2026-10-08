@@ -43,7 +43,7 @@ export default function Profile() {
 
   return (
     <View style={{ flex: 1 }}>
-      <Screen title={t("profileTitle")}>
+      <Screen tab title={t("profileTitle")}>
         <ScrollView contentContainerStyle={{ padding: size.side, gap: 16, paddingBottom: 120 }}>
           <Card style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
             <ChildAvatar name={active?.name ?? ""} photoUrl={s?.photoUrl} size={56} />

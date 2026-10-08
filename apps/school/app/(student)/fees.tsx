@@ -7,7 +7,10 @@ import React from "react";
 import { Alert, FlatList, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { api, FeeItem, Receipt } from "@/core/api";
+import { api, FeeItem, fileRequest, Receipt } from "@/core/api";
+import { openPdf } from "@/core/files";
+import { ActivityIndicator } from "react-native";
+import { useState } from "react";
 import { useActive, useMe } from "@/core/useSchool";
 import { ddmmyyyy, inr } from "@/core/format";
 import { useDates, useT } from "@/core/i18n";
@@ -20,7 +23,8 @@ export default function Fees() {
   const { t } = useT();
   const { dayMonth } = useDates();
   const insets = useSafeAreaInsets();
-  const { active } = useActive();
+  const { active, token } = useActive();
+  const [opening, setOpening] = useState<number | null>(null);
   const fees = useMe("fees", api.fees);
   const receipts = useMe("receipts", (h, tk) => api.receipts(h, tk));
 
@@ -164,10 +168,21 @@ export default function Fees() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={t("downloadReceipt")}
-              onPress={() => Alert.alert(t("comingSoon"))}
+              disabled={opening !== null}
+              onPress={async () => {
+                setOpening(item.id);
+                try {
+                  const r = fileRequest(active!.school.host, `/api/finance/receipts/${item.id}/pdf`, token!);
+                  await openPdf(r.url, `Receipt ${item.receiptNo}`, r.headers);
+                } catch {
+                  Alert.alert(t("fileFailed"));
+                } finally {
+                  setOpening(null);
+                }
+              }}
               style={{ width: 44, height: 44, borderRadius: 14, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" }}
             >
-              <Icon name="download" size={18} color={colors.indigo} />
+              {opening === item.id ? <ActivityIndicator color={colors.indigo} /> : <Icon name="download" size={18} color={colors.indigo} />}
             </Pressable>
           </View>
         )}

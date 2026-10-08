@@ -7,13 +7,13 @@ import { Header, Loading, Notice } from "./parts";
 import { colors } from "./theme";
 import { Text } from "./Text";
 
-export function Screen({ title, sub, right, children }: { title: string; sub?: string; right?: React.ReactNode; children: React.ReactNode }) {
+export function Screen({ title, sub, right, tab, children }: { title: string; sub?: string; right?: React.ReactNode; tab?: boolean; children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <StatusBar style="dark" />
       <View style={{ backgroundColor: colors.white, paddingTop: insets.top }}>
-        <Header title={title} sub={sub} right={right} />
+        <Header title={title} sub={sub} right={right} noBack={tab} />
       </View>
       {children}
     </View>

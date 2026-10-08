@@ -62,10 +62,10 @@ export default function Home() {
     { icon: "attendance", label: "attendance", show: canAttendance, go: () => router.push("/attendance") },
     { icon: "homework", label: "homework", show: canHomework, go: () => router.push("/homework") },
     { icon: "fees", label: "fees", show: true, go: () => router.push("/fees") },
-    { icon: "results", label: "results", show: hasFeature(b, ...FEATURES.results), go: soon },
-    { icon: "timetable", label: "timetable", show: hasFeature(b, ...FEATURES.timetable), go: soon },
+    { icon: "results", label: "results", show: hasFeature(b, ...FEATURES.results), go: () => router.push("/results") },
+    { icon: "timetable", label: "timetable", show: hasFeature(b, ...FEATURES.timetable), go: () => router.push("/timetable") },
     { icon: "notices", label: "notices", show: hasFeature(b, ...FEATURES.notices), go: () => router.push("/notices") },
-    { icon: "library", label: "library", show: hasFeature(b, ...FEATURES.library), go: soon },
+    { icon: "library", label: "library", show: hasFeature(b, ...FEATURES.library), go: () => router.push("/library") },
     // Transport stays hidden until TatvaOS has a transport module (FR-S12).
   ];
   const refreshing = boot.isRefetching || att.isRefetching || fees.isRefetching;

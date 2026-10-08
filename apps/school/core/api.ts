@@ -153,6 +153,11 @@ export type NoticeRow = { id: number; title: string; priority: string; pinned: b
 export type NoticeDetail = { id: number; title: string; content_html: string | null; priority: string; publish_at: string; creator_name: string | null; attachments: Attachment[] };
 export type CalendarEvent = { id: number; title: string; type: string; color: string | null; start: string; end: string; startTime: string | null; endTime: string | null; preview: string; attachments: number };
 export type InboxRow = { id: number; type: string; title: string; body: string | null; link: string | null; is_read: boolean; created_at: string };
+export type Period = { slot_number: number; type: string; label: string | null; start_time: string | null; end_time: string | null; subject: string | null; teacher: string | null; is_swapped: boolean };
+export type TimetableDay = { date: string; weekday: string; is_school_open: boolean; periods: Period[] };
+export type ReportCard = { id: number; exam: string; code: string | null; version: number; publishedAt: string | null; seen: boolean; held: boolean };
+export type LibraryMe = { member: { name: string } | null; rule: { max_books: number; loan_days: number } | null; counts: { open: number; overdue: number; pending_fine: number }; reservations: { open: number; ready: number } };
+export type Loan = { id: number; title: string | null; authors: string | null; issued_on: string | null; due_on: string | null; status: string; is_overdue: boolean };
 export type LeaveType = { id: number; name: string; code?: string; is_active?: number | boolean; requires_document?: boolean; min_days_for_document?: number | null };
 
 // ---- Calls ----
@@ -206,9 +211,24 @@ export const api = {
     call<{ data: LeaveType[] }>(host, "/api/attendance/leave-types", { token }).then((r) => r.data),
   applyLeave: (host: string, token: string, body: { leave_type_id: number; start_date: string; end_date: string; reason: string }) =>
     call(host, "/api/attendance/leave-applications", { method: "POST", token, body }),
+  timetableDay: (host: string, token: string, date: string) =>
+    call<{ data: TimetableDay }>(host, "/api/timetable/views/daily", { token, query: { date } }).then((r) => r.data),
+  reportCards: (host: string, token: string) => call<{ data: ReportCard[] }>(host, "/api/exam-hub/my-report-cards", { token }).then((r) => r.data),
+  reportCardUrl: (host: string, token: string, id: number) =>
+    call<{ data: { url: string } }>(host, `/api/exam-hub/my-report-cards/${id}/file`, { token }).then((r) => r.data.url),
+  libraryMe: (host: string, token: string) => call<{ data: LibraryMe }>(host, "/api/school/library/me", { token }).then((r) => r.data),
+  libraryLoans: (host: string, token: string) =>
+    call<{ data: { loans: Loan[] } }>(host, "/api/school/library/me/loans", { token, query: { limit: 50 } }).then((r) => r.data.loans),
   unreadCount: (host: string, token: string) =>
     call<{ data: { unread_count: number } }>(host, "/api/notifications/unread-count", { token }).then((r) => r.data?.unread_count ?? 0),
 };
+
+/** The address and headers to download a file that needs the sign-in token (receipt PDF). */
+export function fileRequest(host: string, path: string, token: string) {
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}`, "X-App-Version": APP_VERSION, "X-App-Platform": PLATFORM };
+  if (DEV_API) headers["X-Tenant-Slug"] = host.split(".")[0];
+  return { url: `${DEV_API ?? `https://${host}`}${path}`, headers };
+}
 
 /** Feature keys behind each student screen, as the backend checks them (studentScope.js PERM). */
 export const FEATURES = {

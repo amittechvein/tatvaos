@@ -111,11 +111,11 @@ export const Field = React.forwardRef<TextInput, TextInputProps & { label: strin
 });
 
 /** The white header with a back button used by inner screens (Attendance). */
-export function Header({ title, sub, right }: { title: string; sub?: string; right?: React.ReactNode }) {
+export function Header({ title, sub, right, noBack }: { title: string; sub?: string; right?: React.ReactNode; noBack?: boolean }) {
   const { t } = useT();
   return (
     <View style={{ backgroundColor: colors.white, paddingHorizontal: size.side, paddingBottom: 16, flexDirection: "row", alignItems: "center", gap: 12, borderBottomWidth: 1, borderBottomColor: colors.line }}>
-      <BackButton label={t("cancel")} />
+      {noBack ? null : <BackButton label={t("cancel")} />}
       <View style={{ flex: 1 }}>
         <Text size={18} weight={800}>
           {title}
