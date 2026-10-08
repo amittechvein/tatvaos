@@ -5,7 +5,7 @@ import { FlatList, Pressable, RefreshControl, View } from "react-native";
 import { router } from "expo-router";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { api, InboxRow } from "@/core/api";
-import { useActive } from "@/core/useSchool";
+import { useActive, useSignedOutWatch } from "@/core/useSchool";
 import { todayIndia } from "@/core/format";
 import { appRouteFor } from "@/core/links";
 import { useDates, useT } from "@/core/i18n";
@@ -30,6 +30,7 @@ export default function Inbox() {
     getNextPageParam: (last) => last.next_before ?? undefined,
     enabled: !!token,
   });
+  useSignedOutWatch(q.error);
   const rows = q.data?.pages.flatMap((p) => p.data) ?? [];
   const unread = q.data?.pages[0]?.unread_count ?? 0;
   const today = todayIndia();
@@ -62,7 +63,7 @@ export default function Inbox() {
         refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
         onEndReached={() => q.hasNextPage && !q.isFetchingNextPage && q.fetchNextPage()}
         onEndReachedThreshold={0.4}
-        ListEmptyComponent={<ListState pending={q.isPending} error={q.error} emptyText={t("noInbox")} />}
+        ListEmptyComponent={<ListState onRetry={() => q.refetch()} pending={q.isPending} error={q.error} emptyText={t("noInbox")} />}
         renderItem={({ item }) => {
           const day = item.created_at ? new Date(Date.parse(item.created_at) + 330 * 60000).toISOString().slice(0, 10) : "";
           const when = day === today ? t("todayLabel") : dayMonth(day);

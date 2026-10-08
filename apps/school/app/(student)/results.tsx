@@ -41,7 +41,7 @@ export default function Results() {
         keyExtractor={(c) => String(c.id)}
         contentContainerStyle={{ padding: size.side, gap: 10, paddingBottom: 32 }}
         refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
-        ListEmptyComponent={<ListState pending={q.isPending} error={q.error} emptyText={t("noReportCards")} />}
+        ListEmptyComponent={<ListState onRetry={() => q.refetch()} pending={q.isPending} error={q.error} emptyText={t("noReportCards")} />}
         renderItem={({ item }) => (
           <Pressable
             accessibilityRole="button"

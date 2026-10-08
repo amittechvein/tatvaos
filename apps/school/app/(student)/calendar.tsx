@@ -47,7 +47,7 @@ export default function Calendar() {
             keyExtractor={(e) => String(e.id)}
             contentContainerStyle={{ padding: size.side, gap: 10, paddingBottom: 120 }}
             refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
-            ListEmptyComponent={<ListState pending={q.isPending} error={q.error} emptyText={t("noEvents")} />}
+            ListEmptyComponent={<ListState onRetry={() => q.refetch()} pending={q.isPending} error={q.error} emptyText={t("noEvents")} />}
             renderItem={({ item }) => {
               const holiday = item.type === "HOLIDAY";
               const tint = holiday ? colors.holiday : item.color || colors.late;

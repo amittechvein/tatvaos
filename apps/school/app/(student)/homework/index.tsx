@@ -43,7 +43,7 @@ export default function HomeworkList() {
         refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
         onEndReached={() => q.hasNextPage && !q.isFetchingNextPage && q.fetchNextPage()}
         onEndReachedThreshold={0.4}
-        ListEmptyComponent={<ListState pending={q.isPending} error={q.error} emptyText={t("noHomeworkYet")} />}
+        ListEmptyComponent={<ListState onRetry={() => q.refetch()} pending={q.isPending} error={q.error} emptyText={t("noHomeworkYet")} />}
         renderItem={({ item }) =>
           item.kind === "day" ? (
             <SectionTitle text={item.label} />

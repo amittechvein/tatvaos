@@ -3,7 +3,8 @@ import React from "react";
 import { View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Header, Loading, Notice, OfflineBanner } from "./parts";
+import { Button, Header, Loading, Notice, OfflineBanner } from "./parts";
+import { useT } from "@/core/i18n";
 import { colors } from "./theme";
 import { Text } from "./Text";
 
@@ -22,9 +23,16 @@ export function Screen({ title, sub, right, tab, offlineAt, children }: { title:
 }
 
 /** Loading, error or empty state for a list. */
-export function ListState({ pending, error, emptyText }: { pending: boolean; error: unknown; emptyText: string }) {
+export function ListState({ pending, error, emptyText, onRetry }: { pending: boolean; error: unknown; emptyText: string; onRetry?: () => void }) {
+  const { t } = useT();
   if (pending) return <Loading />;
-  if (error) return <View style={{ padding: 16 }}><Notice tone="error" text={(error as Error).message} /></View>;
+  if (error)
+    return (
+      <View style={{ padding: 16, gap: 12 }}>
+        <Notice tone="error" text={(error as Error).message} />
+        {onRetry ? <Button small kind="outline" label={t("retry")} onPress={onRetry} /> : null}
+      </View>
+    );
   return <View style={{ padding: 16 }}><Notice text={emptyText} /></View>;
 }
 

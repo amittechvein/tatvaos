@@ -34,7 +34,7 @@ export default function NoticesList() {
         refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
         onEndReached={() => q.hasNextPage && !q.isFetchingNextPage && q.fetchNextPage()}
         onEndReachedThreshold={0.4}
-        ListEmptyComponent={<ListState pending={q.isPending} error={q.error} emptyText={t("noNotices")} />}
+        ListEmptyComponent={<ListState onRetry={() => q.refetch()} pending={q.isPending} error={q.error} emptyText={t("noNotices")} />}
         renderItem={({ item }) => (
           <Pressable
             accessibilityRole="button"

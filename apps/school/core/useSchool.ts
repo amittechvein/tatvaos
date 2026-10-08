@@ -5,11 +5,16 @@
 // the last copy is shown instead and `offlineAt` says when it was taken.
 
 import { useEffect } from "react";
+import { Alert } from "react-native";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { api, ApiError } from "./api";
 import { useAccounts } from "./accounts";
 import * as Offline from "./offline";
+import { useT } from "./i18n";
+
+// one notice per ended login, however many of its calls come back 401 at once
+const ending = new Set<string>();
 
 // when each query last answered from its offline copy (absent: it answered live)
 const offlineSince = new Map<string, number>();
@@ -34,6 +39,28 @@ async function liveOrCopy<T>(id: string, name: string, extra: unknown[], fetch: 
   }
 }
 
+/**
+ * The token ended (30 days unused, password changed, signed out elsewhere): sign that login out,
+ * say so, and open sign-in for its school with the username filled in, instead of moving on
+ * silently. Every call of the active login goes through this.
+ */
+export function useSignedOutWatch(error: unknown) {
+  const { active, signOut, chooseSchool } = useAccounts();
+  const { t } = useT();
+  useEffect(() => {
+    if (!(error instanceof ApiError && error.signedOut) || !active || ending.has(active.id)) return;
+    ending.add(active.id);
+    const who = active;
+    (async () => {
+      await signOut(who.id);
+      await chooseSchool(who.school);
+      ending.delete(who.id);
+      Alert.alert(t("sessionEnded", { name: who.name }));
+      router.replace({ pathname: "/sign-in", params: { username: who.username } });
+    })();
+  }, [error, active, signOut, chooseSchool, t]);
+}
+
 export function useActive() {
   const { active, token } = useAccounts();
   return { active, token, host: active?.school.host ?? "", id: active?.id ?? "none" };
@@ -42,17 +69,12 @@ export function useActive() {
 /** A call for the active login. A 401 means the token ended (expired, signed out elsewhere, password changed). */
 export function useMe<T>(name: string, fn: (host: string, token: string) => Promise<T>, extraKey: unknown[] = [], enabled = true) {
   const { host, token, id } = useActive();
-  const { signOut } = useAccounts();
   const q = useQuery({
     queryKey: [id, name, ...extraKey],
     queryFn: () => liveOrCopy(id, name, extraKey, () => fn(host, token!)),
     enabled: enabled && !!token,
   });
-  useEffect(() => {
-    if (q.error instanceof ApiError && q.error.signedOut) {
-      signOut(id).then(() => router.replace("/"));
-    }
-  }, [q.error, id, signOut]);
+  useSignedOutWatch(q.error);
   return { ...q, offlineAt: q.data !== undefined ? offlineSince.get(mapKey([id, name, ...extraKey])) : undefined };
 }
 
@@ -77,5 +99,6 @@ export function useMePages<T>(name: string, fn: (host: string, token: string, cu
     getNextPageParam: (last) => last.next ?? undefined,
     enabled: enabled && !!token,
   });
+  useSignedOutWatch(q.error);
   return { ...q, offlineAt: q.data ? offlineSince.get(mapKey([id, name])) : undefined };
 }

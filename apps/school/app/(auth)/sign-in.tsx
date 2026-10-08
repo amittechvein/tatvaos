@@ -5,7 +5,7 @@
 
 import React, { useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
-import { Redirect, router } from "expo-router";
+import { Redirect, router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { ApiError } from "@/core/api";
@@ -22,7 +22,8 @@ export default function SignIn() {
   const { t } = useT();
   const insets = useSafeAreaInsets();
   const { school, signIn } = useAccounts();
-  const [username, setUsername] = useState("");
+  const params = useLocalSearchParams<{ username?: string }>();
+  const [username, setUsername] = useState(params.username ?? "");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [keep, setKeep] = useState(true);

@@ -56,7 +56,7 @@ export default function Timetable() {
         keyExtractor={(p) => String(p.slot_number)}
         contentContainerStyle={{ paddingHorizontal: size.side, paddingBottom: 32, gap: 10 }}
         refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
-        ListEmptyComponent={<ListState pending={q.isPending} error={q.error} emptyText={t("noClassesDay")} />}
+        ListEmptyComponent={<ListState onRetry={() => q.refetch()} pending={q.isPending} error={q.error} emptyText={t("noClassesDay")} />}
         renderItem={({ item }) => {
           const isBreak = item.type === "BREAK" || item.type === "LUNCH";
           const subject = clean(item.subject);
