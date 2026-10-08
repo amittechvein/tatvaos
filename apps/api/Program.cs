@@ -919,6 +919,8 @@ app.MapSettingsEndpoints();
 app.MapDepartmentEndpoints();
 // Locations and designations: Phase 0 of Hire & People (24 Sept 2026).
 app.MapOrgStructureEndpoints();
+// Employee-ID scheme: Phase 0 of People (8 Oct 2026). API only, no page yet.
+TatvaOS.Api.Modules.People.EmployeeIdEndpoints.MapEmployeeIdEndpoints(app);
 // TatvaOS Hire R1: job openings (24 Sept 2026).
 TatvaOS.Api.Modules.Hire.JobOpeningEndpoints.MapJobOpeningEndpoints(app);
 TatvaOS.Api.Modules.Hire.HireTeamEndpoints.MapHireTeamEndpoints(app);

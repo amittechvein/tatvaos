@@ -417,6 +417,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>().HasKey(s => s.TenantId);
         b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // 20261008: People's employee-ID scheme, one row per organisation.
+        b.Entity<TatvaOS.Api.Modules.People.EmployeeIdSettings>().ToTable("employee_id_settings", "people");
+        b.Entity<TatvaOS.Api.Modules.People.EmployeeIdSettings>().HasKey(s => s.TenantId);
+        b.Entity<TatvaOS.Api.Modules.People.EmployeeIdSettings>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiSend>().ToTable("api_sends", "mail");
         // 20261001-mail-sender-gate-bounce: the outbound gate's record of each
         // send's mailbox. No DbSet; append-only for the app.
