@@ -28,3 +28,19 @@ test('the boundary is the job needing more than the whole of /tmp', () => {
 test('when /tmp cannot be measured, nobody is told to remove pictures', () => {
   assert.equal(noRoomReason(8 * PHOTO, Infinity), 'no_room');
 });
+
+// Typst quotes source values in its messages, so the disk-full test must not
+// read a document's own words as the OS error (Mr. Singh, 8 Oct 2026).
+import { typstSaysNoRoom, TYPST_NO_ROOM } from '../src/render-pdf.mjs';
+
+test("Typst's real disk-full message is recognised", () => {
+  assert.equal(typstSaysNoRoom('error: failed to write PDF file (No space left on device (os error 28))'), true);
+  assert.equal(typstSaysNoRoom('error: failed to write PDF file (os error 28)'), true);
+});
+
+test('the same words inside a quoted document value are NOT a full /tmp', () => {
+  const quoted = 'error: unknown variable: "no space left on device"\n  ┌─ main.typ:12:3';
+  assert.equal(typstSaysNoRoom(quoted), false);
+  // Calibration: the raw-text check this replaces WAS fooled by it.
+  assert.equal(TYPST_NO_ROOM.test(quoted), true, 'the old check matched the quoted words - the reason for the change');
+});

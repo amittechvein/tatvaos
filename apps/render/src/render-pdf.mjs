@@ -96,6 +96,14 @@ export class PdfFailed extends Error {
 export const isNoRoom = (e) => e?.code === 'ENOSPC';
 export const TYPST_NO_ROOM = /os error 28|no space left on device/i;
 
+/** Typst's stderr with every quoted string blanked: Typst quotes source values
+ *  in its messages, so a document containing the words "no space left on
+ *  device" must not read as a full /tmp (Mr. Singh, 8 Oct 2026: a check
+ *  matching on text that can contain user content). The log line below
+ *  blanks quotes the same way. */
+export const unquoted = (stderr) => String(stderr).replace(/"[^"]*"/g, '"…"');
+export const typstSaysNoRoom = (stderr) => TYPST_NO_ROOM.test(unquoted(stderr));
+
 /** The reason for a full /tmp: the job's own need (2 x its pictures) against what /tmp holds at all. */
 export function noRoomReason(pictureBytes, capacityBytes) {
   return pictureBytes > 0 && pictureBytes * 2 > capacityBytes ? 'pictures_too_large' : 'no_room';
@@ -220,9 +228,9 @@ export async function buildPdf(job) {
     // Typst's message names the place in main.typ; a value it quotes could be
     // document text, so every quoted string is blanked before it is logged.
     if (code !== 0) {
-      if (TYPST_NO_ROOM.test(stderr)) throw await noRoom('typst', files);
+      if (typstSaysNoRoom(stderr)) throw await noRoom('typst', files);
       const line = stderr.split('\n').find((l) => /error/i.test(l)) ?? `exit ${code}`;
-      throw new PdfFailed('typst_failed', { message: line.replace(/"[^"]*"/g, '"…"').slice(0, 160) });
+      throw new PdfFailed('typst_failed', { message: unquoted(line).slice(0, 160) });
     }
     return { pdf: await readFile(join(dir, 'out.pdf')), ms: Date.now() - t0, dir }; // dir: gone by now; the gate reads its traces against it
   } finally {
