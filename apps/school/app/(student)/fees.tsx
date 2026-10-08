@@ -6,6 +6,7 @@
 import React from "react";
 import { Alert, FlatList, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { api, FeeItem, fileRequest, Receipt } from "@/core/api";
 import { openPdf } from "@/core/files";
@@ -120,7 +121,7 @@ export default function Fees() {
             ))}
             {f && f.dueNow > 0 ? (
               <>
-                <Button label={t("pay", { amount: inr(f.dueNow) })} onPress={() => Alert.alert(t("payComing"))} style={{ marginTop: 16 }} />
+                <Button label={t("pay", { amount: inr(f.dueNow) })} onPress={() => router.push("/pay")} style={{ marginTop: 16 }} />
                 <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 10 }}>
                   <Icon name="lock" size={14} color={colors.textSoft} />
                   <Text size={12} weight={600} color={colors.textSoft}>

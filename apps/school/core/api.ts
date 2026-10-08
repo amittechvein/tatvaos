@@ -219,6 +219,18 @@ export const api = {
   libraryMe: (host: string, token: string) => call<{ data: LibraryMe }>(host, "/api/school/library/me", { token }).then((r) => r.data),
   libraryLoans: (host: string, token: string) =>
     call<{ data: { loans: Loan[] } }>(host, "/api/school/library/me/loans", { token, query: { limit: 50 } }).then((r) => r.data.loans),
+  // Paying fees (B-08). The student and the date are the server's for a student login; fines are
+  // the server's too. The receipt is shown only when the status call says "paid" (FR-S07).
+  createOrder: (host: string, token: string, items: { student_fee_item_id: number; amount: number }[]) =>
+    call<{ data: { order_id: string; amount: number; currency: string; key: string; student: { name: string; email: string | null; mobile_no: string | null } } }>(
+      host, "/api/finance/payments/order", { method: "POST", token, body: { items } },
+    ).then((r) => r.data),
+  verifyPayment: (host: string, token: string, body: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) =>
+    call(host, "/api/finance/payments/verify", { method: "POST", token, body }),
+  paymentStatus: (host: string, token: string, orderId: string) =>
+    call<{ data: { status: "pending" | "confirming" | "paid" | "failed" | "refunded"; receipt: { id: number; receipt_no: string; total_amount: number } | null } }>(
+      host, `/api/finance/payments/${encodeURIComponent(orderId)}/status`, { token },
+    ).then((r) => r.data),
   unreadCount: (host: string, token: string) =>
     call<{ data: { unread_count: number } }>(host, "/api/notifications/unread-count", { token }).then((r) => r.data?.unread_count ?? 0),
 };
