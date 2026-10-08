@@ -68,6 +68,7 @@ export default function Home() {
     { icon: "timetable", label: "timetable", show: hasFeature(b, ...FEATURES.timetable), go: () => router.push("/timetable") },
     { icon: "notices", label: "notices", show: hasFeature(b, ...FEATURES.notices), go: () => router.push("/notices") },
     { icon: "library", label: "library", show: hasFeature(b, ...FEATURES.library), go: () => router.push("/library") },
+    { icon: "hostel", label: "hostelTitle", show: hasFeature(b, ...FEATURES.hostel), go: () => router.push("/hostel") },
     // Transport stays hidden until TatvaOS has a transport module (FR-S12).
   ];
   const refreshing = boot.isRefetching || att.isRefetching || fees.isRefetching;

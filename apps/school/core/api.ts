@@ -158,6 +158,12 @@ export type TimetableDay = { date: string; weekday: string; is_school_open: bool
 export type ReportCard = { id: number; exam: string; code: string | null; version: number; publishedAt: string | null; seen: boolean; held: boolean };
 export type LibraryMe = { member: { name: string } | null; rule: { max_books: number; loan_days: number } | null; counts: { open: number; overdue: number; pending_fine: number }; reservations: { open: number; ready: number } };
 export type Loan = { id: number; title: string | null; authors: string | null; issued_on: string | null; due_on: string | null; status: string; is_overdue: boolean };
+export type MyHostel = {
+  has_allocation: boolean;
+  allocation?: { hostel_name: string; hostel_address: string | null; block_name: string | null; room_number: string | null; floor: string | number | null; bed_label: string | null; is_ac: boolean | number | null };
+  wardens?: { id: number; role: string | null; warden_name: string | null; mobile: string | null; block_name: string | null }[];
+  roommates?: { bed_label: string | null; roommate_name: string | null; class_name: string | null; section_name: string | null }[];
+};
 export type LeaveType = { id: number; name: string; code?: string; is_active?: number | boolean; requires_document?: boolean; min_days_for_document?: number | null };
 
 // ---- Calls ----
@@ -231,6 +237,7 @@ export const api = {
     call<{ data: { status: "pending" | "confirming" | "paid" | "failed" | "refunded"; receipt: { id: number; receipt_no: string; total_amount: number } | null } }>(
       host, `/api/finance/payments/${encodeURIComponent(orderId)}/status`, { token },
     ).then((r) => r.data),
+  myHostel: (host: string, token: string) => call<{ data: MyHostel }>(host, "/api/school/hostel/my-hostel", { token }).then((r) => r.data),
   registerDevice: (host: string, token: string, body: { expoPushToken: string; platform: string; appVersion: string; deviceName: string; language: string }) =>
     call(host, "/api/mobile/v1/devices", { method: "POST", token, body }),
   unreadCount: (host: string, token: string) =>
@@ -256,6 +263,7 @@ export const FEATURES = {
   timetable: ["academics.timetable.view_timetable"],
   results: ["academics.examination_hub.my_report_cards"],
   library: ["academics.library.search_books"],
+  hostel: ["assets.hostel.view_hostel"],
 } as const;
 
 /** True when the login holds any of these feature keys (the web's permission check, for menus only). */
