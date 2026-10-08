@@ -12,6 +12,9 @@ import { ApiError } from "@/core/api";
 import { useT } from "@/core/i18n";
 import { Text } from "@/ui/Text";
 import { Button, Loading, Notice, useReduceMotion } from "@/ui/parts";
+import { PasswordForm } from "@/ui/PasswordForm";
+import { api } from "@/core/api";
+import { Alert, ScrollView } from "react-native";
 import { colors } from "@/ui/theme";
 
 function Stop({ title, body, signOut, onRetry }: { title?: string; body: string; signOut?: boolean; onRetry?: () => void }) {
@@ -45,6 +48,30 @@ function Stop({ title, body, signOut, onRetry }: { title?: string; body: string;
   );
 }
 
+/** FR-C04: a temporary password must be replaced before anything else opens. */
+function ForcedChange() {
+  const { t } = useT();
+  const insets = useSafeAreaInsets();
+  const { active, token, signOut } = useAccounts();
+  return (
+    <ScrollView style={{ flex: 1, backgroundColor: colors.white }} contentContainerStyle={{ padding: 24, paddingTop: insets.top + 32, gap: 16 }} keyboardShouldPersistTaps="handled">
+      <Text accessibilityRole="header" size={24} weight={800}>{t("mustChangeTitle")}</Text>
+      <Text size={15} weight={500} color={colors.textSoft} style={{ lineHeight: 22 }}>{t("mustChangeBody")}</Text>
+      <PasswordForm
+        askCurrent
+        submitLabel={t("save")}
+        onSubmit={async (current, next) => {
+          if (!active || !token) return;
+          await api.changePassword(active.school.host, token, current, next);
+          await signOut(active.id);
+          Alert.alert(t("passwordChanged"));
+          router.replace("/sign-in");
+        }}
+      />
+    </ScrollView>
+  );
+}
+
 export default function StudentLayout() {
   const { t } = useT();
   const reduce = useReduceMotion();
@@ -58,7 +85,7 @@ export default function StudentLayout() {
   if (boot.error) {
     const e = boot.error as ApiError;
     if (e.code === "APP_NOT_ENABLED") return <Stop body={t("notEnabled", { school: active.school.name })} signOut onRetry={() => boot.refetch()} />;
-    if (e.code === "PASSWORD_CHANGE_REQUIRED") return <Stop body={t("mustChange")} signOut />;
+    if (e.code === "PASSWORD_CHANGE_REQUIRED") return <ForcedChange />;
     return (
       <View style={{ flex: 1, padding: 24, justifyContent: "center", gap: 12 }}>
         <Notice tone="error" text={e.message} />
@@ -69,7 +96,7 @@ export default function StudentLayout() {
   const b = boot.data!;
   if (b.app.updateRequired) return <Stop title={t("updateTitle")} body={t("updateBody")} />;
   if (!b.app.enabled) return <Stop body={t("notEnabled", { school: b.school.name })} signOut onRetry={() => boot.refetch()} />;
-  if (b.user.mustChangePassword) return <Stop body={t("mustChange")} signOut />;
+  if (b.user.mustChangePassword || active.mustChangePassword) return <ForcedChange />;
 
   return (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg }, animation: reduce ? "none" : "slide_from_right" }}>

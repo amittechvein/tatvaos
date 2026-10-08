@@ -60,11 +60,11 @@ export default function Home() {
   const soon = () => Alert.alert(t("comingSoon"));
   const tiles: { icon: IconName; label: StringKey; show: boolean; go: () => void }[] = [
     { icon: "attendance", label: "attendance", show: canAttendance, go: () => router.push("/attendance") },
-    { icon: "homework", label: "homework", show: canHomework || hasFeature(b, ...FEATURES.assignments), go: soon },
+    { icon: "homework", label: "homework", show: canHomework, go: () => router.push("/homework") },
     { icon: "fees", label: "fees", show: true, go: () => router.push("/fees") },
     { icon: "results", label: "results", show: hasFeature(b, ...FEATURES.results), go: soon },
     { icon: "timetable", label: "timetable", show: hasFeature(b, ...FEATURES.timetable), go: soon },
-    { icon: "notices", label: "notices", show: hasFeature(b, ...FEATURES.notices), go: soon },
+    { icon: "notices", label: "notices", show: hasFeature(b, ...FEATURES.notices), go: () => router.push("/notices") },
     { icon: "library", label: "library", show: hasFeature(b, ...FEATURES.library), go: soon },
     // Transport stays hidden until TatvaOS has a transport module (FR-S12).
   ];
@@ -115,7 +115,7 @@ export default function Home() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={t("notifications", { n: unread.data ?? 0 })}
-              onPress={soon}
+              onPress={() => router.push("/inbox")}
               style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.10)", alignItems: "center", justifyContent: "center" }}
             >
               <Icon name="bell" size={22} color={colors.white} />
@@ -156,7 +156,7 @@ export default function Home() {
             </Summary>
           ) : null}
           {canHomework ? (
-            <Summary onPress={soon}>
+            <Summary onPress={() => router.push("/homework")}>
               <Icon name="homework" size={36} />
               <Text size={14} weight={800} numberOfLines={2}>
                 {hwToday === 0 ? t("hwNone") : hwToday === 1 ? t("hwOne") : t("hwToday", { n: hwToday })}

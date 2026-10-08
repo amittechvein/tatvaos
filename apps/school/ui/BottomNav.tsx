@@ -14,8 +14,8 @@ import { colors } from "./theme";
 
 const items: { key: string; icon: IconName; label: StringKey; go?: string }[] = [
   { key: "home", icon: "navHome", label: "navHome", go: "/home" },
-  { key: "calendar", icon: "navCalendar", label: "navCalendar" },
-  { key: "profile", icon: "navProfile", label: "navProfile" },
+  { key: "calendar", icon: "navCalendar", label: "navCalendar", go: "/calendar" },
+  { key: "profile", icon: "navProfile", label: "navProfile", go: "/profile" },
 ];
 
 export function BottomNav({ current }: { current: string }) {

@@ -2,7 +2,7 @@
 // never shown for another, and signing out can drop exactly that login's copies.
 
 import { useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { api, ApiError } from "./api";
 import { useAccounts } from "./accounts";
@@ -37,4 +37,16 @@ export function useBoot() {
 export function useForget() {
   const qc = useQueryClient();
   return (id: string) => qc.removeQueries({ queryKey: [id] });
+}
+
+/** A paged list for the active login (B-07 lists: pass `next` back as the cursor until it is null). */
+export function useMePages<T>(name: string, fn: (host: string, token: string, cursor?: string) => Promise<{ items: T[]; next: string | null }>, enabled = true) {
+  const { host, token, id } = useActive();
+  return useInfiniteQuery({
+    queryKey: [id, name],
+    queryFn: ({ pageParam }) => fn(host, token!, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.next ?? undefined,
+    enabled: enabled && !!token,
+  });
 }

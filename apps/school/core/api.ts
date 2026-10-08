@@ -146,6 +146,15 @@ export type Fees = { totals: { amount: number; discount: number; paid: number; f
 export type Receipt = { id: number; receiptNo: string; paidOn: string; amount: number; mode: string | null; online: boolean; reverted: boolean };
 export type Page<T> = { items: T[]; next: string | null };
 
+export type HomeworkRow = { id: number; date: string; subject: string | null; teacher: string | null; noHomework: boolean; preview: string; attachments: number };
+export type Attachment = { id?: number; name?: string; file_name?: string; original_name?: string; mime_type?: string; url?: string | null; storage_key?: string };
+export type HomeworkDetail = { id: number; for_date: string; subject_name: string | null; is_no_homework: boolean; content_html: string | null; attachments: Attachment[] };
+export type NoticeRow = { id: number; title: string; priority: string; pinned: boolean; publishedAt: string; preview: string; attachments: number };
+export type NoticeDetail = { id: number; title: string; content_html: string | null; priority: string; publish_at: string; creator_name: string | null; attachments: Attachment[] };
+export type CalendarEvent = { id: number; title: string; type: string; color: string | null; start: string; end: string; startTime: string | null; endTime: string | null; preview: string; attachments: number };
+export type InboxRow = { id: number; type: string; title: string; body: string | null; link: string | null; is_read: boolean; created_at: string };
+export type LeaveType = { id: number; name: string; code?: string; is_active?: number | boolean; requires_document?: boolean; min_days_for_document?: number | null };
+
 // ---- Calls ----
 
 export const api = {
@@ -168,6 +177,35 @@ export const api = {
   fees: (host: string, token: string) => call<{ data: Fees }>(host, "/api/mobile/v1/me/fees", { token }).then((r) => r.data),
   receipts: (host: string, token: string, cursor?: string) =>
     call<{ data: Page<Receipt> }>(host, "/api/mobile/v1/me/receipts", { token, query: { limit: 20, cursor } }).then((r) => r.data),
+  homeworkPage: (host: string, token: string, cursor?: string) =>
+    call<{ data: Page<HomeworkRow> }>(host, "/api/mobile/v1/me/homework", { token, query: { limit: 20, cursor } }).then((r) => r.data),
+  homeworkDetail: (host: string, token: string, id: number) =>
+    call<{ data: HomeworkDetail }>(host, `/api/student/homework/${id}`, { token }).then((r) => r.data),
+  noticesPage: (host: string, token: string, cursor?: string) =>
+    call<{ data: Page<NoticeRow> }>(host, "/api/mobile/v1/me/notices", { token, query: { limit: 20, cursor } }).then((r) => r.data),
+  noticeDetail: (host: string, token: string, id: number) =>
+    call<{ data: NoticeDetail }>(host, `/api/my/announcements/${id}`, { token }).then((r) => r.data),
+  calendar: (host: string, token: string, from: string, to: string) =>
+    call<{ data: { items: CalendarEvent[] } | CalendarEvent[] }>(host, "/api/mobile/v1/me/calendar", { token, query: { from, to } }).then((r) =>
+      Array.isArray(r.data) ? r.data : r.data.items,
+    ),
+  // before= (empty) asks for the first page in the app's paging mode
+  inboxPage: (host: string, token: string, before?: number | null) =>
+    call<{ data: InboxRow[]; next_before: number | null; unread_count: number }>(host, `/api/notifications?limit=20&before=${before ?? ""}`, { token }),
+  markRead: (host: string, token: string, id: number) => call(host, `/api/notifications/${id}/read`, { method: "PATCH", token }),
+  markAllRead: (host: string, token: string) => call(host, "/api/notifications/read-all", { method: "PATCH", token }),
+  changePassword: (host: string, token: string, currentPassword: string, newPassword: string) =>
+    call(host, "/api/auth/change-password", { method: "POST", token, body: { currentPassword, newPassword, confirmPassword: newPassword } }),
+  otpRequest: (host: string, username: string) =>
+    call<{ channel: "sms" | "email"; sentTo: string; expiresInMinutes: number }>(host, "/api/mobile/v1/auth/otp/request", { method: "POST", body: { username } }),
+  otpVerify: (host: string, username: string, otp: string) =>
+    call<{ resetToken: string }>(host, "/api/mobile/v1/auth/otp/verify", { method: "POST", body: { username, otp } }),
+  otpReset: (host: string, resetToken: string, newPassword: string) =>
+    call(host, "/api/mobile/v1/auth/otp/reset", { method: "POST", body: { resetToken, newPassword, confirmPassword: newPassword } }),
+  leaveTypes: (host: string, token: string) =>
+    call<{ data: LeaveType[] }>(host, "/api/attendance/leave-types", { token }).then((r) => r.data),
+  applyLeave: (host: string, token: string, body: { leave_type_id: number; start_date: string; end_date: string; reason: string }) =>
+    call(host, "/api/attendance/leave-applications", { method: "POST", token, body }),
   unreadCount: (host: string, token: string) =>
     call<{ data: { unread_count: number } }>(host, "/api/notifications/unread-count", { token }).then((r) => r.data?.unread_count ?? 0),
 };

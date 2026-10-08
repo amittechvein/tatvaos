@@ -145,7 +145,7 @@ export default function SignIn() {
                 {t("keepSignedIn")}
               </Text>
             </Pressable>
-            <Pressable accessibilityRole="link" onPress={() => setMessage({ text: t("forgotSoon"), tone: "info" })} style={{ minHeight: 44, justifyContent: "center" }}>
+            <Pressable accessibilityRole="link" onPress={() => router.push({ pathname: "/forgot", params: { username: username.trim() } })} style={{ minHeight: 44, justifyContent: "center" }}>
               <Text size={14} weight={700} color={colors.indigo}>
                 {t("forgot")}
               </Text>

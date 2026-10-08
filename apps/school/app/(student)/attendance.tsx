@@ -6,6 +6,7 @@
 import React, { useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import Svg, { Circle } from "react-native-svg";
 import { api, AttendanceMonth, FEATURES, hasFeature } from "@/core/api";
@@ -186,7 +187,7 @@ export default function Attendance() {
       </ScrollView>
       {canLeave ? (
         <View style={{ position: "absolute", left: size.side, right: size.side, bottom: insets.bottom + 16 }}>
-          <Button label={t("applyLeave")} onPress={() => Alert.alert(t("comingSoon"))} />
+          <Button label={t("applyLeave")} onPress={() => router.push("/leave")} />
         </View>
       ) : null}
     </View>
