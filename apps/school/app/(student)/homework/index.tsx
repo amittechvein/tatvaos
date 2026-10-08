@@ -9,6 +9,9 @@ import { useDates, useT } from "@/core/i18n";
 import { Icon } from "@/ui/Icon";
 import { Text } from "@/ui/Text";
 import { ListState, Screen, SectionTitle } from "@/ui/Screen";
+import { Segments } from "@/ui/Segments";
+import { FEATURES, hasFeature } from "@/core/api";
+import { useBoot } from "@/core/useSchool";
 import { cardShadow, colors, size } from "@/ui/theme";
 
 type Row = { kind: "day"; key: string; label: string } | { kind: "hw"; key: string; hw: HomeworkRow };
@@ -17,6 +20,7 @@ export default function HomeworkList() {
   const { t } = useT();
   const { longToday } = useDates();
   const q = useMePages("homework-pages", api.homeworkPage);
+  const showAssignments = hasFeature(useBoot().data, ...FEATURES.assignments);
   const today = todayIndia();
   const yesterday = new Date(Date.parse(today + "T12:00:00Z") - 86400000).toISOString().slice(0, 10);
 
@@ -36,6 +40,9 @@ export default function HomeworkList() {
 
   return (
     <Screen offlineAt={q.offlineAt} title={t("homeworkTitle")} right={<Icon name="homework" size={34} />}>
+      {showAssignments ? (
+        <Segments value="homework" options={[{ key: "homework", label: t("homeworkTitle") }, { key: "assignments", label: t("assignmentsTitle") }]} onChange={() => router.replace("/assignments")} />
+      ) : null}
       <FlatList
         data={rows}
         keyExtractor={(r) => r.key}

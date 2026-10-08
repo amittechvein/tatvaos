@@ -103,6 +103,29 @@ export async function call<T = any>(host: string, path: string, opts: Options = 
   return json as T;
 }
 
+/** A multipart form (files + fields) to the school; the same errors as call(). */
+export async function callForm<T = any>(host: string, path: string, token: string, form: FormData): Promise<T> {
+  const headers: Record<string, string> = { Accept: "application/json", Authorization: `Bearer ${token}`, "X-App-Version": APP_VERSION, "X-App-Platform": PLATFORM };
+  if (DEV_API) headers["X-Tenant-Slug"] = host.split(".")[0];
+  let res: Response;
+  // uploads get longer than other calls, but never hang for ever on a weak connection
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
+  try {
+    // no Content-Type: fetch sets the multipart boundary itself
+    res = await fetch(`${DEV_API ?? `https://${host}`}${path}`, { method: "POST", headers, body: form, signal: ctrl.signal });
+  } catch {
+    throw new ApiError("No internet connection. Please check and try again.", 0);
+  } finally {
+    clearTimeout(timer);
+  }
+  const json: any = await res.json().catch(() => null);
+  if (!res.ok || !json || json.success === false) {
+    throw new ApiError((json && json.error) || "Something went wrong. Please try again.", res.status || 500, { code: json?.code });
+  }
+  return json as T;
+}
+
 // ---- Shapes, as the backend sends them (mobile-v1.md) ----
 
 export type School = { code: string; name: string; city: string | null; logoUrl: string | null; host: string };
@@ -163,6 +186,11 @@ export type MyHostel = {
   allocation?: { hostel_name: string; hostel_address: string | null; block_name: string | null; room_number: string | null; floor: string | number | null; bed_label: string | null; is_ac: boolean | number | null };
   wardens?: { id: number; role: string | null; warden_name: string | null; mobile: string | null; block_name: string | null }[];
   roommates?: { bed_label: string | null; roommate_name: string | null; class_name: string | null; section_name: string | null }[];
+};
+export type AssignmentRow = { id: number; title: string; type: string; subject: string | null; dueDate: string | null; publishedAt: string | null; status: string; submission: { status: string; submittedAt: string | null } | null };
+export type AssignmentDetail = {
+  assignment: { id: number; title: string; content_html: string | null; subject_name: string | null; due_date_enabled: boolean; due_date: string | null; allow_late_submission: boolean; status: string; attachments: Attachment[]; max_marks: number | null };
+  submission: { id: number; status: string; answer_title: string | null; answer_html: string | null; submitted_at: string | null; marks_obtained?: number | null; grade?: string | null; teacher_remark?: string | null; attachments?: Attachment[] } | null;
 };
 export type LeaveType = { id: number; name: string; code?: string; is_active?: number | boolean; requires_document?: boolean; min_days_for_document?: number | null };
 
@@ -237,6 +265,18 @@ export const api = {
     call<{ data: { status: "pending" | "confirming" | "paid" | "failed" | "refunded"; receipt: { id: number; receipt_no: string; total_amount: number } | null } }>(
       host, `/api/finance/payments/${encodeURIComponent(orderId)}/status`, { token },
     ).then((r) => r.data),
+  assignmentsPage: (host: string, token: string, cursor?: string) =>
+    call<{ data: Page<AssignmentRow> }>(host, "/api/mobile/v1/me/assignments", { token, query: { limit: 20, cursor } }).then((r) => r.data),
+  assignmentDetail: (host: string, token: string, id: number) =>
+    call<{ data: AssignmentDetail }>(host, `/api/student/assignments/${id}`, { token }).then((r) => r.data),
+  submitAssignment: (host: string, token: string, id: number, answer: string, title: string, files: { uri: string; name: string; type: string }[]) => {
+    const form = new FormData();
+    form.append("answer_title", title);
+    form.append("answer_html", answer);
+    // React Native sends { uri, name, type } parts as files
+    for (const f of files) form.append("files", f as unknown as Blob);
+    return callForm(host, `/api/student/assignments/${id}/submit`, token, form);
+  },
   myHostel: (host: string, token: string) => call<{ data: MyHostel }>(host, "/api/school/hostel/my-hostel", { token }).then((r) => r.data),
   registerDevice: (host: string, token: string, body: { expoPushToken: string; platform: string; appVersion: string; deviceName: string; language: string }) =>
     call(host, "/api/mobile/v1/devices", { method: "POST", token, body }),
