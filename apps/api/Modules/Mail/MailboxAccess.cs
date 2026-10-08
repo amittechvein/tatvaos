@@ -30,6 +30,15 @@ namespace TatvaOS.Api.Modules.Mail;
 ///  rest for them is how a service account that was meant only to send ends
 ///  up able to read a year of correspondence.
 ///
+///  SEND-ONLY IS STRANDED IN WEBMAIL (found 7 Oct 2026). send_as alone is
+///  accepted by the API and the send endpoint honours it, but webmail cannot
+///  compose from a mailbox it cannot read - you open a mailbox to compose from
+///  it. Nothing in the UI grants send-only today (a dialog "Manager" is read +
+///  send_as since PR 396); an API grant, or any future "send only" choice, is
+///  stranded until the compose screen offers a send-only mailbox directly. The
+///  fix when it is needed: a send-only mailbox opens to "You can send as this
+///  mailbox but not read it" and a working Compose, not an empty folder view.
+///
 ///  send_on_behalf is in the schema's CHECK constraint and is NOT implemented.
 ///  It means something different on the wire - the person in From, the mailbox
 ///  in Sender - and quietly treating it as send_as would do the opposite of

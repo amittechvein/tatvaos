@@ -23,7 +23,8 @@ import {
   videoPipSupported,
   type PipHandles, type PipTile,
 } from '@/lib/pip';
-import { CSS, Centre, Spinner, initialOf } from './RoomChrome';
+import { CSS, Centre, PersonMark, Spinner, initialOf, userIdOfIdentity } from './RoomChrome';
+import { usePhotoUrls } from '@/lib/peoplePhotos';
 
 const LOBBY_POLL_MS = 3000;
 
@@ -339,6 +340,35 @@ export default function Stage({ seat, meeting, prefs }: {
   // rather than reusing `error`, because a promotion rendered in the red
   // failure banner reads as a problem.
   const [notice, setNotice] = useState<string | null>(null);
+  // The last capacity refusal the host was told about (undefined = not yet polled).
+  const lastCapacityRef = useRef<string | null | undefined>(undefined);
+
+  // ── A personal host's time limit (build plan §4.5). ─────────────────
+  // Warned at ten and at five minutes before the end — 50 and 55 on Free's
+  // 60 — for everyone in the room. The server ENDS it at the limit
+  // (PersonalMeetingLimitWorker); this only makes that no surprise. Counted
+  // from the meeting's start, or from this browser joining if the room had
+  // not reported its start yet when the meeting row was read.
+  const joinedAtRef = useRef(Date.now());
+  const warnedRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const max = meeting?.planLimits?.maxMinutes;
+    if (!max) return;
+    const started = meeting?.startedAt ? Date.parse(meeting.startedAt) : joinedAtRef.current;
+    const check = () => {
+      const left = max - (Date.now() - started) / 60000;
+      for (const at of [10, 5]) {
+        if (left <= at && left > 0 && !warnedRef.current.has(at)) {
+          warnedRef.current.add(at);
+          const whole = Math.max(1, Math.ceil(left));
+          setNotice(`This meeting ends in ${whole} ${whole === 1 ? 'minute' : 'minutes'} — the host's plan allows ${max} minutes.`);
+        }
+      }
+    };
+    check();
+    const t = setInterval(check, 15000);
+    return () => clearInterval(t);
+  }, [meeting?.planLimits?.maxMinutes, meeting?.startedAt]);
   // Which mute-all is in flight, so neither button can be pressed twice.
   const [mutingAll, setMutingAll] = useState<'guests' | 'everyone' | null>(null);
   // A role change announced in the room after this browser joined. The meeting
@@ -1198,6 +1228,17 @@ export default function Stage({ seat, meeting, prefs }: {
         if (!alive) return;
         setKnocking(r.waiting);
 
+        // Someone turned away because this personal host's meeting is full
+        // (build plan §4.5): told once per new refusal, not on every poll.
+        if (r.capacity && r.capacity.lastAt !== lastCapacityRef.current) {
+          const first = lastCapacityRef.current === undefined;
+          lastCapacityRef.current = r.capacity.lastAt;
+          // The first poll only learns what already happened, like the knocks.
+          if (!first) setNotice(r.capacity.notice);
+        } else if (!r.capacity && lastCapacityRef.current === undefined) {
+          lastCapacityRef.current = null;
+        }
+
         // ── THE KNOCK TONE, AND WHY THE FIRST POLL IS SILENT. ───────────
         //
         // A knock is the one thing in this room that does not resolve
@@ -1795,6 +1836,10 @@ export default function Stage({ seat, meeting, prefs }: {
   //  hook that runs on some renders and not others.
   // ---------------------------------------------------------------------
   const pipTiles: PipTile[] = [];
+  // Profile photos for the camera-off tiles — the stage's PersonMark does this
+  // one person at a time; the floating window needs them as plain data.
+  const pipPhotos = usePhotoUrls(
+    participants.map((p) => userIdOfIdentity(p.identity) ?? '').filter(Boolean));
 
   // Screens first, and each sharer gets their own tile — the same rule the
   // stage follows, for the same reason (feature 71).
@@ -1838,6 +1883,7 @@ export default function Stage({ seat, meeting, prefs }: {
       id: p.identity,
       name: who,
       initial: initialOf(who),
+      photo: pipPhotos[userIdOfIdentity(p.identity) ?? ''],
       speaking: p.isSpeaking,
       // No publication at all is not "unmuted" — somebody who never turned a
       // microphone on cannot be heard, and showing them as live is a lie the
@@ -1869,6 +1915,9 @@ export default function Stage({ seat, meeting, prefs }: {
     // floating window is open, and a preference that only takes effect after
     // somebody's camera happens to change is a preference that looks broken.
     t.mirror ? 'r' : '',
+    // The photo arrives a moment after the person does; without it here the
+    // window would keep the initial until something else changed.
+    t.photo ?? '',
   ].join('|')).join(';');
 
   // The freshest tiles, readable from an effect that does not depend on them.
@@ -2669,8 +2718,18 @@ export default function Stage({ seat, meeting, prefs }: {
           </button>
         </>
       )}
+      {/* A personal host whose plan has no recording (build plan §4.5): the
+          button says Premium and does nothing. The server refuses the start
+          regardless of what a browser sends. */}
+      {isHost && meeting && !recOff && !isPrivate && meeting.planLimits && !meeting.planLimits.recording && (
+        <button type="button" className="cx-btn cx-btn--rec" disabled
+                title="Recording is part of Premium.">
+          <i className="ri-record-circle-line" />
+          Record · Premium
+        </button>
+      )}
       {/* Recording. The long comment above this Host section is about THIS button. */}
-      {isHost && meeting && !recOff && !isPrivate && (
+      {isHost && meeting && !recOff && !isPrivate && !(meeting.planLimits && !meeting.planLimits.recording) && (
         <>
           <button type="button" className={`cx-btn cx-btn--rec ${recording ? 'is-rec' : ''}`}
                   onClick={() => {
@@ -3251,7 +3310,7 @@ export default function Stage({ seat, meeting, prefs }: {
                 && p.identity.startsWith('user:');
               return (
                 <div className="cx-row cx-row--person" key={p.identity}>
-                  <span className="cx-av">{initialOf(nm)}</span>
+                  <PersonMark as="span" className="cx-av" identity={p.identity} name={nm} />
                   <div className="cx-grow">
                     {/* Wraps rather than ellipsises. The controls used to sit
                         on this line and squeezed it to about eight characters,
@@ -3944,7 +4003,7 @@ function Tile({ p, big, local, showScreen, hand, canHost, pinned, mirror = true,
 
       {camOff && (
         <div className="cx-off">
-          <div className="cx-initial">{initialOf(name)}</div>
+          <PersonMark className="cx-initial" identity={p.identity} name={name} />
         </div>
       )}
 

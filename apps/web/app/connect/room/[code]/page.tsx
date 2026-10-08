@@ -65,11 +65,27 @@ type Phase =
   // door rather than silently — somebody who is signed in and lands in a
   // meeting under a typed name deserves to know why.
   | { kind: 'door'; door: Doorstep; meeting: Meeting | null; asGuest?: boolean }
-  | { kind: 'waiting'; waitToken: string }
-  // The seat is already minted — it is a ten-minute join WINDOW, so the time
-  // spent checking a camera here costs nothing. The room does not know about
-  // you until Stage connects.
-  | { kind: 'prejoin'; seat: Seat; meeting: Meeting | null }
+  // ── CHOOSE FIRST, THEN WAIT, THEN STRAIGHT IN. ───────────────────────
+  //
+  //  Amit, 25 Sept 2026: a guest in a meeting with a waiting room was let in
+  //  and THEN shown the camera/microphone screen and a Join button — a second
+  //  step at exactly the moment the host was waiting for them to appear. The
+  //  order is now: name at the door (which is what knocks, and checks the
+  //  password where a wrong one can be said), then the camera/microphone
+  //  choice and Join, then the wait — and the moment the host accepts, the
+  //  meeting opens with the choices already made. No second click.
+  //
+  //  So 'prejoin' may be reached WITHOUT a seat: the knock is out and the
+  //  answer is polled in the background while the person chooses. If the
+  //  host accepts first, `seat` fills in and Join goes straight in. If not,
+  //  Join moves to 'waiting', which now carries the choices, and admission
+  //  goes straight to 'live'.
+  //
+  //  A seat is a ten-minute join WINDOW, so time spent here costs nothing
+  //  unless someone is admitted and then leaves this screen open for ten
+  //  minutes before pressing Join.
+  | { kind: 'prejoin'; seat: Seat | null; waitToken: string | null; meeting: Meeting | null; title: string; name: string | null }
+  | { kind: 'waiting'; waitToken: string; meeting: Meeting | null; prefs: JoinPrefs }
   | { kind: 'live'; seat: Seat; meeting: Meeting | null; prefs: JoinPrefs }
   | { kind: 'denied' }
   // This browser cannot decode an encrypted meeting. Its own phase, not a
@@ -79,6 +95,16 @@ type Phase =
   | { kind: 'gone'; message: string };
 
 const WAIT_POLL_MS = 2500;
+
+/** Where a knock's answer leads: always the camera/microphone choice first. */
+// `title` and `name` ride along because a guest has no meeting row and no
+// account: without them the choice screen read "Meeting" and drew a "Y" (for
+// "You") where the name typed at the door belongs — seen 25 Sept 2026.
+function afterKnock(res: JoinResult, meeting: Meeting | null, title: string, name: string | null): Phase {
+  return res.status === 'waiting'
+    ? { kind: 'prejoin', seat: null, waitToken: res.waitToken, meeting, title, name }
+    : { kind: 'prejoin', seat: res, waitToken: null, meeting, title, name };
+}
 
 export default function RoomPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
@@ -188,9 +214,7 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
           }
           const res = await connectApi.join(authedFetch, meeting.id);
           if (!alive) return;
-          setPhase(res.status === 'waiting'
-            ? { kind: 'waiting', waitToken: res.waitToken }
-            : { kind: 'prejoin', seat: res, meeting });
+          setPhase(afterKnock(res, meeting, meeting.title, null));
           return;
         }
 
@@ -230,9 +254,18 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
     // callback), so nothing else in this array moves during a meeting.
   }, [authLoading, userId, authedFetch, code]);
 
+  // The knock's answer, polled while choosing (prejoin with no seat yet) and
+  // while waiting. Keyed on the TOKEN, not on the phase object: choosing a
+  // camera re-renders, and restarting the poll on every render would hit the
+  // server each time.
+  const pollToken =
+    phase.kind === 'waiting' ? phase.waitToken
+    : phase.kind === 'prejoin' && phase.seat === null ? phase.waitToken
+    : null;
+
   useEffect(() => {
-    if (phase.kind !== 'waiting') return;
-    const token = phase.waitToken;
+    if (!pollToken) return;
+    const token = pollToken;
     let alive = true;
 
     const tick = async () => {
@@ -240,7 +273,16 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
         const res = await guestApi.wait(token);
         if (!alive) return;
         if (res.status === 'denied') { setPhase({ kind: 'denied' }); return; }
-        if (res.status !== 'waiting') setPhase({ kind: 'prejoin', seat: res, meeting: null });
+        // Admitted, but the room filled while they waited (a personal host's
+        // plan limit): the server's own sentence, not "the link is broken".
+        if (res.status === 'full') { setPhase({ kind: 'gone', message: res.error }); return; }
+        if (res.status === 'waiting') return;
+        // Admitted. Still choosing: keep the seat for when Join is pressed.
+        // Already pressed Join: straight into the meeting with those choices.
+        setPhase((p) =>
+          p.kind === 'waiting' ? { kind: 'live', seat: res, meeting: p.meeting, prefs: p.prefs }
+          : p.kind === 'prejoin' ? { ...p, seat: res }
+          : p);
       } catch (e) {
         if (!alive) return;
         // A 404 is the token spent, expired, or never valid — one answer for
@@ -252,7 +294,7 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
     void tick();
     const t = setInterval(() => void tick(), WAIT_POLL_MS);
     return () => { alive = false; clearInterval(t); };
-  }, [phase]);
+  }, [pollToken]);
 
   if (authLoading || phase.kind === 'resolving') {
     return <Centre><Spinner /><p className="mt-3 mb-0">Opening the meeting…</p></Centre>;
@@ -307,7 +349,9 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
         <Spinner />
         <h1 style={{ fontSize: 20, fontWeight: 600, margin: '18px 0 8px' }}>Waiting to be let in</h1>
         <p style={{ color: '#9b9bab', maxWidth: 420 }}>
-          The host has been told you are here. Keep this page open — you will join automatically.
+          The host has been told you are here. Keep this page open — you will be
+          in the meeting the moment they let you in, with your camera
+          {phase.prefs.cam ? ' on' : ' off'} and your microphone{phase.prefs.mic ? ' on' : ' off'}.
         </p>
       </Centre>
     );
@@ -321,10 +365,8 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
         meeting={phase.meeting}
         signedInName={user?.displayName ?? null}
         asGuest={phase.asGuest === true}
-        onSeat={(res, meeting) => {
-          setPhase(res.status === 'waiting'
-            ? { kind: 'waiting', waitToken: res.waitToken }
-            : { kind: 'prejoin', seat: res, meeting });
+        onSeat={(res, meeting, typedName) => {
+          setPhase(afterKnock(res, meeting, phase.door.title, typedName));
         }}
         onGone={(m) => setPhase({ kind: 'gone', message: m })}
       />
@@ -332,13 +374,15 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
   }
 
   if (phase.kind === 'prejoin') {
-    const seat = phase.seat;
-    const meeting = phase.meeting;
+    const { seat, waitToken, meeting, title, name } = phase;
     return (
       <PreJoin
-        title={meeting?.title ?? 'Meeting'}
-        name={user?.displayName ?? 'You'}
-        onJoin={(prefs) => setPhase({ kind: 'live', seat, meeting, prefs })}
+        title={title}
+        name={user?.displayName ?? name ?? 'You'}
+        awaitingHost={seat === null}
+        onJoin={(prefs) => setPhase(seat
+          ? { kind: 'live', seat, meeting, prefs }
+          : { kind: 'waiting', waitToken: waitToken!, meeting, prefs })}
       />
     );
   }
@@ -356,7 +400,7 @@ function Door({ code, door, meeting, signedInName, asGuest = false, onSeat, onGo
   signedInName: string | null;
   /** Signed in, but this meeting belongs to another organisation. */
   asGuest?: boolean;
-  onSeat: (res: JoinResult, meeting: Meeting | null) => void;
+  onSeat: (res: JoinResult, meeting: Meeting | null, typedName: string) => void;
   onGone: (message: string) => void;
 }) {
   const { authedFetch } = useAuth();
@@ -377,7 +421,7 @@ function Door({ code, door, meeting, signedInName, asGuest = false, onSeat, onGo
       const res = meeting
         ? await connectApi.join(authedFetch, meeting.id, password || undefined)
         : await guestApi.join(code, name.trim(), password || undefined);
-      onSeat(res, meeting);
+      onSeat(res, meeting, name.trim());
     } catch (err) {
       // A wrong password after a VALID code answers 403 and says so: the
       // code-holder already knows the meeting exists, so a distinct answer

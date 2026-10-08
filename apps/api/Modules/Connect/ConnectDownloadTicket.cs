@@ -58,20 +58,40 @@ public sealed class ConnectDownloadTicket(IConfiguration config)
     /// </summary>
     private static readonly TimeSpan Life = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// The type every ticket carries INSIDE its signed body, and the only one
+    /// Verify accepts. The key is Jwt:SigningKey, which also signs access
+    /// tokens; see TokenIssuer.AccessTokenType for the rule (Mr. Singh's ruling,
+    /// which reached this lane by 28 Sept 2026). Tickets issued before this
+    /// field existed are refused: they live
+    /// five minutes, and a share reader mid-playback re-opens the link once.
+    /// </summary>
+    public const string Type = "connect-download";
+
     private readonly byte[] _key = Encoding.UTF8.GetBytes(
         config["Jwt:SigningKey"] ?? throw new InvalidOperationException(
             "Jwt:SigningKey is required to sign recording downloads."));
 
-    public sealed record Claim(Guid TenantId, Guid MeetingId, Guid RecordingId, Guid UserId);
+    /// <param name="UserId">Guid.Empty for somebody holding a share LINK, who
+    /// has no account to name.</param>
+    /// <param name="ShareId">Null when the reader was in the meeting — the
+    /// baseline, re-checked as a participant. Set when a SHARE let them in, and
+    /// then the file route re-checks that share instead, on every request:
+    /// revoking it, or an administrator switching public links off, must stop
+    /// a playback in progress rather than five minutes later.</param>
+    public sealed record Claim(Guid TenantId, Guid MeetingId, Guid RecordingId, Guid UserId,
+        Guid? ShareId = null);
 
     public string Issue(Claim claim)
     {
         var payload = JsonSerializer.SerializeToUtf8Bytes(new Body
         {
+            Y = Type,
             T = claim.TenantId,
             M = claim.MeetingId,
             R = claim.RecordingId,
             U = claim.UserId,
+            S = claim.ShareId,
             E = DateTimeOffset.UtcNow.Add(Life).ToUnixTimeSeconds(),
         });
 
@@ -79,7 +99,10 @@ public sealed class ConnectDownloadTicket(IConfiguration config)
         return $"{body}.{ToBase64Url(Sign(body))}";
     }
 
-    public Claim? Verify(string? ticket)
+    /// <param name="grace">How long past expiry to still accept it. Only for
+    /// RENEWING a share reader's ticket mid-playback, where the share itself is
+    /// re-checked before anything new is issued; never for reading a file.</param>
+    public Claim? Verify(string? ticket, TimeSpan? grace = null)
     {
         if (string.IsNullOrWhiteSpace(ticket)) return null;
 
@@ -99,13 +122,17 @@ public sealed class ConnectDownloadTicket(IConfiguration config)
         try { parsed = JsonSerializer.Deserialize<Body>(FromBase64Url(body)); }
         catch (Exception e) when (e is JsonException or FormatException) { return null; }
         if (parsed is null) return null;
+        // Its own type, or nothing: a body signed with this key for any other
+        // purpose is not a ticket, however well-formed.
+        if (parsed.Y != Type) return null;
 
         // Signature checked BEFORE expiry, and expiry before anything is
         // returned: an unsigned payload's expiry claim is worth nothing.
-        if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() > parsed.E) return null;
+        var slack = (long)(grace ?? TimeSpan.Zero).TotalSeconds;
+        if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() > parsed.E + slack) return null;
         if (parsed.T == Guid.Empty || parsed.M == Guid.Empty || parsed.R == Guid.Empty) return null;
 
-        return new Claim(parsed.T, parsed.M, parsed.R, parsed.U);
+        return new Claim(parsed.T, parsed.M, parsed.R, parsed.U, parsed.S);
     }
 
     private byte[] Sign(string body)
@@ -129,10 +156,16 @@ public sealed class ConnectDownloadTicket(IConfiguration config)
     /// base64 of this JSON.</summary>
     private sealed class Body
     {
+        public string? Y { get; set; }
         public Guid T { get; set; }
         public Guid M { get; set; }
         public Guid R { get; set; }
         public Guid U { get; set; }
+        // Absent from every ticket minted before sharing existed, which then
+        // reads as null — a participant's ticket — exactly as it was issued.
+        [System.Text.Json.Serialization.JsonIgnore(Condition =
+            System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public Guid? S { get; set; }
         public long E { get; set; }
     }
 }

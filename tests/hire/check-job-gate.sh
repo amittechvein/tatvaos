@@ -26,11 +26,13 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 API="$ROOT/apps/api"
 GATE="Modules/Hire/HireAccess.cs"
 
-TYPES='(JobOpening|HireCandidate|HireApplication|HireApplicationEvent|HirePipelineStage)'
+# Careers sites (20260924-f) joined 24 Sept: the public page resolves them
+# through hire.resolve_careers_site(), a function, which is not matched here.
+TYPES='(JobOpening|HireCareersSite|HireCandidate|HireApplication|HireApplicationEvent|HirePipelineStage)'
 SET_RE="Set<[[:space:]]*(TatvaOS\\.Api\\.Modules\\.Hire\\.)?${TYPES}[[:space:]]*>"
 DBSET_RE="DbSet<[[:space:]]*(TatvaOS\\.Api\\.Modules\\.Hire\\.)?${TYPES}[[:space:]]*>"
-SQL_RE='hire\.(job_openings|candidates|applications|application_events|pipeline_stages)\b'
-PROP_RE='\.(JobOpenings|HireCandidates|HireApplications|HireApplicationEvents|HirePipelineStages|Candidates|Applications)\b[^(]'
+SQL_RE='hire\.(job_openings|careers_sites|candidates|applications|application_events|pipeline_stages)\b'
+PROP_RE='\.(JobOpenings|HireCareersSites|CareersSites|HireCandidates|HireApplications|HireApplicationEvents|HirePipelineStages|Candidates|Applications)\b[^(]'
 
 fails=0
 bad() { printf '  ✗ %s\n' "$1"; fails=$((fails+1)); }

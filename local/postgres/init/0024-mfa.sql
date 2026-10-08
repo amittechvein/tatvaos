@@ -54,9 +54,14 @@ CREATE TABLE IF NOT EXISTS core.mfa_recovery_codes (
     id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id    uuid NOT NULL REFERENCES core.users(id) ON DELETE CASCADE,
     tenant_id  uuid NOT NULL REFERENCES core.tenants(id) ON DELETE CASCADE,
-    -- SHA-256 of the code. Not Argon2: these are 80 bits of our own randomness,
-    -- so there is nothing to brute-force and a slow hash would only add latency
+    -- SHA-256 of the code. Not Argon2: these are 80 bits of our own randomness
+    -- (16 symbols from a 32-symbol alphabet, TotpService.NewRecoveryCodes), so
+    -- there is nothing to brute-force and a slow hash would only add latency
     -- to a sign-in someone is already struggling with.
+    -- CORRECTED 27 Sept 2026: this comment said 80 bits while the codes were
+    -- 10 symbols, i.e. 50 bits, which a leaked table gives up in about a
+    -- GPU-day. The codes were raised to 80 bits in the same change; the
+    -- argument above holds only while that number is true.
     code_hash  text NOT NULL,
     used_at    timestamptz,
     created_at timestamptz NOT NULL DEFAULT now()

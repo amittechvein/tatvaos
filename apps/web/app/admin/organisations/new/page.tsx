@@ -230,7 +230,7 @@ export default function OnboardOrganisation() {
             <div className="space-y-6">
               <Field label="Plan">
                 <div className="grid gap-2">
-                  {plans.map((p) => (
+                  {plans.filter((p) => p.audience !== 'personal').map((p) => (
                     <button
                       key={p.id}
                       type="button"

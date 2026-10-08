@@ -325,6 +325,32 @@ public static class MailSendApiEndpoints
                 ? new MailboxAddress(string.Empty, BounceAddress.Build(sendId, bounceKeyId, bounceSecret!, bounceDomain!, DateTimeOffset.UtcNow))
                 : null;
 
+            // ---- The gate's record, written BEFORE the submit -------------
+            //  Postfix's outbound gate judges a bounce address by the send it
+            //  names: mail.sender_gate_class() looks this id up, at the moment
+            //  Postfix answers RCPT, to find the mailbox it goes out as. Until
+            //  1 Oct 2026 nothing was written before the submit, so a bounce-
+            //  tracked send was checked against nothing and the verified-domain
+            //  rule did not apply to it; the function now fails CLOSED on a
+            //  missing record, so skipping this would refuse every bounce-
+            //  tracked send. Its own table, not an early mail.api_sends row:
+            //  that table is append-only for the app, and an early row would
+            //  need its outcome rewritten after (the first try at this fix did
+            //  that and every send failed "permission denied"). Only when bounce
+            //  tracking is on - otherwise the envelope sender is the mailbox
+            //  itself and the gate judges it directly.
+            //  20261001-mail-sender-gate-bounce.sql, tests/mail-api/test-bounce-gate.sh.
+            if (bounceOn)
+            {
+                db.Set<MailApiSendEnvelope>().Add(new MailApiSendEnvelope
+                {
+                    Id = sendId,         // the id at the start of the bounce address
+                    TenantId = keyTenantId,
+                    FromAddress = fromAddress,
+                });
+                await db.SaveChangesAsync(ct);
+            }
+
             var result = await MailSender.SubmitAsync(
                 box,
                 new MailSubmission(

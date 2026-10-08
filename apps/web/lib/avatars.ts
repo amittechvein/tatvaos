@@ -48,26 +48,39 @@ export function onAvatarChange(fn: Listener): () => void {
   return () => { listeners.delete(fn); };
 }
 
-export function avatarObjectUrl(authedFetch: AuthedFetch, userId: string): Promise<string | null> {
-  const hit = cache.get(userId);
+/**
+ * A photo as an object URL, cached per person AND version.
+ *
+ * `v` is the photo's version from the photo lookup (lib/peoplePhotos). With
+ * it, the request is `?v=…`, which the API lets the browser cache for a year
+ * — that URL can only mean that picture. When a colleague changes their
+ * photo, the lookup hands out a new v, so the new picture is fetched rather
+ * than the old one served from memory. Without v (your own photo, the admin
+ * People page) it behaves as before.
+ */
+export function avatarObjectUrl(authedFetch: AuthedFetch, userId: string, v?: number): Promise<string | null> {
+  const key = `${userId}@${v ?? ''}`;
+  const hit = cache.get(key);
   if (hit) return hit;
 
-  const pending = authedFetch(`/org/users/${userId}/avatar`)
+  const pending = authedFetch(`/org/users/${userId}/avatar${v ? `?v=${v}` : ''}`)
     .then((r) => (r.ok ? r.blob() : null))
     .then((b) => (b && b.size > 0 ? URL.createObjectURL(b) : null))
     // A missing or failed photo is not an error worth surfacing — the caller
     // falls back to initials, which is a perfectly good avatar.
     .catch(() => null);
 
-  cache.set(userId, pending);
+  cache.set(key, pending);
   return pending;
 }
 
-/** Forget (and release) a cached photo — after replacing or removing one. */
+/** Forget (and release) every cached version of a photo — after replacing or removing one. */
 export function bustAvatar(userId: string): void {
-  const pending = cache.get(userId);
-  cache.delete(userId);
-  pending?.then((url) => { if (url) URL.revokeObjectURL(url); }).catch(() => {});
+  for (const [key, pending] of [...cache.entries()]) {
+    if (!key.startsWith(`${userId}@`)) continue;
+    cache.delete(key);
+    pending.then((url) => { if (url) URL.revokeObjectURL(url); }).catch(() => {});
+  }
   listeners.forEach((fn) => fn(userId));
 }
 

@@ -180,6 +180,7 @@ public static class ConnectGuestEndpoints
     private static async Task<IResult> GuestJoinAsync(
         string code, GuestJoinRequest req, AppDbContext db, TenantContext tenant,
         IPasswordHasher hasher, LiveKitTokenService tokens, ConnectRoomKey roomKeys,
+        TatvaOS.Api.Shared.Plans.EffectiveSettings plans,
         ILoggerFactory logs, CancellationToken ct)
     {
         if (!tokens.IsConfigured)
@@ -259,6 +260,21 @@ public static class ConnectGuestEndpoints
             }
         }
 
+        // Straight in (no waiting room): a personal host's plan decides how
+        // many people fit (build plan §4.5). With a waiting room the check is
+        // at Admit and again when the admitted guest collects their token.
+        if (row.WaitingRoom is not ("guests" or "everyone"))
+        {
+            var whole = await db.ConnectMeetings.AsNoTracking().FirstAsync(m => m.Id == row.MeetingId, ct);
+            var hostPlan = await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.HostPlanAsync(db, plans, whole, ct);
+            if (await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.FullAtAsync(db, hostPlan, row.MeetingId, null, ct) is long allowed)
+            {
+                await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.RecordRefusalAsync(db, whole, allowed, ct);
+                return Results.Json(new { error = TatvaOS.Api.Modules.Personal.PersonalMeetingRules.Full, full = true },
+                    statusCode: 409);
+            }
+        }
+
         var participant = new ConnectParticipant
         {
             Id = Guid.NewGuid(),
@@ -315,7 +331,8 @@ public static class ConnectGuestEndpoints
     // ==================================================================
     private static async Task<IResult> WaitAsync(
         string waitToken, AppDbContext db, TenantContext tenant,
-        LiveKitTokenService tokens, ConnectRoomKey roomKeys, CancellationToken ct)
+        LiveKitTokenService tokens, ConnectRoomKey roomKeys,
+        TatvaOS.Api.Shared.Plans.EffectiveSettings plans, CancellationToken ct)
     {
         if (!ConnectCodes.IsWellFormed(waitToken)) return Gone();
         var hash = ConnectCodes.HashToken(waitToken);
@@ -384,6 +401,22 @@ public static class ConnectGuestEndpoints
                                  && p.DisplayName == claimed.DisplayName)
                         .FirstOrDefaultAsync(ct);
                 if (person is null) return Gone();
+
+                // Admitted, but the room filled while they waited (build plan
+                // §4.5): the host's limit still holds. "full" is its own
+                // status so the page can say so, not "the link does not work".
+                var admittedTo = await db.ConnectMeetings.AsNoTracking()
+                    .FirstOrDefaultAsync(m => m.Id == claimed.MeetingId, ct);
+                if (admittedTo is not null)
+                {
+                    var hostPlan = await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.HostPlanAsync(db, plans, admittedTo, ct);
+                    if (await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.FullAtAsync(
+                            db, hostPlan, claimed.MeetingId, person.Identity, ct) is long allowed)
+                    {
+                        await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.RecordRefusalAsync(db, admittedTo, allowed, ct);
+                        return Results.Ok(new { status = "full", error = TatvaOS.Api.Modules.Personal.PersonalMeetingRules.Full });
+                    }
+                }
 
                 // The policy AT ADMISSION, not at the original knock — a host
                 // who tightened sharing while this guest waited means it.
