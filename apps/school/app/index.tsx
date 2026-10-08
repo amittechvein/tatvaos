@@ -6,6 +6,7 @@ import { Animated, Easing, View } from "react-native";
 import { router } from "expo-router";
 import { useAccounts } from "@/core/accounts";
 import { routeFor } from "@/core/nav";
+import { isOn } from "@/core/biometric";
 import { useT } from "@/core/i18n";
 import { Icon } from "@/ui/Icon";
 import { Text } from "@/ui/Text";
@@ -64,7 +65,11 @@ export default function Splash() {
   useEffect(() => {
     if (!ready) return;
     const wait = Math.max(0, (reduce ? 600 : SPLASH_MS) - (Date.now() - started.current));
-    const timer = setTimeout(() => router.replace(routeFor(active, school)), wait);
+    const timer = setTimeout(async () => {
+      // FR-C05: a login with fingerprint unlock on opens at the lock screen
+      const locked = active ? await isOn(active.id) : false;
+      router.replace(locked ? "/unlock" : routeFor(active, school));
+    }, wait);
     return () => clearTimeout(timer);
   }, [ready, active, school, reduce]);
 

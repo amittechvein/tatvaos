@@ -16,6 +16,7 @@ import { IconName } from "@/ui/icons";
 import { Text } from "@/ui/Text";
 import { BottomNav } from "@/ui/BottomNav";
 import { ChildAvatar } from "@/ui/ChildAvatar";
+import { FingerprintOffer } from "@/ui/FingerprintOffer";
 import { cardShadow, colors, size } from "@/ui/theme";
 import type { StringKey } from "@/core/strings";
 
@@ -180,6 +181,8 @@ export default function Home() {
             </Text>
           </Summary>
         </View>
+
+        {active ? <FingerprintOffer accountId={active.id} /> : null}
 
         <View style={{ paddingHorizontal: size.side, paddingTop: 24, paddingBottom: 12 }}>
           <Text size={16} weight={800}>

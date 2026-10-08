@@ -28,6 +28,7 @@ const config: ExpoConfig = {
     "expo-localization",
     "expo-font",
     ["expo-splash-screen", { backgroundColor: "#1B2363" }],
+    ["expo-local-authentication", { faceIDPermission: "TatvaOS School uses Face ID to open the app, only if you turn it on." }],
     // camera only for scanning the school's QR code (FR-C01), asked for at that moment
     ["expo-camera", { cameraPermission: "TatvaOS School uses the camera only to scan your school's QR code.", recordAudioAndroid: false }],
   ],

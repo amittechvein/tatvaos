@@ -1,6 +1,7 @@
 // Profile (FR-C10, FR-C12): the child's details, language, change password, the school's contact,
 // the app version and sign out.
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { canUse, isOn, setOn, unlock } from "@/core/biometric";
 import { Alert, Linking, Pressable, ScrollView, View } from "react-native";
 import { router } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -37,6 +38,11 @@ export default function Profile() {
   const { active, signOut } = useAccounts();
   const b = useBoot().data!;
   const [langOpen, setLangOpen] = useState(false);
+  const [bio, setBio] = useState<{ can: boolean; on: boolean }>({ can: false, on: false });
+  useEffect(() => {
+    if (!active) return;
+    Promise.all([canUse(), isOn(active.id)]).then(([can, on]) => setBio({ can, on }));
+  }, [active]);
   const s = b.student;
   const cls = s?.className ? (s.section ? `${s.className}-${s.section}` : s.className) : null;
   const contact = b.school.contact;
@@ -63,6 +69,21 @@ export default function Profile() {
             <Row label={t("languageLabel")} value={t("language")} onPress={() => setLangOpen(true)} />
             <Line />
             <Row label={t("changePassword")} onPress={() => router.push("/change-password")} />
+            {bio.can && active ? (
+              <>
+                <Line />
+                <Row
+                  label={t("fingerprintUnlock")}
+                  value={bio.on ? t("onLabel") : t("offLabel")}
+                  onPress={async () => {
+                    const next = !bio.on;
+                    if (next && !(await unlock(t("unlockPrompt"), t("cancel")))) return;
+                    await setOn(active.id, next);
+                    setBio({ can: true, on: next });
+                  }}
+                />
+              </>
+            ) : null}
           </Card>
           {contact.mobile || contact.email ? (
             <Card style={{ paddingVertical: 4 }}>
