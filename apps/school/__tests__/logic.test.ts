@@ -146,3 +146,14 @@ describe("offline copies (SRS section 8)", () => {
     expect([...store.keys()].some((k) => k.includes("DEMO_2"))).toBe(false);
   });
 });
+
+describe("a tapped push opens the right child (B-04)", () => {
+  const { accountIdFor } = require("../core/push") as typeof import("../core/push");
+  it.each([
+    [{ school: "demo", userId: 32 }, "DEMO_32"],
+    [{ school: "green", userId: "7" }, "GREEN_7"],
+    [{ school: "demo" }, null],
+    [{ userId: 3 }, null],
+    [undefined, null],
+  ])("%j → %s", (data, id) => expect(accountIdFor(data as never)).toBe(id));
+});

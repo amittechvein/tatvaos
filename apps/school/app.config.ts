@@ -28,10 +28,14 @@ const config: ExpoConfig = {
     "expo-localization",
     "expo-font",
     ["expo-splash-screen", { backgroundColor: "#1B2363" }],
+    // push: needs the TatvaOS School EAS project; Firebase config (google-services.json) is supplied per build
+    ["expo-notifications", { color: "#1B2363" }],
     ["expo-local-authentication", { faceIDPermission: "TatvaOS School uses Face ID to open the app, only if you turn it on." }],
     // camera only for scanning the school's QR code (FR-C01), asked for at that moment
     ["expo-camera", { cameraPermission: "TatvaOS School uses the camera only to scan your school's QR code.", recordAudioAndroid: false }],
   ],
+  // EAS project of TatvaOS School, set in the build environment (never committed)
+  extra: process.env.EAS_PROJECT_ID ? { eas: { projectId: process.env.EAS_PROJECT_ID } } : undefined,
   experiments: { typedRoutes: false },
 };
 

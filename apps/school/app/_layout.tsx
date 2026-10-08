@@ -11,6 +11,7 @@ import { ApiError, usingDevApi } from "@/core/api";
 import { View } from "react-native";
 import { Text } from "@/ui/Text";
 import { useReduceMotion } from "@/ui/parts";
+import { PushSetup } from "@/ui/PushSetup";
 import { colors } from "@/ui/theme";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -39,6 +40,7 @@ export default function RootLayout() {
         <AccountsProvider>
           <QueryClientProvider client={queryClient}>
             <StatusBar style="light" />
+            <PushSetup />
             <Stack
               screenOptions={{
                 headerShown: false,

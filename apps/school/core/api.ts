@@ -231,6 +231,8 @@ export const api = {
     call<{ data: { status: "pending" | "confirming" | "paid" | "failed" | "refunded"; receipt: { id: number; receipt_no: string; total_amount: number } | null } }>(
       host, `/api/finance/payments/${encodeURIComponent(orderId)}/status`, { token },
     ).then((r) => r.data),
+  registerDevice: (host: string, token: string, body: { expoPushToken: string; platform: string; appVersion: string; deviceName: string; language: string }) =>
+    call(host, "/api/mobile/v1/devices", { method: "POST", token, body }),
   unreadCount: (host: string, token: string) =>
     call<{ data: { unread_count: number } }>(host, "/api/notifications/unread-count", { token }).then((r) => r.data?.unread_count ?? 0),
 };
