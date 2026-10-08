@@ -1,6 +1,9 @@
 # Docs AI — what we tell customers (proposal)
 
-**Status: draft, 3 October 2026. Wording only; no code changed.** For Mr. Singh's ruling before Docs AI is offered to anyone, Techvein included. Price decided by Amit on 3 Oct (step 2).
+**Status:**
+- **3 Oct 2026:** written. Wording only; no code changed.
+- **7 Oct:** the sentences are **cleared to go into `AiDisclosure.cs`** (Mr. Singh), and the price is final, **2 / 3 / 1 / 5** (#388, merged).
+- **8 Oct: one thing the sentences depend on does not exist yet: Docs AI has no switch of its own.** See "The switch the sentences assume", below. That needs his ruling before the build.
 
 ## Why it's needed
 
@@ -73,15 +76,46 @@ public const string DocsWhoDecides =
 
 Reusing them keeps one statement per fact.
 
+## The switch the sentences assume (found 7 Oct, for Mr. Singh's ruling)
+
+**`DocsWhoDecides` says "Docs AI is off by default. Only your organisation's administrator can turn it on, and they can turn it off again at any time." The code doesn't do that today.**
+
+`DocsEndpoints.AiAsync` checks three things:
+- the platform has an AI key;
+- `EnabledForTenantAsync`, which is **`core.tenants.allow_ai`**, the same organisation switch that sends meeting transcripts for minutes;
+- `ai.docs.organisations`, our list.
+
+There is no Docs switch. So:
+- **An organisation that turned AI on for meeting notes would get Docs AI the moment it is put on the list,** without its administrator ever choosing it. Techvein is that organisation today.
+- **The administrator can't turn Docs AI off without turning off meeting notes as well.**
+- **The organisation AI page's sentence at that switch names only meeting transcripts.** It would understate what is sent, the failure of 25 Sept. A consent sentence that says less than what is sent is worse than none.
+
+**Proposed: a Docs AI switch of its own, built exactly like Mail AI's.**
+
+| Part | Mail AI today | Docs AI, proposed |
+|---|---|---|
+| Consent column | `core.tenants.allow_mail_ai boolean NOT NULL DEFAULT false` (`20260925-mail-ai-switch.sql`) | **`core.tenants.allow_docs_ai boolean NOT NULL DEFAULT false`**, a new additive migration. Default off, so no organisation has it on after the deploy |
+| Our offer | `ai.mail.organisations` | `ai.docs.organisations` (exists, empty) |
+| Checked before sending | `allow_ai` + `allow_mail_ai` + the list | **`allow_ai` + `allow_docs_ai` + the list,** in `DocsEndpoints.AiAsync`. Refused with "Docs AI is switched off for your organisation. An administrator can turn it on." |
+| Admin page | a Mail AI card: switch + `mailDisclosure` sentences | **a Docs AI card**: the switch, and the sentences built from the `Docs*` constants (`OrgAiEndpoints`, like `mailDisclosure`), shown before it's turned on |
+| Turning it on | refused unless offered (on the list); audited | the same: refused unless on `ai.docs.organisations`; an audit line on each change |
+| Plan entitlement ("in use") | `"mail.ai"` = switch on, or any `mail.*` usage this month | **`"docs.ai"`** = switch on, or any `docs*` usage this month |
+
+**What it changes for customers:** nothing until both happen: the operator puts an organisation on the list, **and** its administrator turns the switch on. Today the list is empty, so nobody, Techvein included, sees any change at deploy.
+
+**Rule 7:** an additive migration, and a consent change, so it's Mr. Singh's to read before merging.
+
 ## Before Docs AI can be switched on (in order)
 
-1. **Mr. Singh** rules on the sentences above.
-2. ~~Amit sets the price per action~~: **decided 3 Oct: Mr. Singh's 1 / 1 / 1 / 5 credits** (Summarise / Rewrite / Translate / Write). Today every Docs AI action costs the default 1 credit, because `AiCredits` has no "docs" line, and all four are metered as "docs". So the build gives each action its own feature name, and Write costs 5.
-3. **A build PR (Docs lane):**
-   - the sentences go into `AiDisclosure.cs`, the privacy page and the AI page;
-   - `privacy-text-matches.py` must pass;
-   - the per-action metering from (2): a feature name per action, Write at 5 credits, the others at 1.
-4. **Deploy** by the Mail session.
-5. **The operator** puts Techvein on `ai.docs.organisations`, and Techvein's administrator turns Docs AI on.
+1. ~~Mr. Singh rules on the sentences above~~: **cleared 7 Oct** (final text only, never a blank marker).
+2. ~~Amit sets the price per action~~: **final 7 Oct (#388, merged): Summarise 2, rewrite actions 3, Translate 1, Write with AI 5.** The `"docs" => 1` legacy row stays, so history is priced as it was charged.
+3. **Mr. Singh rules on the switch** (above).
+4. **One build PR (Docs lane), the sentences and the switch together,** so the text can never be live without the switch it describes:
+   - the six `Docs*` sentences into `AiDisclosure.cs`, the privacy page and the organisation AI page;
+   - `privacy-text-matches.py` extended to hold the `Docs*` constants, and passing;
+   - the switch, as in the table.
+5. **Support's answer on the prices**, before switch-on (Mr. Singh, 7 Oct): why a rewrite (3) costs more than a summary (2), and why two rewrites (6) cost more than one draft (5). Amit's reason, written once.
+6. **Deploy** by the deploying session.
+7. **The operator** puts Techvein on `ai.docs.organisations`. **Then Techvein's administrator turns Docs AI on**, the step that only exists once (4) is built.
 
 **Not changed by this:** Mail AI's text, Sheets AI (its list stays empty until it has its own sentences), and meeting minutes.
