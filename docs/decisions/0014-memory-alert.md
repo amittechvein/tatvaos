@@ -1,7 +1,12 @@
 # 0014 — Tell someone when the production server runs short of memory
 
-**Status:** proposed, for Mr. Singh. **Nothing is built and nothing on the server
-is changed until this is approved.**
+**Status:** decided (merged as PR 331, 3 Oct 2026). **Not built.** Checked 8 Oct:
+there is no `memory-alert.sh` on `main` and none on the server, whose `deploy`
+crontab runs only the disk alert and the two backups. **Production has no memory
+alerting.** Building it is the next piece of work (Mr. Singh, 8 Oct), ahead of
+the PDF picture downscaling. Since boot (21 Aug), the kernel's "full" memory-stall
+total has reached 510 s, up from 371 s when this was written, and swap in use
+from 683 MB to 936 MB.
 **Date:** 2026-09-27
 **Asked for by** Mr. Singh on 25 Sept, reading the 0010 measurements: "swap in use
 on production. The server has been memory-short and nothing announced it. That's
