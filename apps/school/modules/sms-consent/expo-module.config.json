@@ -1,0 +1,6 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": ["com.techvein.tatvaos.school.smsconsent.SmsConsentModule"]
+  }
+}

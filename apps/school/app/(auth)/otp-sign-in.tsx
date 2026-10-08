@@ -4,6 +4,8 @@
 // server sends a list and a choose token that works once, for 5 minutes. The server limits codes
 // (3 per number per 15 minutes) and wrong tries (5 lock the number); its messages are shown as sent.
 // An OTP sign-in never asks for a password change: changing it needs the current password.
+// On Android the code SMS can fill itself in: Android asks the user to allow reading that one
+// message (modules/sms-consent), then the app signs in with it.
 import React, { useEffect, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from "react-native";
 import { Redirect, router, useLocalSearchParams } from "expo-router";
@@ -14,6 +16,7 @@ import { useAccounts } from "@/core/accounts";
 import * as Device from "@/core/device";
 import { routeFor } from "@/core/nav";
 import { tenDigits } from "@/core/format";
+import { useSmsCode } from "@/modules/sms-consent";
 import { useT } from "@/core/i18n";
 import { Text } from "@/ui/Text";
 import { BackButton, Button, Field, Notice } from "@/ui/parts";
@@ -31,7 +34,7 @@ export default function OtpSignIn() {
   const [step, setStep] = useState<Step>("mobile");
   const [mobile, setMobile] = useState("");
   const [otp, setOtp] = useState("");
-  const [sent, setSent] = useState<{ sentTo: string; minutes: number } | null>(null);
+  const [sent, setSent] = useState<{ sentTo: string; minutes: number; round: number } | null>(null);
   const [wait, setWait] = useState(0);
   const [choice, setChoice] = useState<{ token: string; accounts: OtpLoginChoice[] } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -68,16 +71,16 @@ export default function OtpSignIn() {
       const m = tenDigits(mobile);
       if (!m) throw new ApiError(t("mobileInvalid"), 400);
       const r = await api.loginOtpRequest(school.host, m);
-      setSent({ sentTo: r.sentTo, minutes: r.expiresInMinutes });
+      setSent((old) => ({ sentTo: r.sentTo, minutes: r.expiresInMinutes, round: (old?.round ?? 0) + 1 }));
       setOtp("");
       setWait(RESEND_SECONDS);
       setStep("code");
     });
 
-  const verify = () =>
+  const verify = (code = otp) =>
     run(async () => {
-      if (!/^\d{6}$/.test(otp)) throw new ApiError(t("fillAll"), 400);
-      const r = await api.loginOtpVerify(school.host, tenDigits(mobile)!, otp, Device.name());
+      if (!/^\d{6}$/.test(code)) throw new ApiError(t("fillAll"), 400);
+      const r = await api.loginOtpVerify(school.host, tenDigits(mobile)!, code, Device.name());
       if ("choose" in r && r.choose) {
         setChoice({ token: r.token, accounts: r.accounts });
         setStep("choose");
@@ -100,6 +103,12 @@ export default function OtpSignIn() {
         throw e;
       }
     });
+
+  // the SMS the user allowed Android to share: fill the code and sign in
+  useSmsCode(step === "code" && !busy, sent?.round ?? 0, (code) => {
+    setOtp(code);
+    verify(code);
+  });
 
   const changeNumber = () => {
     setStep("mobile");
@@ -154,10 +163,10 @@ export default function OtpSignIn() {
               textContentType="oneTimeCode"
               autoFocus
               returnKeyType="go"
-              onSubmitEditing={verify}
+              onSubmitEditing={() => verify()}
             />
             {error ? <Notice tone={error.tone} text={error.text} /> : null}
-            <Button label={t("signIn")} onPress={verify} busy={busy} />
+            <Button label={t("signIn")} onPress={() => verify()} busy={busy} />
             <Button label={wait > 0 ? t("resendIn", { s: wait }) : t("resendCode")} kind="outline" onPress={sendCode} disabled={busy || wait > 0} />
             <Pressable accessibilityRole="button" onPress={changeNumber} style={{ minHeight: 44, alignItems: "center", justifyContent: "center" }}>
               <Text size={14} weight={700} color={colors.indigo}>

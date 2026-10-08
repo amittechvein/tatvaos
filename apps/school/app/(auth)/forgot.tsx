@@ -1,7 +1,7 @@
 // Forgot password (FR-C03, B-03): a code to the number or email the school has for the login,
 // then a new password. A student's code goes to the father's mobile first, then the mother's,
 // then the student's own, then email (the server decides; the screen shows where it went).
-// A reset also unlocks a locked sign-in.
+// A reset also unlocks a locked sign-in. On Android the code SMS can fill itself in (modules/sms-consent).
 import React, { useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, View } from "react-native";
 import { Redirect, router, useLocalSearchParams } from "expo-router";
@@ -9,6 +9,7 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api, ApiError } from "@/core/api";
 import { useAccounts } from "@/core/accounts";
+import { useSmsCode } from "@/modules/sms-consent";
 import { useT } from "@/core/i18n";
 import { Text } from "@/ui/Text";
 import { BackButton, Button, Field, Notice } from "@/ui/parts";
@@ -25,7 +26,7 @@ export default function Forgot() {
   const [step, setStep] = useState<Step>("username");
   const [username, setUsername] = useState(params.username ?? "");
   const [otp, setOtp] = useState("");
-  const [sent, setSent] = useState<{ sentTo: string; minutes: number } | null>(null);
+  const [sent, setSent] = useState<{ sentTo: string; minutes: number; round: number } | null>(null);
   const [resetToken, setResetToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,17 +47,21 @@ export default function Forgot() {
     run(async () => {
       if (!username.trim()) throw new ApiError(t("fillAll"), 400);
       const r = await api.otpRequest(school.host, username.trim());
-      setSent({ sentTo: r.sentTo, minutes: r.expiresInMinutes });
+      setSent((old) => ({ sentTo: r.sentTo, minutes: r.expiresInMinutes, round: (old?.round ?? 0) + 1 }));
       setOtp("");
       setStep("code");
     });
-  const verify = () =>
+  const verify = (code = otp) =>
     run(async () => {
-      if (!/^\d{4,8}$/.test(otp.trim())) throw new ApiError(t("fillAll"), 400);
-      const r = await api.otpVerify(school.host, username.trim(), otp.trim());
+      if (!/^\d{4,8}$/.test(code.trim())) throw new ApiError(t("fillAll"), 400);
+      const r = await api.otpVerify(school.host, username.trim(), code.trim());
       setResetToken(r.resetToken);
       setStep("password");
     });
+  useSmsCode(step === "code" && !busy, sent?.round ?? 0, (code) => {
+    setOtp(code);
+    verify(code);
+  });
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.white }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -80,9 +85,9 @@ export default function Forgot() {
 
         {step === "code" ? (
           <>
-            <Field label={t("otpLabel")} value={otp} onChangeText={(v) => setOtp(v.replace(/\D/g, "").slice(0, 8))} keyboardType="number-pad" autoComplete="one-time-code" textContentType="oneTimeCode" autoFocus returnKeyType="go" onSubmitEditing={verify} />
+            <Field label={t("otpLabel")} value={otp} onChangeText={(v) => setOtp(v.replace(/\D/g, "").slice(0, 8))} keyboardType="number-pad" autoComplete="one-time-code" textContentType="oneTimeCode" autoFocus returnKeyType="go" onSubmitEditing={() => verify()} />
             {error ? <Notice tone="error" text={error} /> : null}
-            <Button label={t("verify")} onPress={verify} busy={busy} />
+            <Button label={t("verify")} onPress={() => verify()} busy={busy} />
             <Button label={t("resendCode")} kind="outline" onPress={sendCode} disabled={busy} />
           </>
         ) : null}

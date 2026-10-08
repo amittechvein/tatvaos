@@ -3,6 +3,7 @@
 import { parseHtml } from "../ui/RichText";
 import { codeFrom } from "../core/schoolCode";
 import { ddmmyyyy, inr, tenDigits } from "../core/format";
+import { codeFromSms } from "../modules/sms-consent";
 import { strongEnough } from "../ui/PasswordForm";
 import { appRouteFor } from "../core/links";
 import { strings, LANGS } from "../core/strings";
@@ -78,6 +79,16 @@ describe("mobile number for OTP sign-in", () => {
     expect(tenDigits("5876543210")).toBeNull();
     expect(tenDigits("98765432101")).toBeNull();
     expect(tenDigits("")).toBeNull();
+  });
+});
+
+describe("code from the OTP SMS (Android consent)", () => {
+  it("finds the 6-digit code in the DLT-approved text", () => {
+    expect(codeFromSms("Dear user, Please enter 977115 to verify your mobile number on TatvaOS.\n-By Techvein")).toBe("977115");
+  });
+  it("ignores longer numbers and messages without a code", () => {
+    expect(codeFromSms("Call 9876543210 for help")).toBeNull();
+    expect(codeFromSms("No code here")).toBeNull();
   });
 });
 

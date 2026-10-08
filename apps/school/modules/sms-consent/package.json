@@ -1,0 +1,7 @@
+{
+  "name": "sms-consent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TatvaOS School: read one OTP SMS with the user's consent (Android SMS User Consent API)",
+  "main": "index.ts"
+}
