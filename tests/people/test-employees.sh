@@ -171,6 +171,13 @@ same "codes are 0001..0004 with no gaps" "$(PG "SELECT string_agg(employee_code,
 expect "a sign-in can belong to one record only" 400 "$(mk "{\"fullName\":\"Dup\",\"userId\":\"$STAFF_ID\",\"joinedOn\":\"2025-01-01\"}")" "already belongs"
 expect "a typed ID in auto mode" 400 "$(mk '{"fullName":"Typed","employeeCode":"ZZ-1","joinedOn":"2025-01-01"}')" "automatically"
 
+r=$(call "$OWNER" GET /people/options)
+expect "HR reads the form's choices" 200 "$r"
+same "they say codes are automatic, and offer four managers" "$(jq_ "$(body "$r")" "f\"{d['codeMode']}/{len(d['managers'])}\"")" "auto/4"
+same "the staff member's sign-in is marked as linked" \
+    "$(jq_ "$(body "$r")" "str(next(s['linked'] for s in d['signIns'] if s['id']=='$STAFF_ID'))")" "True"
+expect "a non-HR person cannot read them (they list the organisation's sign-ins)" 403 "$(call "$STAFF" GET /people/options)"
+
 step "4. A manager sees themselves and everyone below - by data, not by role"
 r=$(call "$STAFF" GET /people/employees)
 same "the staff member (Meera) sees exactly her line: herself, Ravi, Sita" \

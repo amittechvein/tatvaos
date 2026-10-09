@@ -32,6 +32,7 @@ public static class EmployeeEndpoints
     {
         var g = app.MapGroup("/api/people").RequireAuthorization("User").WithTags("People");
         g.MapGet("/me", MeAsync);
+        g.MapGet("/options", OptionsAsync);
         g.MapGet("/employees", ListAsync);
         g.MapGet("/employees/{id:guid}", GetAsync);
         g.MapPost("/employees", CreateAsync);
@@ -70,6 +71,35 @@ public static class EmployeeEndpoints
             canNameHr = access.CanNameHr(),
             employee = me is null ? null : Shape(me),
             directReports = me is null ? 0 : await access.DirectReportsAsync(me.Id, ct),
+        });
+    }
+
+    /// <summary>
+    /// What HR's form picks from: departments, designations and locations in
+    /// use, sign-ins not yet linked to a record, and managers (people still
+    /// here). HR only — it lists the organisation's sign-ins.
+    /// </summary>
+    private static async Task<IResult> OptionsAsync(PeopleAccess access, AppDbContext db, CancellationToken ct)
+    {
+        if (!await access.IsHrAsync(ct)) return Forbidden("Only People HR can add or change employee records.");
+        var everyone = await (await access.VisibleAsync(ct)).AsNoTracking()
+            .Select(e => new { e.Id, e.FullName, e.EmployeeCode, e.Status, e.UserId })
+            .ToListAsync(ct);
+        var linked = everyone.Where(e => e.UserId is not null).Select(e => e.UserId!.Value).ToHashSet();
+        var users = await db.Users.AsNoTracking().Where(u => u.Status != "deleted")
+            .OrderBy(u => u.DisplayName).Select(u => new { u.Id, u.DisplayName, u.Email }).ToListAsync(ct);
+        return Results.Ok(new
+        {
+            // 'manual' means the form asks for the ID; 'auto' gives it on save.
+            codeMode = await access.SchemeModeAsync(ct) ?? "auto",
+            departments = await db.Departments.AsNoTracking().OrderBy(d => d.Name).Select(d => new { d.Id, d.Name }).ToListAsync(ct),
+            designations = await db.OrgDesignations.AsNoTracking().Where(d => d.IsActive).OrderBy(d => d.Title).Select(d => new { d.Id, name = d.Title }).ToListAsync(ct),
+            locations = await db.OrgLocations.AsNoTracking().Where(l => l.IsActive).OrderBy(l => l.Name).Select(l => new { l.Id, l.Name }).ToListAsync(ct),
+            // Linked sign-ins are listed too, marked, so the form can still show
+            // the one already on the record being edited.
+            signIns = users.Select(u => new { u.Id, u.DisplayName, u.Email, linked = linked.Contains(u.Id) }),
+            managers = everyone.Where(e => e.Status != "exited").OrderBy(e => e.FullName)
+                .Select(e => new { e.Id, name = e.FullName, code = e.EmployeeCode }),
         });
     }
 
