@@ -1160,6 +1160,54 @@ run_as tatvaos_app "DELETE FROM people.correction_requests WHERE false" >/dev/nu
     && fail "the app can DELETE correction requests (they are the record of the request)" \
     || pass "the app has no DELETE on correction requests"
 
+# Aadhaar, PAN and bank details (20261010, decision 0015). The bytes are
+# stand-ins - isolation is about rows, not about what is in them.
+run_as postgres "INSERT INTO people.identifier_keys (tenant_id, version, wrapped_key) VALUES
+        ('$SCHOOL', 1, decode(repeat('ab', 60), 'hex')) ON CONFLICT DO NOTHING;
+    INSERT INTO people.employee_identifiers (tenant_id, employee_id, kind, ciphertext, key_version, last4) VALUES
+        ('$SCHOOL','0e000000-0000-0000-0000-0000000000b2','aadhaar', decode(repeat('cd', 40), 'hex'), 1, '0000')
+    ON CONFLICT DO NOTHING;
+    INSERT INTO people.identifier_readers (tenant_id, user_id) VALUES
+        ('$SCHOOL','d2222222-2222-2222-2222-222222222222') ON CONFLICT DO NOTHING;
+    INSERT INTO people.identifier_reads (tenant_id, employee_id, kind, reader_id, reason, outcome) VALUES
+        ('$SCHOOL','0e000000-0000-0000-0000-0000000000b2','aadhaar','d2222222-2222-2222-2222-222222222222','payroll_setup','shown');" >/dev/null 2>&1
+fx=$(scalar_as postgres "SELECT (SELECT count(*) FROM people.identifier_keys WHERE tenant_id='$SCHOOL')
+                             ||'/'||(SELECT count(*) FROM people.employee_identifiers WHERE tenant_id='$SCHOOL')
+                             ||'/'||(SELECT count(*) FROM people.identifier_readers WHERE tenant_id='$SCHOOL')
+                             ||'/'||(SELECT count(*) FROM people.identifier_reads WHERE tenant_id='$SCHOOL')")
+case "$fx" in [1-9]*/[1-9]*/[1-9]*/[1-9]*) pass "fixture: ABC School has a key, an identifier, a reader and a read ($fx)" ;;
+              *) fail "fixture incomplete for identifiers ($fx) - the leak checks below would prove nothing" ;; esac
+for tbl in people.identifier_keys people.employee_identifiers people.identifier_readers people.identifier_reads; do
+    leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM $tbl WHERE tenant_id = '$SCHOOL'")
+    [ "${leak:-1}" -eq 0 ] && pass "$tbl: Techvein cannot see ABC School's rows" \
+                           || fail "LEAK: $tbl shows $leak ABC School row(s) to Techvein"
+    n=$(no_context "SELECT count(*) FROM $tbl")
+    [ "${n:-1}" -eq 0 ] && pass "$tbl: no tenant context returns zero rows" \
+                        || fail "DANGEROUS: $tbl shows ${n} row(s) with no tenant set"
+done
+forge_out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    INSERT INTO people.identifier_readers (tenant_id, user_id) VALUES ('$SCHOOL','d1111111-1111-1111-1111-111111111111');" 2>&1)
+grep -qi 'row-level security' <<< "$forge_out" \
+    && pass "Techvein cannot name a reader in ABC School (WITH CHECK)" \
+    || fail "LEAK: Techvein named someone able to reveal ABC School's identifiers"
+# Bypassing RLS, the composite foreign key refuses a Techvein identifier on
+# ABC School's employee.
+out=$(run_as postgres "INSERT INTO people.employee_identifiers (tenant_id, employee_id, kind, ciphertext, key_version, last4)
+        VALUES ('$TECHVEIN','0e000000-0000-0000-0000-0000000000b2','pan', decode(repeat('cd', 40), 'hex'), 1, '000A');" 2>&1)
+grep -qi 'foreign key' <<< "$out" \
+    && pass "a Techvein identifier cannot sit on ABC School's employee, even bypassing RLS" \
+    || fail "LEAK: a Techvein identifier was stored against ABC School's employee"
+for stmt in "DELETE FROM people.employee_identifiers WHERE false" \
+            "DELETE FROM people.identifier_keys WHERE false" \
+            "DELETE FROM people.identifier_reads WHERE false" \
+            "UPDATE people.identifier_reads SET reason = reason WHERE false"; do
+    run_as tatvaos_app "$stmt" >/dev/null 2>&1 && fail "app can still run: $stmt" || pass "app refused: $stmt"
+done
+run_as postgres "DELETE FROM people.identifier_readers WHERE tenant_id = '$SCHOOL' AND user_id = 'd2222222-2222-2222-2222-222222222222';
+    DELETE FROM people.employee_identifiers WHERE employee_id = '0e000000-0000-0000-0000-0000000000b2';
+    DELETE FROM people.identifier_keys WHERE tenant_id = '$SCHOOL'
+       AND NOT EXISTS (SELECT 1 FROM people.employee_identifiers i WHERE i.tenant_id = '$SCHOOL');" >/dev/null 2>&1
+
 run_as postgres "DELETE FROM people.employees WHERE full_name LIKE 'iso-emp-%' AND reports_to IS NOT NULL;
     DELETE FROM people.employees WHERE full_name LIKE 'iso-emp-%';
     DELETE FROM people.hr_members WHERE tenant_id = '$SCHOOL' AND user_id = 'd2222222-2222-2222-2222-222222222222';" >/dev/null 2>&1

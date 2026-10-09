@@ -481,6 +481,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.People.CorrectionRequest>().ToTable("correction_requests", "people");
         b.Entity<TatvaOS.Api.Modules.People.CorrectionRequest>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // 20261010 (decision 0015): identifiers. No DbSet - PeopleAccess only.
+        b.Entity<TatvaOS.Api.Modules.People.IdentifierKey>().ToTable("identifier_keys", "people");
+        b.Entity<TatvaOS.Api.Modules.People.IdentifierKey>().HasKey(k => new { k.TenantId, k.Version });
+        b.Entity<TatvaOS.Api.Modules.People.IdentifierKey>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.People.EmployeeIdentifier>().ToTable("employee_identifiers", "people");
+        b.Entity<TatvaOS.Api.Modules.People.EmployeeIdentifier>().HasKey(i => new { i.TenantId, i.EmployeeId, i.Kind });
+        b.Entity<TatvaOS.Api.Modules.People.EmployeeIdentifier>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.People.IdentifierReader>().ToTable("identifier_readers", "people");
+        b.Entity<TatvaOS.Api.Modules.People.IdentifierReader>().HasKey(r => new { r.TenantId, r.UserId });
+        b.Entity<TatvaOS.Api.Modules.People.IdentifierReader>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.People.IdentifierRead>().ToTable("identifier_reads", "people");
+        b.Entity<TatvaOS.Api.Modules.People.IdentifierRead>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.People.ReportingChange>().ToTable("reporting_changes", "people");
         b.Entity<TatvaOS.Api.Modules.People.ReportingChange>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
