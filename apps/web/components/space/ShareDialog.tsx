@@ -9,16 +9,21 @@
 //  privacy rules below (partial lists, no counts) — house rule 10.
 // ============================================================================
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type KeyboardEvent } from 'react';
 import { formatDateShort } from '@/lib/dates';
 import { useAuth } from '@/lib/auth';
 import { spaceApi, linkApi, type PublicLink, type SpaceFile, type SpaceShare } from '@/lib/space';
 
 /**
- * Who has access. Org-wide sharing works for anyone allowed to share; naming
- * a colleague needs their user id, which today only the org People API
- * exposes — non-admins see the note instead of a broken picker. (A Space
- * directory endpoint is the known follow-up.)
+ * Who has access. Org-wide sharing works for anyone allowed to share; a named
+ * colleague is found through the Space directory (GET /api/space/directory:
+ * people in YOUR organisation only, active or invited, at most 20).
+ *
+ * The picker must SAY when nobody matched (9 Oct 2026). Before that it drew
+ * nothing at all: Amit typed an address outside the organisation, saw no list
+ * and no message, and reported that sharing "is not picking up email ids" —
+ * a deliberate limit that looked like a broken box. A failed search and an
+ * empty one also looked the same; both are said now, and differently.
  */
 export function ShareDialog({ kind, item, onClose, onChanged, publicLinks = true }: {
   kind: 'files' | 'folders';
@@ -50,6 +55,12 @@ export function ShareDialog({ kind, item, onClose, onChanged, publicLinks = true
   const [hits, setHits] = useState<{ id: string; displayName: string; email: string }[]>([]);
   const [chips, setChips] = useState<{ id: string; displayName: string }[]>([]);
   const [inviteLevel, setInviteLevel] = useState<SpaceShare['permission']>('view');
+  // Which term the current `hits` answer, and how. Without it "no match yet"
+  // (still typing, request in flight) and "no match" (the directory said so)
+  // are the same empty list, and only the second may be said out loud.
+  const [answered, setAnswered] = useState<{ q: string; failed: boolean } | null>(null);
+  // The highlighted row, for the arrow keys and Enter.
+  const [active, setActive] = useState(0);
 
   const reload = useCallback(() => {
     spaceApi.sharesDetail(authedFetch, kind, item.id)
@@ -62,15 +73,47 @@ export function ShareDialog({ kind, item, onClose, onChanged, publicLinks = true
   // Debounced directory search — a keystroke should not be a query.
   useEffect(() => {
     const q = term.trim();
-    if (!q) { setHits([]); return; }
+    if (!q) { setHits([]); setAnswered(null); return; }
     let cancelled = false;
     const t = setTimeout(() => {
       spaceApi.directory(authedFetch, q)
-        .then((people) => { if (!cancelled) setHits(people.filter((p) => !chips.some((c) => c.id === p.id))); })
-        .catch(() => { if (!cancelled) setHits([]); });
+        .then((people) => {
+          if (cancelled) return;
+          setHits(people.filter((p) => !chips.some((c) => c.id === p.id)));
+          setAnswered({ q, failed: false });
+          setActive(0);
+        })
+        .catch(() => { if (!cancelled) { setHits([]); setAnswered({ q, failed: true }); } });
     }, 200);
     return () => { cancelled = true; clearTimeout(t); };
   }, [term, authedFetch, chips]);
+
+  function pick(p: { id: string; displayName: string }) {
+    setChips((c) => [...c, { id: p.id, displayName: p.displayName }]);
+    setTerm(''); setHits([]); setAnswered(null); setActive(0);
+  }
+
+  const shown = hits.slice(0, 6);
+  // Said only once the directory has answered THIS term — never mid-typing.
+  const q = term.trim();
+  const noMatch = q !== '' && answered?.q === q && !answered.failed && hits.length === 0;
+  const searchFailed = q !== '' && answered?.q === q && answered.failed;
+
+  function onKey(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'ArrowDown' && shown.length > 0) {
+      e.preventDefault(); setActive((i) => (i + 1) % shown.length);
+    } else if (e.key === 'ArrowUp' && shown.length > 0) {
+      e.preventDefault(); setActive((i) => (i - 1 + shown.length) % shown.length);
+    } else if (e.key === 'Enter') {
+      // Enter picks the highlighted person. It never shares by itself: the
+      // Share button below is the one action that sends anything.
+      e.preventDefault();
+      const p = shown[active] ?? shown[0];
+      if (p) pick(p);
+    } else if (e.key === 'Backspace' && term === '' && chips.length > 0) {
+      setChips((c) => c.slice(0, -1));
+    }
+  }
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true); setErr(null);
@@ -124,7 +167,13 @@ export function ShareDialog({ kind, item, onClose, onChanged, publicLinks = true
                 autoFocus
                 value={term}
                 onChange={(e) => setTerm(e.target.value)}
-                placeholder={chips.length === 0 ? 'Add people by name or email' : ''}
+                onKeyDown={onKey}
+                role="combobox"
+                aria-expanded={shown.length > 0}
+                aria-controls="share-picker-list"
+                aria-activedescendant={shown[active] ? `share-hit-${shown[active].id}` : undefined}
+                aria-label="Add people from your organisation"
+                placeholder={chips.length === 0 ? 'Add people in your organisation by name or email' : ''}
                 className="min-w-[8rem] flex-1 border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint"
               />
               {chips.length > 0 && (
@@ -138,18 +187,16 @@ export function ShareDialog({ kind, item, onClose, onChanged, publicLinks = true
               )}
             </div>
 
-            {hits.length > 0 && (
-              <div className="absolute left-0 right-0 top-full z-[1400] mt-1 overflow-hidden rounded-xl border border-line bg-surface shadow-raised">
-                {hits.slice(0, 6).map((p) => (
-                  <button key={p.id} type="button"
+            {shown.length > 0 && (
+              <div id="share-picker-list" role="listbox"
+                   className="absolute left-0 right-0 top-full z-[1400] mt-1 overflow-hidden rounded-xl border border-line bg-surface shadow-raised">
+                {shown.map((p, i) => (
+                  <button key={p.id} id={`share-hit-${p.id}`} type="button" role="option" aria-selected={i === active}
                           // mousedown, not click: click lands after blur and the
                           // list would already be gone.
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            setChips((c) => [...c, { id: p.id, displayName: p.displayName }]);
-                            setTerm(''); setHits([]);
-                          }}
-                          className="block w-full px-3 py-2 text-left text-sm hover:bg-canvas">
+                          onMouseDown={(e) => { e.preventDefault(); pick(p); }}
+                          onMouseEnter={() => setActive(i)}
+                          className={`block w-full px-3 py-2 text-left text-sm ${i === active ? 'bg-canvas' : ''}`}>
                     <span className="block font-medium text-ink">{p.displayName}</span>
                     <span className="block text-xs text-ink-muted">{p.email}</span>
                   </button>
@@ -157,6 +204,21 @@ export function ShareDialog({ kind, item, onClose, onChanged, publicLinks = true
               </div>
             )}
           </div>
+
+          {noMatch && (
+            <p className="mt-1 text-xs text-ink-muted" role="status">
+              {/* "matches", not "has the address": the directory lists only
+                  people who can be shared with (active or invited), so a
+                  suspended colleague is in the organisation and still absent. */}
+              No one in your organisation matches <strong className="text-ink">{q}</strong>.
+              {' '}You can share only with people in your organisation.
+            </p>
+          )}
+          {searchFailed && (
+            <p className="mt-1 text-xs text-danger" role="status">
+              Could not search your organisation just now. Try typing again.
+            </p>
+          )}
 
           {chips.length > 0 && (
             <div className="mb-3 mt-2 flex justify-end">

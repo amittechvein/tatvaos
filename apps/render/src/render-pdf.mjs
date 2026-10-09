@@ -27,7 +27,7 @@
 //  PDF. Who checked which, and when: docs/DOCS_PDF_DESIGN.md, section 9.
 // ============================================================================
 
-import { mkdtemp, writeFile, copyFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, copyFile, readFile, rm, statfs } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -73,20 +73,50 @@ export class PdfFailed extends Error {
 //  fills it (docs/DOCS_PDF_DESIGN.md §10, Mr. Singh 7 Oct 2026). Until this,
 //  the write threw a plain ENOSPC and the person read only "The PDF could not
 //  be built" — true, and nothing they could act on. Now it is its own reason:
-//    pictures_too_large  the job had pictures to write (the server's 413 and
-//                        its sentence: remove some and try again)
-//    no_room             it had none, so the room went to OTHER jobs at once;
-//                        still the generic 500 to the person, but named in
-//                        the log so the two are never confused
+//    pictures_too_large  THIS job's own pictures cannot fit, however empty
+//                        /tmp is (the server's 413 and its sentence: remove
+//                        some and try again)
+//    no_room             they could have fitted: OTHER jobs filled /tmp at the
+//                        same moment. Still the generic 500 to the person
+//                        until Mr. Singh words a "busy, try again" sentence,
+//                        but named in the log so the two are never confused
 //  Caught wherever the folder fills: making it, writing into it, and Typst
 //  writing out.pdf (its message carries the OS error, "os error 28").
+//
+//  Corrected 7 Oct 2026 by measurement (§10, cases 2 and 3): the first
+//  version chose pictures_too_large whenever the job HAD pictures. With five
+//  or ten one-photo PDFs at once, the shared /tmp filled with the others'
+//  files and single-photo documents were told to remove pictures - wrong
+//  advice; trying again would have worked. The test is now the job's OWN
+//  need against what /tmp can hold at all. The need is twice the pictures:
+//  Typst puts a JPEG into the PDF unchanged, so out.pdf is as big as the
+//  pictures and sits beside them (case 0: 1 photo of 4.6 MB -> PDF 4.6 MB;
+//  2 photos overflowed 16 MB at Typst's write, not before).
 // ---------------------------------------------------------------------------
 export const isNoRoom = (e) => e?.code === 'ENOSPC';
 export const TYPST_NO_ROOM = /os error 28|no space left on device/i;
 
-function noRoom(stage, files) {
+/** Typst's stderr with every quoted string blanked: Typst quotes source values
+ *  in its messages, so a document containing the words "no space left on
+ *  device" must not read as a full /tmp (Mr. Singh, 8 Oct 2026: a check
+ *  matching on text that can contain user content). The log line below
+ *  blanks quotes the same way. */
+export const unquoted = (stderr) => String(stderr).replace(/"[^"]*"/g, '"…"');
+export const typstSaysNoRoom = (stderr) => TYPST_NO_ROOM.test(unquoted(stderr));
+
+/** The reason for a full /tmp: the job's own need (2 x its pictures) against what /tmp holds at all. */
+export function noRoomReason(pictureBytes, capacityBytes) {
+  return pictureBytes > 0 && pictureBytes * 2 > capacityBytes ? 'pictures_too_large' : 'no_room';
+}
+
+async function tmpCapacity() {
+  try { const s = await statfs(tmpdir()); return s.blocks * s.bsize; } catch { return Infinity; }
+}
+
+async function noRoom(stage, files) {
   const bytes = files.reduce((n, f) => n + f.bytes.length, 0);
-  return new PdfFailed(files.length ? 'pictures_too_large' : 'no_room', { stage, pictures: files.length, bytes });
+  const capacity = await tmpCapacity();
+  return new PdfFailed(noRoomReason(bytes, capacity), { stage, pictures: files.length, bytes, capacity });
 }
 
 /**
@@ -152,7 +182,7 @@ export async function buildPdf(job) {
   try {
     dir = await mkdtemp(join(tmpdir(), 'pdf-'));
   } catch (e) {
-    if (isNoRoom(e)) throw noRoom('folder', files);
+    if (isNoRoom(e)) throw await noRoom('folder', files);
     throw e;
   }
   const t0 = Date.now();
@@ -162,7 +192,7 @@ export async function buildPdf(job) {
       await writeFile(join(dir, 'doc.json'), JSON.stringify(data));
       for (const f of files) await writeFile(join(dir, f.name), f.bytes);
     } catch (e) {
-      if (isNoRoom(e)) throw noRoom('write', files);
+      if (isNoRoom(e)) throw await noRoom('write', files);
       throw e;
     }
 
@@ -198,9 +228,9 @@ export async function buildPdf(job) {
     // Typst's message names the place in main.typ; a value it quotes could be
     // document text, so every quoted string is blanked before it is logged.
     if (code !== 0) {
-      if (TYPST_NO_ROOM.test(stderr)) throw noRoom('typst', files);
+      if (typstSaysNoRoom(stderr)) throw await noRoom('typst', files);
       const line = stderr.split('\n').find((l) => /error/i.test(l)) ?? `exit ${code}`;
-      throw new PdfFailed('typst_failed', { message: line.replace(/"[^"]*"/g, '"…"').slice(0, 160) });
+      throw new PdfFailed('typst_failed', { message: unquoted(line).slice(0, 160) });
     }
     return { pdf: await readFile(join(dir, 'out.pdf')), ms: Date.now() - t0, dir }; // dir: gone by now; the gate reads its traces against it
   } finally {
