@@ -338,6 +338,18 @@ UPDATE core.organisation_deletions
 UPDATE core.organisation_deletions
    SET mail_dirs_purged_at = now(), mail_dirs_purged_by = 'maildir-removals.sh'
  WHERE mail_dirs_purged_at IS NULL AND mail_dirs_pending <@ mail_dirs_removed;
+-- The folder is gone (or never existed), so every held address on this
+-- domain has 0 message files left: record it, as the count-only pass would.
+-- Without this the addresses stayed "not counted yet" for good, because this
+-- mode exits before that pass and the pass's cron is not installed on the
+-- server: trineetra.com, 9 Oct 2026, removed but its two addresses never
+-- releasable.
+UPDATE core.retired_addresses r
+   SET files_left = 0, files_checked_at = now()
+ WHERE r.released_at IS NULL
+   AND lower(split_part(r.address::text, '@', 2)) = lower(:'d')
+   AND NOT EXISTS (SELECT 1 FROM mail.mailboxes m WHERE m.address = r.address)
+   AND NOT EXISTS (SELECT 1 FROM mail.aliases  a WHERE a.address = r.address);
 SQL
     held=$(sql -v d="$D" <<'SQL' | tr -d '\r'
 SELECT core.domain_mail_held(:'d');

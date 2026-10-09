@@ -20,7 +20,8 @@
 #   7. the tool "succeeds" but files remain: folder kept, domain still held
 #   8. removed: messages via doveadm, then the folder; another customer's
 #      domain untouched; the domain released; the record done only when ALL
-#      its domains are
+#      its domains are; each held address on the removed domain is recorded
+#      as 0 files (so an operator may release it), another customer's never
 #   9. never from cron; one rm -rf in the file, with "--"
 #  11. on a server (infra/docker/.env present) every test hook is ignored
 #  10. RED FIRST: copies of the job with one guard cut — the name guard (the
@@ -74,6 +75,7 @@ NAME="Domain removal test $RUN"
 TECHVEIN="11111111-1111-1111-1111-111111111111"
 cleanup() {
     PG "DELETE FROM core.organisation_deletions WHERE name LIKE '$NAME%'" >/dev/null
+    PG "DELETE FROM core.retired_addresses WHERE source = 'test-domain-removal-$RUN'" >/dev/null
     PG "SET session_replication_role = replica; DELETE FROM core.domains WHERE fqdn = '$REG'" >/dev/null
     if [ "$FAILED" -eq 0 ]; then rm -rf "$SCR"; else printf "  kept for reading: %s\n" "$SCR"; fi
 }
@@ -99,6 +101,14 @@ PG "INSERT INTO core.organisation_deletions (tenant_id, name, deleted_by, delete
 PG "SET session_replication_role = replica; INSERT INTO core.domains (tenant_id, fqdn, type) VALUES ('$TECHVEIN', '$REG', 'alias')" >/dev/null
 same "the registered-again domain is in core.domains" "$(PG "SELECT count(*) FROM core.domains WHERE fqdn='$REG'")" "1"
 same "D is held" "$(PG "SELECT core.domain_mail_held('$D')")" "t"
+# Held addresses, uncounted, as deleting the organisation leaves them. OTHER's
+# belongs to another customer and must never be counted by D's removal.
+for a in "hr@$D" "principal@$D" "a1@$D2" "keep@$OTHER"; do
+    PG "INSERT INTO core.retired_addresses (address, source) VALUES ('$a', 'test-domain-removal-$RUN')" >/dev/null
+done
+uncounted() { PG "SELECT count(*) FROM core.retired_addresses WHERE source='test-domain-removal-$RUN' AND address LIKE '%@$1' AND files_checked_at IS NULL"; }
+counted0()  { PG "SELECT count(*) FROM core.retired_addresses WHERE source='test-domain-removal-$RUN' AND address LIKE '%@$1' AND files_left = 0 AND files_checked_at IS NOT NULL"; }
+same "four held addresses, none counted" "$(uncounted "$D")/$(uncounted "$D2")/$(uncounted "$OTHER")" "2/1/1"
 N0=$(allfiles)
 [ "${N0:-0}" -ge 15 ] && pass "$N0 files in the tree" || fail "the tree was not built ($N0 files)"
 
@@ -146,6 +156,7 @@ out=$(MR_FAKE_STUCK=1 bash "$JOB" --domain "$D" 2>&1); rc=$?
 same "exit 3 (not done)" "$rc" "3"; has "…says how many remain" "$out" "5 message file(s) remain"
 there "the folder is kept" "$MR_VMAIL_ROOT/$D/hr/cur/$RUN.1.eml"
 same "the domain stays held" "$(PG "SELECT core.domain_mail_held('$D')")" "t"
+same "…and its addresses are NOT counted as empty" "$(uncounted "$D")" "2"
 
 step "8. Removed"
 : > "$MR_FAKE_LOG"
@@ -159,11 +170,16 @@ there "the store itself is there" "$MR_VMAIL_ROOT"
 same "D is released" "$(PG "SELECT core.domain_mail_held('$D')")" "f"
 same "D2 is still held" "$(PG "SELECT core.domain_mail_held('$D2')")" "t"
 same "the record is not done while D2 remains" "$(PG "SELECT (mail_dirs_purged_at IS NULL)::text FROM core.organisation_deletions WHERE name='$NAME 1'")" "true"
+same "D's two held addresses are counted: 0 files, so an operator may release them" "$(counted0 "$D")" "2"
+same "…D2's is not counted yet (its folder is still there)" "$(uncounted "$D2")" "1"
+same "…another customer's is untouched" "$(uncounted "$OTHER")" "1"
 out=$(bash "$JOB" --domain "$D" 2>&1); rc=$?
 same "D again: exit 2" "$rc" "2"; has "…no longer held" "$out" "not held by an organisation deletion"
 out=$(bash "$JOB" --domain "$D2" 2>&1); rc=$?
 same "D2: exit 0" "$rc" "0"
 same "now the record is done" "$(PG "SELECT mail_dirs_purged_by FROM core.organisation_deletions WHERE name='$NAME 1'")" "maildir-removals.sh"
+same "…and D2's held address is counted too" "$(counted0 "$D2")" "1"
+same "…another customer's, still untouched" "$(uncounted "$OTHER")" "1"
 there "another customer's mail, still" "$MR_VMAIL_ROOT/$OTHER/keep/cur/$RUN.1.eml"
 
 step "9. Never from cron; one removal in the file"
