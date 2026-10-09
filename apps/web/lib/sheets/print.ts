@@ -31,6 +31,7 @@ export function printSheet(model: SheetsModel, sheetId: string, title: string, o
   const locale = model.locale();
   const merges = model.merges(sheetId);
   const rules = model.colourRules(sheetId);
+  const hiddenByFilter = model.filterHiddenRows(sheetId);
   const skip = new Set<string>();
   const span = new Map<string, { rs: number; cs: number }>();
   for (const m of merges) {
@@ -43,6 +44,7 @@ export function printSheet(model: SheetsModel, sheetId: string, title: string, o
     rows.push(`<tr><th></th>${Array.from({ length: r.c2 - r.c1 + 1 }, (_, j) => `<th>${colName(r.c1 + j)}</th>`).join('')}</tr>`);
   }
   for (let i = r.r1; i <= r.r2; i += 1) {
+    if (hiddenByFilter.has(i)) continue; // what is on screen is what prints
     const cells: string[] = [];
     if (opts.headings) cells.push(`<th>${i + 1}</th>`);
     for (let j = r.c1; j <= r.c2; j += 1) {

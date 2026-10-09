@@ -25,6 +25,8 @@
 //  What an .xlsx can hold that the snapshot cannot, and so is dropped on
 //  List validations are kept as dropdowns (dropdowns.ts): a typed list, or
 //  a range on the same sheet read as values (readDropdowns, dropdownsXml).
+//  The autofilter is kept as the sheet's filter (filter.ts) where its
+//  columns filter by value lists (readFilter, autoFilterXml).
 //
 //  What an .xlsx can hold that the snapshot cannot, and so is dropped on
 //  import: hidden rows and columns, row/column default styles, the other
@@ -45,6 +47,10 @@ import {
   cleanRule, cleanStyle, operandCount, type ColourRule, type RuleKind, type RuleStyle,
 } from '../rules';
 import { cleanDropdown, MAX_ITEMS, type Dropdown } from '../dropdowns';
+import {
+  cleanHiddenValues, columnValues, filterKey, hiddenRows, type FilterData, type PlacedFilter,
+} from '../filter';
+import { formatValue } from '../engine/format';
 import {
   DEFAULT_COLS, DEFAULT_COL_WIDTH, DEFAULT_ROWS, DEFAULT_ROW_HEIGHT, cellKey, parseCellKey,
   type BorderSide, type BorderStyle, type CellData, type CellFormat, type SheetData, type WorkbookData,
@@ -807,6 +813,32 @@ function readColourRules(root: XmlNode, styles: Styles): (Rect & ColourRule)[] {
     .map((x) => x.rule);
 }
 
+/**
+ * The file's autofilter as the sheet's filter. Excel lists the values each
+ * column SHOWS; TatvaOS keeps the ones it hides (filter.ts), so a column's
+ * hidden values are the ones in its data not on Excel's list — worked out
+ * from the cells as they show. Only value lists (<filters>) are kept: a
+ * custom condition ("greater than"), top 10, a date period or a colour
+ * filter keeps the filter's range but not that column's condition.
+ */
+function readFilter(root: XmlNode, cells: Map<string, CellData>): FilterData | undefined {
+  const af = kid(root, 'autoFilter');
+  const rect = af?.attrs.ref ? parseRect(af.attrs.ref.replace(/\$/g, '')) : null;
+  if (!af || !rect || rect.r2 <= rect.r1) return undefined;
+  const shown = (r: number, c: number) => cellShownText(cells.get(cellKey(r, c)));
+  const hidden: Record<number, string[]> = {};
+  for (const fc of kids(af, 'filterColumn')) {
+    const c = rect.c1 + Number(fc.attrs.colId);
+    const list = kid(fc, 'filters');
+    if (!list || !Number.isInteger(c) || c < rect.c1 || c > rect.c2) continue;
+    const keep = new Set(kids(list, 'filter').map((x) => filterKey(x.attrs.val)));
+    if (truthy(list.attrs.blank)) keep.add('');
+    const hide = cleanHiddenValues(columnValues(rect, c, shown).filter((v) => !keep.has(v.key)).map((v) => v.text));
+    if (hide.length > 0) hidden[c] = hide;
+  }
+  return { ...rect, hidden };
+}
+
 /** A file can hold any number of validations; a sheet keeps this many dropdowns. */
 const MAX_DROPDOWNS_PER_SHEET = 200;
 
@@ -990,6 +1022,11 @@ function readSheet(
   if (dropdowns.length > 0) {
     sheet.dropdowns = dropdowns;
     for (const d of dropdowns) grow(d.r2, d.c2);
+  }
+  const filter = readFilter(root, sheet.cells);
+  if (filter) {
+    sheet.filter = filter;
+    grow(filter.r2, filter.c2);
   }
 
   sheet.rows = Math.min(MAX_ROWS, Math.max(DEFAULT_ROWS, maxRow + 1, sheet.frozenRows + 1));
@@ -1279,6 +1316,45 @@ function colourRuleXml(rule: Rect & ColourRule, priority: number, styles: StyleT
     `${formulas.map((f) => `<formula>${escapeXml(f)}</formula>`).join('')}</cfRule></conditionalFormatting>`;
 }
 
+/** What a snapshot cell shows, as text — the value a filter compares (filter.ts), as the grid does. */
+function cellShownText(cell: CellData | undefined): string {
+  if (!cell) return '';
+  const v = cell.value !== undefined ? cell.value : cell.input === null ? null : parseInput(cell.input, INDIA).value;
+  return formatValue(v ?? null, cell.format?.nf, INDIA).text;
+}
+
+/** A snapshot's filter as positions with comparison keys (the model's PlacedFilter shape). */
+function placedFilter(d: FilterData): PlacedFilter | null {
+  const r1 = Math.min(d.r1, d.r2); const r2 = Math.min(Math.max(d.r1, d.r2), XL_MAX_ROWS - 1);
+  const c1 = Math.min(d.c1, d.c2); const c2 = Math.min(Math.max(d.c1, d.c2), XL_MAX_COLS - 1);
+  if (r1 < 0 || c1 < 0 || r2 <= r1) return null;
+  const hidden = new Map<number, Set<string>>();
+  for (const [k, values] of Object.entries(d.hidden ?? {})) {
+    const c = Number(k);
+    const clean = cleanHiddenValues(values);
+    if (Number.isInteger(c) && c >= c1 && c <= c2 && clean.length > 0) hidden.set(c, new Set(clean.map(filterKey)));
+  }
+  return { r1, c1, r2, c2, hidden };
+}
+
+/**
+ * The filter → <autoFilter>. Excel lists the values a column SHOWS (TatvaOS
+ * keeps the ones it hides — filter.ts says why), so each filtered column's
+ * shown values are worked out from the data now; blanks are a flag, not a
+ * value. The values go in as attribute text, not as a formula.
+ */
+function autoFilterXml(f: PlacedFilter, shown: (r: number, c: number) => string): string {
+  const cols: string[] = [];
+  for (const [c, hiddenKeys] of [...f.hidden].sort((a, b) => a[0] - b[0])) {
+    const visible = columnValues(f, c, shown).filter((v) => !hiddenKeys.has(v.key));
+    const blank = visible.some((v) => v.key === '');
+    const vals = visible.filter((v) => v.key !== '').map((v) => `<filter val="${escapeXml(v.text)}"/>`).join('');
+    cols.push(`<filterColumn colId="${c - f.c1}"><filters${blank ? ' blank="1"' : ''}>${vals}</filters></filterColumn>`);
+  }
+  const ref = `${cellName(f.r1, f.c1)}:${cellName(f.r2, f.c2)}`;
+  return cols.length ? `<autoFilter ref="${ref}">${cols.join('')}</autoFilter>` : `<autoFilter ref="${ref}"/>`;
+}
+
 /** Excel's limit on a list typed into the rule itself ("a,b,c"). */
 const XL_LIST_MAX = 255;
 
@@ -1326,6 +1402,12 @@ function sheetXml(sheet: SheetData, selected: boolean, styles: StyleTable, strin
     const r = Number(k);
     if (Number.isInteger(r) && r >= 0 && r < XL_MAX_ROWS && !byRow.has(r)) byRow.set(r, []);
   }
+  // Rows the sheet's filter hides go into the file hidden, as Excel's own
+  // autofilter leaves them — so the file opens looking as it did here.
+  const filter = sheet.filter ? placedFilter(sheet.filter) : null;
+  const shown = (r: number, c: number) => cellShownText(sheet.cells.get(cellKey(r, c)));
+  const hiddenByFilter = filter ? hiddenRows(filter, shown) : new Set<number>();
+  for (const r of hiddenByFilter) if (r < XL_MAX_ROWS && !byRow.has(r)) byRow.set(r, []);
 
   const rowsXml: string[] = [];
   for (const r of [...byRow.keys()].sort((a, b) => a - b)) {
@@ -1337,9 +1419,10 @@ function sheetXml(sheet: SheetData, selected: boolean, styles: StyleTable, strin
     }
     const h = sheet.rowHeights[r];
     const ht = h !== undefined && Number.isFinite(h) && h >= 0 ? ` ht="${Math.round(h * 0.75 * 100) / 100}" customHeight="1"` : '';
-    if (!cx.length && !ht) continue;
+    const hid = hiddenByFilter.has(r) ? ' hidden="1"' : '';
+    if (!cx.length && !ht && !hid) continue;
     if (cx.length) maxR = Math.max(maxR, r);
-    rowsXml.push(`<row r="${r + 1}"${ht}>${cx.join('')}</row>`);
+    rowsXml.push(`<row r="${r + 1}"${ht}${hid}>${cx.join('')}</row>`);
   }
 
   const parts: string[] = [`${XML_HEAD}<worksheet xmlns="${NS_MAIN}" xmlns:r="${NS_REL}">`];
@@ -1382,6 +1465,8 @@ function sheetXml(sheet: SheetData, selected: boolean, styles: StyleTable, strin
   }
 
   parts.push(rowsXml.length ? `<sheetData>${rowsXml.join('')}</sheetData>` : '<sheetData/>');
+  // autoFilter: right after sheetData, before mergeCells (the schema's order).
+  if (filter) parts.push(autoFilterXml(filter, shown));
 
   const merges = sheet.merges
     .map((m: Rect) => ({ r1: Math.min(m.r1, m.r2), c1: Math.min(m.c1, m.c2), r2: Math.max(m.r1, m.r2), c2: Math.max(m.c1, m.c2) }))

@@ -466,6 +466,17 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
 
   const fmt = (patch: Partial<CellFormat>) => { if (guard()) model.setFormat(sheetId, rect, patch); };
 
+  /**
+   * Data > Create a filter. On a single cell, the block of data around it
+   * (as Sheets does); the block's first row becomes the header row.
+   */
+  function createFilter() {
+    if (!guard()) return;
+    const one = rect.r1 === rect.r2 && rect.c1 === rect.c2;
+    const range = one ? dataRegion(model, sheetId, active.r, active.c) : rect;
+    if (!model.createFilter(sheetId, range)) setNotice('A filter needs a header row and at least one row of data below it. Select them and try again.');
+  }
+
   function changeDecimals(delta: 1 | -1) {
     if (!guard()) return;
     const v = model.value(sheetId, active.r, active.c);
@@ -764,6 +775,10 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
       { label: 'Sort range…', disabled: !editOk, onClick: () => setDialog('sort') },
       'sep',
       { label: 'Dropdown…', disabled: !editOk, onClick: () => setDialog('dropdown') },
+      'sep',
+      model.filter(sheetId)
+        ? { label: 'Remove filter', disabled: !editOk, onClick: () => { if (guard()) model.removeFilter(sheetId); } }
+        : { label: 'Create a filter', disabled: !editOk, onClick: () => createFilter() },
     ] },
     { name: 'Tools', items: [
       { label: 'TatvaOS AI', onClick: () => setPanel('ai') },
@@ -1452,4 +1467,21 @@ function ShortcutsDialog({ onClose }: { onClose: () => void }) {
       </dl>
     </Modal>
   );
+}
+
+/** The block of filled cells around (r, c): grown a row or column at a time while the next one has anything in it. */
+function dataRegion(model: SheetsModel, sheetId: string, r: number, c: number): Rect {
+  const size = model.size(sheetId);
+  const filled = (rr: number, cc: number) => (model.input(sheetId, rr, cc) ?? '') !== '';
+  let box = { r1: r, c1: c, r2: r, c2: c };
+  for (let grew = true, i = 0; grew && i < 10_000; i += 1) {
+    grew = false;
+    const rowHas = (rr: number) => rr >= 0 && rr < size.rows && Array.from({ length: box.c2 - box.c1 + 1 }, (_, k) => box.c1 + k).some((cc) => filled(rr, cc));
+    const colHas = (cc: number) => cc >= 0 && cc < size.cols && Array.from({ length: box.r2 - box.r1 + 1 }, (_, k) => box.r1 + k).some((rr) => filled(rr, cc));
+    if (rowHas(box.r1 - 1)) { box = { ...box, r1: box.r1 - 1 }; grew = true; }
+    if (rowHas(box.r2 + 1)) { box = { ...box, r2: box.r2 + 1 }; grew = true; }
+    if (colHas(box.c1 - 1)) { box = { ...box, c1: box.c1 - 1 }; grew = true; }
+    if (colHas(box.c2 + 1)) { box = { ...box, c2: box.c2 + 1 }; grew = true; }
+  }
+  return box;
 }

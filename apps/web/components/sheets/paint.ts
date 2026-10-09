@@ -27,6 +27,8 @@ export interface PaintSource {
   locale: Locale;
   /** Cells with an open comment thread get the orange corner Sheets draws. */
   hasComment?: (r: number, c: number) => boolean;
+  /** The filter's header cells (filter.ts): a button, 'on' when that column hides something. */
+  filterButton?: (r: number, c: number) => 'off' | 'on' | null;
   /** Dropdown cells (dropdowns.ts): 'ok', or 'bad' for a value not on the list (a red corner). */
   dropdown?: (r: number, c: number) => 'ok' | 'bad' | null;
   /** Cells whose formula is saved as text in downloads (safety.ts) get a grey corner. */
@@ -146,6 +148,7 @@ function drawRegion(
 
   // 1. Fills
   for (let r = r1; r <= r2; r += 1) {
+    if (g.rowHeight(r) <= 0) continue; // hidden by the filter (filter.ts)
     for (let c = c1; c <= c2; c += 1) {
       if (covered.has(`${r},${c}`)) continue;
       const bg = src.format(r, c)?.bg;
@@ -179,6 +182,7 @@ function drawRegion(
   //    or clipped.
   ctx.textBaseline = 'middle';
   for (let r = r1; r <= r2; r += 1) {
+    if (g.rowHeight(r) <= 0) continue; // hidden by the filter (filter.ts)
     for (let c = c1; c <= c2; c += 1) {
       if (covered.has(`${r},${c}`)) continue;
       drawCellText(ctx, g, src, st, T, r, c, r, c, c1, c2);
@@ -187,6 +191,7 @@ function drawRegion(
 
   // 4. Borders
   for (let r = r1; r <= r2; r += 1) {
+    if (g.rowHeight(r) <= 0) continue; // hidden by the filter (filter.ts)
     for (let c = c1; c <= c2; c += 1) {
       const f = src.format(r, c);
       if (!f || !(f.bt || f.bb || f.bl || f.br)) continue;
@@ -201,6 +206,7 @@ function drawRegion(
   if (src.textInDownloads) {
     ctx.fillStyle = '#80868b';
     for (let r = r1; r <= r2; r += 1) {
+      if (g.rowHeight(r) <= 0) continue; // hidden by the filter (filter.ts)
       for (let c = c1; c <= c2; c += 1) {
         if (!src.textInDownloads(r, c)) continue;
         const box = cellRect(g, st, r, c, r, c);
@@ -217,6 +223,7 @@ function drawRegion(
   if (src.hasComment) {
     ctx.fillStyle = '#f9ab00';
     for (let r = r1; r <= r2; r += 1) {
+      if (g.rowHeight(r) <= 0) continue; // hidden by the filter (filter.ts)
       for (let c = c1; c <= c2; c += 1) {
         if (!src.hasComment(r, c)) continue;
         const m = covered.get(`${r},${c}`);
@@ -236,6 +243,7 @@ function drawRegion(
   // right, text-in-downloads bottom left).
   if (src.dropdown) {
     for (let r = r1; r <= r2; r += 1) {
+      if (g.rowHeight(r) <= 0) continue; // hidden by the filter (filter.ts)
       for (let c = c1; c <= c2; c += 1) {
         const state = src.dropdown(r, c);
         if (!state) continue;
@@ -256,6 +264,32 @@ function drawRegion(
           ctx.lineTo(box.x + 1, box.y + 8);
           ctx.fill();
         }
+      }
+    }
+  }
+
+  // Filter buttons on the header row: a small funnel at the right of the
+  // cell (where a dropdown's arrow would go — the filter wins there); filled
+  // in the brand colour when that column is hiding something.
+  if (src.filterButton) {
+    for (let r = r1; r <= r2; r += 1) {
+      if (g.rowHeight(r) <= 0) continue;
+      for (let c = c1; c <= c2; c += 1) {
+        const state = src.filterButton(r, c);
+        if (!state) continue;
+        const box = cellRect(g, st, r, c, r, c);
+        if (box.w < 24) continue;
+        const bx = box.x + box.w - 17; const by = box.y + Math.max(1, (box.h - 15) / 2);
+        ctx.fillStyle = state === 'on' ? '#5a2fcc' : T.bg;
+        ctx.strokeStyle = state === 'on' ? '#5a2fcc' : T.headerLine;
+        ctx.beginPath();
+        ctx.rect(bx + 0.5, by + 0.5, 14, 14);
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = state === 'on' ? '#ffffff' : T.headerText;
+        ctx.beginPath(); // the funnel
+        ctx.moveTo(bx + 3, by + 4); ctx.lineTo(bx + 12, by + 4); ctx.lineTo(bx + 8.5, by + 8);
+        ctx.lineTo(bx + 8.5, by + 12); ctx.lineTo(bx + 6.5, by + 11); ctx.lineTo(bx + 6.5, by + 8);
+        ctx.closePath(); ctx.fill();
       }
     }
   }
@@ -512,6 +546,7 @@ function drawHeaders(
     for (let r = a; r <= b; r += 1) {
       const y = g.viewY(g.rowY[r]!, st.scrollTop);
       const h = g.rowHeight(r);
+      if (h <= 0) continue; // hidden by the filter: no number either
       if (r >= g.frozenRows && y < g.headerH + g.frozenH - 1) continue;
       const inSel = r >= sel.r1 && r <= sel.r2;
       if (inSel) {

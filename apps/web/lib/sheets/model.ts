@@ -17,6 +17,8 @@
 //                           before 9 Oct 2026 have none
 //                lists      Y.Map<listId, { r1, c1, r2, c2, items, strict, n }>
 //                           dropdowns (dropdowns.ts); OPTIONAL, as rules
+//                filter     Y.Map { range: { r1, c1, r2, c2 }, <colId>: hidden values[] }
+//                           the sheet's one filter (filter.ts); OPTIONAL
 //    settings  Y.Map                        locale grouping, date order
 //
 //  WHY IDS AND NOT POSITIONS. Cells are keyed by the ids of their row and
@@ -56,6 +58,8 @@ import {
 } from './workbook';
 import { cleanRule, type ColourRule, type PlacedRule } from './rules';
 import { cleanDropdown, dropdownAt as findDropdown, type Dropdown, type PlacedDropdown } from './dropdowns';
+import { cleanHiddenValues, filterKey, hiddenRows, type FilterData, type PlacedFilter } from './filter';
+import { formatValue } from './engine/format';
 
 /** The per-sheet maps of ranges with something attached (see placed()). */
 type PlacedField = 'rules' | 'lists';
@@ -186,7 +190,8 @@ export class SheetsModel {
           const c = cache.colIndex.get(cid);
           if (r !== undefined && c !== undefined) cells.push([sheetId, r, c]);
         }
-      } else if (field === 'colWidths' || field === 'rowHeights' || field === 'merges') {
+      } else if (field === 'colWidths' || field === 'rowHeights' || field === 'merges' || field === 'filter') {
+        // 'filter': a column's hidden values changed — which rows show (layout), not any value.
         layout = true;
       } else if (field === 'rows' || field === 'cols' || field === undefined) {
         // A sheet's name, its rows or columns: positions or names moved.
@@ -636,6 +641,7 @@ export class SheetsModel {
     if (n <= 0) return;
     this.write(() => {
       this.shrinkPlaced(sheetId, axis, at, n);
+      this.shrinkFilter(sheetId, axis, at, n);
       const arr = this.sub<Y.Array<string>>(sheetId, axis === 'row' ? 'rows' : 'cols');
       const gone = new Set(arr.slice(at, at + n));
       arr.delete(at, n);
@@ -877,6 +883,120 @@ export class SheetsModel {
     return gone.length;
   }
 
+  // ------------------------------------------------------------------
+  //  The filter (filter.ts): at most one per sheet, shared.
+  //
+  //  Stored as a Y.Map under the sheet's 'filter' key:
+  //    range   { r1, c1, r2, c2 }  row/col IDS, as merges
+  //    <colId> string[]            that column's hidden values
+  //  One key per column, so two people filtering different columns at the
+  //  same moment both keep their change. OPTIONAL: no key, no filter.
+  // ------------------------------------------------------------------
+
+  /** What a cell shows, as text — the value the filter compares (filter.ts). */
+  shownText(sheetId: string, r: number, c: number): string {
+    return formatValue(this.value(sheetId, r, c), this.format(sheetId, r, c)?.nf, this.locale()).text;
+  }
+
+  filter(sheetId: string): PlacedFilter | null {
+    const cache = this.cache(sheetId);
+    const m = cache?.y.get('filter');
+    if (!cache || !(m instanceof Y.Map)) return null;
+    const range = m.get('range') as Record<string, unknown> | undefined;
+    if (typeof range !== 'object' || range === null) return null;
+    const at = (v: unknown, index: Map<string, number>) => (typeof v === 'string' ? index.get(v) : undefined);
+    const r1 = at(range.r1, cache.rowIndex); const r2 = at(range.r2, cache.rowIndex);
+    const c1 = at(range.c1, cache.colIndex); const c2 = at(range.c2, cache.colIndex);
+    if (r1 === undefined || r2 === undefined || c1 === undefined || c2 === undefined || r1 > r2 || c1 > c2) return null;
+    const hidden = new Map<number, Set<string>>();
+    for (const [key, raw] of m as Y.Map<unknown>) {
+      if (key === 'range') continue;
+      const c = cache.colIndex.get(key);
+      if (c === undefined || c < c1 || c > c2) continue; // a column now outside the range: ignored
+      const values = cleanHiddenValues(raw);
+      if (values.length > 0) hidden.set(c, new Set(values.map(filterKey)));
+    }
+    return { r1, c1, r2, c2, hidden };
+  }
+
+  /** The filter as plain data for a snapshot: hidden values as stored (original case), by column position. */
+  filterData(sheetId: string): FilterData | undefined {
+    const f = this.filter(sheetId);
+    const m = this.sheetsMap.get(sheetId)!.get('filter');
+    const cache = this.cache(sheetId);
+    if (!f || !(m instanceof Y.Map) || !cache) return undefined;
+    const hidden: Record<number, string[]> = {};
+    for (const c of f.hidden.keys()) hidden[c] = cleanHiddenValues(m.get(cache.colIds[c]!));
+    return { r1: f.r1, c1: f.c1, r2: f.r2, c2: f.c2, hidden };
+  }
+
+  /** Put a whole filter in place — from a file or a duplicated sheet. */
+  private placeFilter(sheetId: string, data: FilterData) {
+    if (!this.createFilter(sheetId, data)) return;
+    for (const [c, values] of Object.entries(data.hidden)) this.setFilterHidden(sheetId, Number(c), values);
+  }
+
+  /** The rows the sheet's filter hides now (empty with no filter). */
+  filterHiddenRows(sheetId: string): Set<number> {
+    const f = this.filter(sheetId);
+    return f ? hiddenRows(f, (r, c) => this.shownText(sheetId, r, c)) : new Set();
+  }
+
+  /** Put a filter on a range (its first row is the header), replacing any filter the sheet had. */
+  createFilter(sheetId: string, rect: Rect): boolean {
+    const corners = this.corners(sheetId, rect);
+    const n = norm(rect);
+    if (!corners || n.r2 <= n.r1) return false; // a header and at least one data row
+    this.write(() => {
+      const m = new Y.Map<unknown>();
+      this.sheetsMap.get(sheetId)!.set('filter', m);
+      m.set('range', corners);
+    });
+    return true;
+  }
+
+  removeFilter(sheetId: string) {
+    const y = this.sheetsMap.get(sheetId)!;
+    if (y.has('filter')) this.write(() => { y.delete('filter'); });
+  }
+
+  /** Set the values hidden in one column of the filter; an empty list shows the column's every value. */
+  setFilterHidden(sheetId: string, c: number, values: string[]): boolean {
+    const m = this.sheetsMap.get(sheetId)!.get('filter');
+    const colId = this.cache(sheetId)?.colIds[c];
+    const f = this.filter(sheetId);
+    if (!(m instanceof Y.Map) || !colId || !f || c < f.c1 || c > f.c2) return false;
+    const clean = cleanHiddenValues(values);
+    this.write(() => { if (clean.length === 0) m.delete(colId); else m.set(colId, clean); });
+    return true;
+  }
+
+  /**
+   * Inside remove(): the filter's range shrinks like a colour rule's
+   * (shrinkPlaced). If its HEADER row goes, the filter goes — the buttons
+   * would otherwise move onto a row of data.
+   */
+  private shrinkFilter(sheetId: string, axis: 'row' | 'col', at: number, n: number) {
+    const y = this.sheetsMap.get(sheetId)!;
+    const m = y.get('filter');
+    const f = this.filter(sheetId);
+    const cache = this.cache(sheetId);
+    if (!(m instanceof Y.Map) || !f || !cache) return;
+    const last = at + n - 1;
+    const lo = axis === 'row' ? f.r1 : f.c1;
+    const hi = axis === 'row' ? f.r2 : f.c2;
+    if (hi < at || lo > last) return;
+    if ((axis === 'row' && f.r1 >= at && f.r1 <= last) || (lo >= at && hi <= last)) { y.delete('filter'); return; }
+    const newLo = lo >= at ? last + 1 : lo;
+    const newHi = hi <= last ? at - 1 : hi;
+    if (newLo === lo && newHi === hi) return;
+    const ids = axis === 'row' ? cache.rowIds : cache.colIds;
+    const range = m.get('range') as Record<string, unknown>;
+    m.set('range', axis === 'row'
+      ? { ...range, r1: ids[newLo], r2: ids[newHi] }
+      : { ...range, c1: ids[newLo], c2: ids[newHi] });
+  }
+
   /**
    * Sort the rows of a rectangle by one or more of its columns. Values are
    * compared as calculated (a formula sorts by its result); empty cells go
@@ -1010,6 +1130,8 @@ export class SheetsModel {
       for (const m of merges) this.merge(copyId, m, 'all');
       for (const rule of this.colourRules(id)) this.addColourRule(copyId, rule, rule);
       for (const dd of this.dropdowns(id)) this.addDropdown(copyId, dd, dd);
+      const filter = this.filterData(id);
+      if (filter) this.placeFilter(copyId, filter);
       this.freeze(copyId, src.frozenRows, src.frozenCols);
       if (src.tabColor) this.sheetsMap.get(copyId)!.set('tabColor', src.tabColor);
     });
@@ -1084,6 +1206,7 @@ export class SheetsModel {
         for (let r = 0; r < size.rows; r += 1) { const h = this.rowHeight(id, r); if (h) rowHeights[r] = h; }
         const rules = this.colourRules(id).map(({ id: _id, ...rule }) => rule);
         const dropdowns = this.dropdowns(id).map(({ id: _id, ...dd }) => dd);
+        const filter = this.filterData(id);
         return {
           name: meta.name, rows: size.rows, cols: size.cols, cells, colWidths, rowHeights,
           merges: this.merges(id).map(({ r1, c1, r2, c2 }) => ({ r1, c1, r2, c2 })),
@@ -1091,6 +1214,7 @@ export class SheetsModel {
           tabColor: meta.tabColor, hidden: meta.hidden,
           ...(rules.length > 0 ? { rules } : {}),
           ...(dropdowns.length > 0 ? { dropdowns } : {}),
+          ...(filter ? { filter } : {}),
         };
       }),
     };
@@ -1141,6 +1265,7 @@ export class SheetsModel {
         // and placed by id like everything else; their file order is kept.
         for (const rule of s.rules ?? []) this.addColourRule(id, rule, rule);
         for (const dd of s.dropdowns ?? []) this.addDropdown(id, dd, dd);
+        if (s.filter) this.placeFilter(id, s.filter);
         const y = this.sheetsMap.get(id)!;
         y.set('frozenRows', s.frozenRows);
         y.set('frozenCols', s.frozenCols);
