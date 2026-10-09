@@ -110,12 +110,12 @@ export default function EmployeePage() {
           </>
         ) : undefined}
       />
-      {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
+      {error && !leaving && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
 
       <Card title="Record" className="mb-5">
         <dl className="grid gap-x-6 gap-y-3 text-[0.8125rem] sm:grid-cols-2">
           <div><dt className="text-ink-muted">Status</dt><dd><Badge tone={e.status === 'active' ? 'ok' : e.status === 'on_notice' ? 'warn' : 'neutral'}>{STATUS_LABEL[e.status]}</Badge></dd></div>
-          <div><dt className="text-ink-muted">Reports to</dt><dd>{name(e.reportsTo)}</dd></div>
+          <div><dt className="text-ink-muted">Reports to</dt><dd>{e.reportsTo ? name(e.reportsTo) : 'Nobody'}</dd></div>
           <div><dt className="text-ink-muted">Work email</dt><dd>{e.workEmail ?? '—'}</dd></div>
           <div><dt className="text-ink-muted">Joined on</dt><dd>{fmt(e.joinedOn)}</dd></div>
           {e.exitOn && <div><dt className="text-ink-muted">Last day</dt><dd>{fmt(e.exitOn)}</dd></div>}
@@ -146,12 +146,13 @@ export default function EmployeePage() {
                  <Button variant="ghost" onClick={() => setLeaving(false)} disabled={busy}>Cancel</Button>
                  <Button variant="danger" onClick={() => void recordLeaving()} disabled={busy || !exitOn}>Record leaving</Button>
                </>}>
+          {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
           <p className="mb-3 text-[0.8125rem] text-ink-muted">
             Their record is kept, marked as left. Anyone who reports to them must be moved to another
             manager first.
           </p>
           <Field label="Last day" required>
-            <Input type="date" value={exitOn} onChange={(ev) => setExitOn(ev.target.value)} />
+            <Input type="date" aria-label="Last day" value={exitOn} onChange={(ev) => setExitOn(ev.target.value)} />
           </Field>
         </Modal>
       )}

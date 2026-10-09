@@ -228,7 +228,8 @@ BEGIN
         SELECT count(*) INTO n FROM people.employees
          WHERE tenant_id = NEW.tenant_id AND reports_to = NEW.id AND status <> 'exited';
         IF n > 0 THEN
-            RAISE EXCEPTION '% people report to this person. Choose who they report to now, then try again.', n
+            RAISE EXCEPTION '% to this person. Choose who they report to now, then try again.',
+                CASE WHEN n = 1 THEN '1 person reports' ELSE n || ' people report' END
                 USING ERRCODE = 'check_violation', CONSTRAINT = 'ck_people_exit_with_reports';
         END IF;
     END IF;

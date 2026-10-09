@@ -212,7 +212,7 @@ same "Xavier's history is readable by HR" "$(jq_ "$(body "$(call "$OWNER" GET /p
 expect "but not by Meera, for someone outside her line" 404 "$(call "$STAFF" GET /people/employees/$X/reporting-changes)"
 
 step "7. Leaving"
-expect "Meera cannot leave while Ravi reports to her" 409 "$(call "$OWNER" POST /people/employees/$M/exit '{"exitOn":"2026-10-31"}')" "1 people report"
+expect "Meera cannot leave while Ravi reports to her" 409 "$(call "$OWNER" POST /people/employees/$M/exit '{"exitOn":"2026-10-31"}')" "1 person reports"
 expect "Ravi moves to the owner" 200 "$(put "$R1" "{\"fullName\":\"Ravi Report\",\"reportsTo\":\"$O\",\"joinedOn\":\"2025-05-01\"}")"
 expect "now Meera can leave" 200 "$(call "$OWNER" POST /people/employees/$M/exit '{"exitOn":"2026-10-31"}')"
 expect "and nobody can be put under her" 409 "$(put "$R2" "{\"fullName\":\"Sita Second\",\"reportsTo\":\"$M\",\"joinedOn\":\"2025-06-01\"}")" "has left"
