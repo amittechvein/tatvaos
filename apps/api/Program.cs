@@ -485,6 +485,7 @@ builder.Services.AddHostedService<MailTriageWorker>();
 // per (source, data type); only the Development-only synthetic one exists yet.
 // tests/migration/test-job-runner.sh kills it mid-run and watches it resume.
 builder.Services.AddScoped<TatvaOS.Api.Modules.Migration.MigrationJobRunner>();
+builder.Services.AddScoped<TatvaOS.Api.Modules.Migration.MigrationEnrolment>();
 foreach (var dataType in new[] { "mail", "contacts", "calendar", "drive" })
     builder.Services.AddSingleton<TatvaOS.Api.Modules.Migration.IMigrationSource>(sp =>
         new TatvaOS.Api.Modules.Migration.SyntheticSource(dataType, sp.GetRequiredService<IConfiguration>()));
@@ -935,6 +936,8 @@ TatvaOS.Api.Modules.Hire.HireTeamEndpoints.MapHireTeamEndpoints(app);
 // The public careers page and its admin setup (decision 0010, switched off).
 TatvaOS.Api.Modules.Hire.CareersEndpoints.MapCareersEndpoints(app);
 app.MapStorageEndpoints();
+// Google migration progress, per person (read-only; enrolling needs section 9).
+TatvaOS.Api.Modules.Migration.MigrationEndpoints.MapMigrationEndpoints(app);
 app.MapAuditEndpoints();
 // Shared mailboxes are PROVISIONING — the same act as creating a person, so
 // Core owns it. Mail owns who may read one.
