@@ -459,6 +459,43 @@ for i in $(seq 1 $N); do [ "$(mails_to "stp-batch$i-$RUN@example.test")" -ge 1 ]
 same "every one of the ten has a mail" "$HAVE" "$N"
 same "the links nobody was mailed are gone from every row" "$(PG "SELECT count(*) FROM core.users WHERE id IN ($HS) AND invite_token_hash = ANY(string_to_array('$STALE', ','))")" "0"
 
+step "13. One press reaches at most twenty; the rest wait for the next"
+# Mr. Singh's condition on this PR (28 Sept) and Amit's number (9 Oct). 25
+# eligible people, numbered so the list's own order (by address) is 01..25:
+# the press must reach exactly 01..20, and the next exactly 21..25.
+LN=25; LS=""
+for i in $(seq -w 1 $LN); do
+    h=$(make "stp-lim$i-$RUN" "Limit $i" ",\"password\":\"$PW\",\"recoveryEmail\":\"stp-lim$i-$RUN@example.test\"")
+    LS="${LS:+$LS,}'$h'"
+done
+MADE="$MADE,$LS"
+sleep 5; rm -f "$SCRATCH/mail"/*.eml
+same "twenty-five more, pending, none holding a link" "$(PG "SELECT count(*) FROM core.users WHERE id IN ($LS) AND status='pending' AND invite_token_hash IS NULL")" "$LN"
+r=$(post "/api/org/users/pending/send-links" '{"dryRun":true}' "$OWNER")
+same "the dry run offers twenty, five waiting, limit twenty" "$(body "$r" | j "d['counts']['toSend']")/$(body "$r" | j "d['counts']['waiting']")/$(body "$r" | j "d['counts']['perPress']")" "20/5/20"
+r=$(post "/api/org/users/pending/send-links" '{"dryRun":false}' "$OWNER")
+same "pressed: twenty, five waiting" "$(status "$r")/$(body "$r" | j "d['counts']['toSend']")/$(body "$r" | j "d['counts']['waiting']")" "200/20/5"
+same "...and the answer says so" "$(body "$r" | j "d['note']" | grep -c "5 more are waiting")" "1"
+same "links written for twenty, no more" "$(PG "SELECT count(*) FROM core.users WHERE id IN ($LS) AND invite_token_hash IS NOT NULL")" "20"
+wait_mails 20 60; sleep 3
+same "twenty mails" "$(mails)" "20"
+FIRST=0; LAST=0
+for i in $(seq -w 1 $LN); do
+    n=$(mails_to "stp-lim$i-$RUN@example.test")
+    if [ "$((10#$i))" -le 20 ]; then [ "$n" -ge 1 ] && FIRST=$((FIRST+1)); else LAST=$((LAST+n)); fi
+done
+same "the first twenty in list order each have a mail" "$FIRST" "20"
+same "the last five have none" "$LAST" "0"
+r=$(post "/api/org/users/pending/send-links" '{"dryRun":true}' "$OWNER")
+same "the next dry run offers the five, none waiting" "$(body "$r" | j "d['counts']['toSend']")/$(body "$r" | j "d['counts']['waiting']")" "5/0"
+r=$(post "/api/org/users/pending/send-links" '{"dryRun":false}' "$OWNER")
+same "the next press sends to the five" "$(status "$r")/$(body "$r" | j "d['counts']['toSend']")" "200/5"
+wait_mails 25 30; sleep 3
+LAST=0
+for i in $(seq 21 $LN); do [ "$(mails_to "stp-lim$i-$RUN@example.test")" -ge 1 ] && LAST=$((LAST+1)); done
+same "...and each of the five now has a mail" "$LAST" "5"
+same "twenty-five mails in all, nobody twice" "$(mails)" "25"
+
 printf "\n  -----------------------------------------------\n"
 if [ "$FAILED" -eq 0 ]; then printf "  PASS  %d checks (%s)\n\n" "$PASSED" "$EXPECT"; exit 0
 else printf "  FAIL  %d of %d checks (%s)\n\n" "$FAILED" $((PASSED+FAILED)) "$EXPECT"; exit 1; fi

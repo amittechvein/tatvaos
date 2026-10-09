@@ -1233,8 +1233,15 @@ public static class UserEndpoints
     //  had used it. Sending again does not fix mail that lands in spam.
     // ------------------------------------------------------------------
 
-    /// <summary>More than this in one press is refused rather than half done.</summary>
-    private const int SendToPendingCeiling = 500;
+    /// <summary>
+    /// One press sends to at most this many; everyone else eligible waits for
+    /// the next press and is counted as waiting. Mr. Singh's condition on
+    /// PR 341 (28 Sept 2026): the first production press must not reach
+    /// everybody at once, so a bad mail or a wrong count reaches twenty people,
+    /// not a hundred and twelve. Amit, 9 Oct 2026: twenty, in code. It replaces
+    /// the old refuse-above-500 ceiling, which nothing can now reach.
+    /// </summary>
+    internal const int SendToPendingPerPress = 20;
 
     /// <summary>
     /// Between two mails of a batch. A young sending domain that emits a
@@ -1284,25 +1291,28 @@ public static class UserEndpoints
                           && user.InviteDelivered == true && !Invitations.IsExpired(user);
             if (linkOut) { linkStillWorks++; continue; }
 
-            if (channel == Invitations.ChannelSignInLink) signInLinks++; else invitations++;
             send.Add((user, channel));
         }
+
+        // The per-press limit, taken in the list's own order (by address) so
+        // the dry run names the same people the press will reach.
+        var waiting = Math.Max(0, send.Count - SendToPendingPerPress);
+        send = send.Take(SendToPendingPerPress).ToList();
+        foreach (var (_, channel) in send)
+            if (channel == Invitations.ChannelSignInLink) signInLinks++; else invitations++;
 
         var counts = new
         {
             pending = pending.Count,
             toSend = send.Count,
+            perPress = SendToPendingPerPress,
+            waiting,
             signInLinks,
             invitations,
             skipped = new { linkStillWorks, noRecoveryEmail, unconfirmedEmail, onHold, owners, yourself },
         };
 
         if (dryRun) return Results.Ok(new { dryRun = true, counts });
-        if (send.Count > SendToPendingCeiling)
-            return Results.BadRequest(new
-            {
-                error = $"That is {send.Count} people, and one press sends to at most {SendToPendingCeiling}. Nothing was sent.",
-            });
         if (send.Count == 0) return Results.Ok(new { dryRun = false, counts, note = "There was nobody to send to." });
 
         var tokens = new List<(Guid UserId, string Token)>(send.Count);
@@ -1316,10 +1326,10 @@ public static class UserEndpoints
         // times, or a count nobody expected - is visible to whoever reads the
         // server and not only to whoever reads the audit table.
         loggers.CreateLogger("TatvaOS.SendToPending").LogInformation(
-            "Send to pending: {ToSend} of {Pending} pending in tenant {TenantId}, by {ActorId} "
+            "Send to pending: {ToSend} of {Pending} pending in tenant {TenantId}, by {ActorId}, {Waiting} waiting for a later press "
             + "({SignInLinks} sign-in links, {Invitations} invitations; skipped {LinkStillWorks} holding a link, "
             + "{NoRecoveryEmail} with no recovery email, {UnconfirmedEmail} unconfirmed, {OnHold} on hold, {Owners} owners)",
-            send.Count, pending.Count, tenant.TenantId, tenant.UserId,
+            send.Count, pending.Count, tenant.TenantId, tenant.UserId, waiting,
             signInLinks, invitations, linkStillWorks, noRecoveryEmail, unconfirmedEmail, onHold, owners);
 
         var (orgName, baseUrl) = await OrgNameAndBaseUrlAsync(db, tenant, config, ct);
@@ -1331,7 +1341,8 @@ public static class UserEndpoints
             dryRun = false,
             counts,
             note = $"Sending to {send.Count} people now, about one a second. "
-                   + "Each person's profile shows whether their mail went.",
+                   + "Each person's profile shows whether their mail went."
+                   + (waiting > 0 ? $" {waiting} more are waiting; press again for the next {SendToPendingPerPress}." : ""),
         });
     }
 
