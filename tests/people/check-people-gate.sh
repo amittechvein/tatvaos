@@ -21,11 +21,11 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 API="$ROOT/apps/api"
 GATE="Modules/People/PeopleAccess.cs"
 
-TYPES='(Employee|ReportingChange|PeopleHrMember)'
+TYPES='(Employee|ReportingChange|PeopleHrMember|CorrectionRequest)'
 SET_RE="Set<[[:space:]]*(TatvaOS\\.Api\\.Modules\\.People\\.)?${TYPES}[[:space:]]*>"
 DBSET_RE="DbSet<[[:space:]]*(TatvaOS\\.Api\\.Modules\\.People\\.)?${TYPES}[[:space:]]*>"
-SQL_RE='people\.(employees|reporting_changes|hr_members)\b'
-PROP_RE='\.(Employees|ReportingChanges|PeopleHrMembers|HrMembers)\b[^(]'
+SQL_RE='people\.(employees|reporting_changes|hr_members|correction_requests)\b'
+PROP_RE='\.(Employees|ReportingChanges|PeopleHrMembers|HrMembers|CorrectionRequests)\b[^(]'
 
 fails=0
 bad() { printf '  ✗ %s\n' "$1"; fails=$((fails+1)); }

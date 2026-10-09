@@ -34,6 +34,13 @@ public static class EmployeeEndpoints
         g.MapGet("/me", MeAsync);
         g.MapGet("/options", OptionsAsync);
         // The staff directory (0018 §5): colleagues, directory fields only.
+        // Correction requests (20261009-c): an employee asks; People HR answers.
+        g.MapGet("/me/record", async (PeopleAccess access, CancellationToken ct) =>
+            await access.MyRecordAsync(ct) is { } r ? Results.Ok(r) : Results.NotFound());
+        g.MapGet("/me/corrections", MyCorrectionsAsync);
+        g.MapPost("/me/corrections", FileCorrectionAsync);
+        g.MapGet("/corrections", CorrectionsForHrAsync);
+        g.MapPost("/corrections/{id:guid}/resolve", ResolveCorrectionAsync);
         g.MapGet("/directory", DirectoryAsync);
         g.MapGet("/directory/settings", GetDirectorySettingsAsync);
         g.MapPut("/directory/settings", PutDirectorySettingsAsync);
@@ -55,6 +62,18 @@ public static class EmployeeEndpoints
 
     public sealed record ExitRequest(DateOnly? ExitOn);
     public sealed record DirectorySettingsRequest(string? VisibleTo, bool? ShowManager);
+    public sealed record FileCorrectionRequest(string? Field, string? Requested);
+    public sealed record ResolveCorrectionRequest(string? Outcome, string? Response);
+
+    private static readonly string[] CorrectionFields =
+        ["full_name", "work_email", "department", "designation", "location", "reports_to", "joined_on", "other"];
+    /// <summary>Open requests one person may have at once — a cap against a stuck key, not a policy.</summary>
+    public const int MaxOpenCorrections = 10;
+
+    private static object ShapeCorrection(CorrectionRequest c, string? employeeName = null) => new
+    {
+        c.Id, c.EmployeeId, employeeName, c.Field, c.Requested, c.Status, c.Response, c.CreatedAt, c.HandledAt,
+    };
 
     private static object Shape(Employee e) => new
     {
@@ -77,6 +96,7 @@ public static class EmployeeEndpoints
             employee = me is null ? null : Shape(me),
             directReports = me is null ? 0 : await access.DirectReportsAsync(me.Id, ct),
             canSeeDirectory = await access.CanSeeDirectoryAsync(ct),
+            openCorrections = await access.OpenCorrectionCountForMeAsync(ct),
         });
     }
 
@@ -136,6 +156,78 @@ public static class EmployeeEndpoints
         if (!await access.ExistsAsync(id, ct)) return Results.NotFound();
         var rows = await access.ReportingHistoryAsync(id, ct);
         return Results.Ok(rows.Select(r => new { r.FromManagerId, r.ToManagerId, r.ChangedBy, r.ChangedAt }));
+    }
+
+    // ====================================================== correction requests
+
+    /// <summary>The signed-in person's own requests and HR's answers.</summary>
+    private static async Task<IResult> MyCorrectionsAsync(PeopleAccess access, CancellationToken ct) =>
+        Results.Ok((await access.MyCorrectionsAsync(ct)).Select(c => ShapeCorrection(c)));
+
+    /// <summary>
+    /// Ask People HR to correct your own record. There is no employee id in
+    /// the request: PeopleAccess takes it from the session, so nobody can ask
+    /// about someone else's record.
+    /// </summary>
+    private static async Task<IResult> FileCorrectionAsync(
+        FileCorrectionRequest req, PeopleAccess access, AuditWriter audit, CancellationToken ct)
+    {
+        var me = await access.MeAsync(ct);
+        if (me is null) return Results.NotFound(new { error = "You have no employee record here to correct." });
+        if (me.Status == "exited") return Results.Conflict(new { error = "Your record is kept as it was when you left." });
+        if (req.Field is null || !CorrectionFields.Contains(req.Field))
+            return Results.BadRequest(new { error = "Choose which part of your record is wrong." });
+        var text = req.Requested?.Trim() ?? "";
+        if (text.Length is < 1 or > 500)
+            return Results.BadRequest(new { error = "Say what it should be, in up to 500 characters." });
+        if (await access.OpenCorrectionCountForMeAsync(ct) >= MaxOpenCorrections)
+            return Results.Conflict(new { error = $"You already have {MaxOpenCorrections} requests waiting for People HR." });
+
+        var row = await access.FileCorrectionAsync(req.Field, text, ct);
+        if (row is null) return Results.NotFound(new { error = "You have no employee record here to correct." });
+        // The audit names the field, never what was asked for (it may be personal).
+        await audit.WriteAsync("employee.correction_requested", "employee", me.Id.ToString(),
+            after: new { row.Field }, ct: ct, productCode: "people");
+        return Results.Created($"/api/people/me/corrections/{row.Id}", ShapeCorrection(row));
+    }
+
+    /// <summary>Every request in the organisation. People HR only.</summary>
+    private static async Task<IResult> CorrectionsForHrAsync(PeopleAccess access, string? status, CancellationToken ct)
+    {
+        if (!await access.IsHrAsync(ct)) return Forbidden("Only People HR can see correction requests.");
+        var rows = await access.CorrectionsForHrAsync(status, ct);
+        return Results.Ok(rows.Select(r => ShapeCorrection(r.Request, r.EmployeeName)));
+    }
+
+    /// <summary>
+    /// HR marks a request done (after making the change through the ordinary
+    /// edit, which keeps every rule and the reporting audit) or declined — with
+    /// the reason the employee will read (the database refuses a decline
+    /// without one).
+    /// </summary>
+    private static async Task<IResult> ResolveCorrectionAsync(
+        Guid id, ResolveCorrectionRequest req, PeopleAccess access, TenantContext tenant,
+        AuditWriter audit, CancellationToken ct)
+    {
+        if (!await access.IsHrAsync(ct)) return Forbidden("Only People HR can answer correction requests.");
+        var c = await access.CorrectionForHrAsync(id, ct);
+        if (c is null) return Results.NotFound();
+        if (c.Status != "open") return Results.Conflict(new { error = "This request has already been answered." });
+        if (req.Outcome is not ("done" or "declined"))
+            return Results.BadRequest(new { error = "Answer done or declined." });
+        var response = req.Response?.Trim();
+        if (req.Outcome == "declined" && string.IsNullOrEmpty(response))
+            return Results.BadRequest(new { error = "Say why, when declining. The employee will read it." });
+        if (response is { Length: > 500 }) return Results.BadRequest(new { error = "Up to 500 characters." });
+
+        c.Status = req.Outcome;
+        c.Response = string.IsNullOrEmpty(response) ? null : response;
+        c.HandledBy = tenant.UserId;
+        c.HandledAt = DateTimeOffset.UtcNow;
+        await access.SaveAsync(ct);
+        await audit.WriteAsync("employee.correction_" + req.Outcome, "employee", c.EmployeeId.ToString(),
+            after: new { c.Field }, ct: ct, productCode: "people");
+        return Results.Ok(ShapeCorrection(c));
     }
 
     // ================================================================ directory

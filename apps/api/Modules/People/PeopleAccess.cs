@@ -64,6 +64,25 @@ public sealed record DirectoryEntry(
     Guid Id, string Name, string? Designation, string? Department, string? Location,
     string? WorkEmail, string? Manager);
 
+/// <summary>
+/// An employee asks People HR to correct their record
+/// (people.correction_requests, 20261009-c). Own record only.
+/// </summary>
+public sealed class CorrectionRequest
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid EmployeeId { get; set; }
+    public string Field { get; set; } = "";
+    public string Requested { get; set; } = "";
+    public string Status { get; set; } = "open";
+    public string? Response { get; set; }
+    public Guid RequestedBy { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public Guid? HandledBy { get; set; }
+    public DateTimeOffset? HandledAt { get; set; }
+}
+
 /// <summary>Someone named People HR in their organisation (0018 §4).</summary>
 public sealed class PeopleHrMember
 {
@@ -204,6 +223,78 @@ public sealed class PeopleAccess(AppDbContext db, TenantContext tenant, IHttpCon
         _hr = null;
         return true;
     }
+
+    /// <summary>
+    /// The signed-in person's own record with names in place of ids, for "My
+    /// record". Their own record shows every field of it, including the ones
+    /// the directory hides from colleagues (code, status, dates, type).
+    /// </summary>
+    public async Task<object?> MyRecordAsync(CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid me) return null;
+        return await db.Set<Employee>().AsNoTracking().Where(e => e.UserId == me)
+            .Select(e => new
+            {
+                e.Id, e.EmployeeCode, e.FullName, e.WorkEmail, e.EmploymentType, e.Status, e.JoinedOn, e.ExitOn,
+                Department = db.Departments.Where(x => x.Id == e.DepartmentId).Select(x => x.Name).FirstOrDefault(),
+                Designation = db.OrgDesignations.Where(x => x.Id == e.DesignationId).Select(x => x.Title).FirstOrDefault(),
+                Location = db.OrgLocations.Where(x => x.Id == e.LocationId).Select(x => x.Name).FirstOrDefault(),
+                Manager = db.Set<Employee>().Where(m => m.Id == e.ReportsTo).Select(m => m.FullName).FirstOrDefault(),
+            })
+            .FirstOrDefaultAsync(ct);
+    }
+
+    // ------------------------------------------------------ correction requests
+
+    /// <summary>The signed-in person's own requests, newest first. Empty if they have no record.</summary>
+    public async Task<List<CorrectionRequest>> MyCorrectionsAsync(CancellationToken ct)
+    {
+        var me = await MeAsync(ct);
+        if (me is null) return [];
+        return await db.Set<CorrectionRequest>().AsNoTracking().Where(c => c.EmployeeId == me.Id)
+            .OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// Files a request about the signed-in person's OWN record. The employee
+    /// is the session's record, never an id from the request: there is no way
+    /// to ask about someone else. Null when they have no record, or have left.
+    /// </summary>
+    public async Task<CorrectionRequest?> FileCorrectionAsync(string field, string requested, CancellationToken ct)
+    {
+        var me = await MeAsync(ct);
+        if (me is null || me.Status == "exited" || tenant.UserId is not Guid user) return null;
+        var row = new CorrectionRequest
+        {
+            Id = Guid.NewGuid(), TenantId = tenant.TenantId, EmployeeId = me.Id, Field = field,
+            Requested = requested, Status = "open", RequestedBy = user, CreatedAt = DateTimeOffset.UtcNow,
+        };
+        db.Set<CorrectionRequest>().Add(row);
+        await db.SaveChangesAsync(ct);
+        return row;
+    }
+
+    public async Task<int> OpenCorrectionCountForMeAsync(CancellationToken ct)
+    {
+        var me = await MeAsync(ct);
+        return me is null ? 0 : await db.Set<CorrectionRequest>().CountAsync(c => c.EmployeeId == me.Id && c.Status == "open", ct);
+    }
+
+    /// <summary>Every request in the organisation, for People HR. The caller has checked IsHrAsync.</summary>
+    public async Task<List<(CorrectionRequest Request, string EmployeeName)>> CorrectionsForHrAsync(string? status, CancellationToken ct)
+    {
+        var q = db.Set<CorrectionRequest>().AsNoTracking().AsQueryable();
+        if (!string.IsNullOrEmpty(status)) q = q.Where(c => c.Status == status);
+        var rows = await q.OrderBy(c => c.Status == "open" ? 0 : 1).ThenByDescending(c => c.CreatedAt)
+            .Take(500)
+            .Select(c => new { c, name = db.Set<Employee>().Where(e => e.Id == c.EmployeeId).Select(e => e.FullName).FirstOrDefault() })
+            .ToListAsync(ct);
+        return rows.Select(r => (r.c, r.name ?? "")).ToList();
+    }
+
+    /// <summary>For HR: the tracked request, to answer it.</summary>
+    public Task<CorrectionRequest?> CorrectionForHrAsync(Guid id, CancellationToken ct) =>
+        db.Set<CorrectionRequest>().FirstOrDefaultAsync(c => c.Id == id, ct);
 
     // ------------------------------------------------------------ directory
 

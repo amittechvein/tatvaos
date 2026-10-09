@@ -465,6 +465,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.People.DirectorySettings>().HasKey(s => s.TenantId);
         b.Entity<TatvaOS.Api.Modules.People.DirectorySettings>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.People.CorrectionRequest>().ToTable("correction_requests", "people");
+        b.Entity<TatvaOS.Api.Modules.People.CorrectionRequest>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.People.ReportingChange>().ToTable("reporting_changes", "people");
         b.Entity<TatvaOS.Api.Modules.People.ReportingChange>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);

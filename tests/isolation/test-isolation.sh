@@ -1137,6 +1137,29 @@ still=$(scalar_as postgres "SELECT visible_to FROM people.directory_settings WHE
                          || fail "LEAK: Techvein changed ABC School's directory to '$still'"
 run_as postgres "DELETE FROM people.directory_settings WHERE tenant_id = '$SCHOOL';" >/dev/null 2>&1
 
+# Correction requests (20261009-r): an employee's words about their own record.
+run_as postgres "INSERT INTO people.correction_requests (tenant_id, employee_id, field, requested, requested_by) VALUES
+        ('$SCHOOL','0e000000-0000-0000-0000-0000000000b2','other','iso-corr-s','d2222222-2222-2222-2222-222222222222');" >/dev/null 2>&1
+fx=$(scalar_as postgres "SELECT count(*) FROM people.correction_requests WHERE requested = 'iso-corr-s'")
+[ "${fx:-0}" -ge 1 ] && pass "fixture: ABC School has a correction request" \
+                     || fail "fixture missing for correction requests - the checks below would prove nothing"
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM people.correction_requests WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's correction requests" \
+                       || fail "LEAK: ABC School's correction requests visible to Techvein"
+n=$(no_context "SELECT count(*) FROM people.correction_requests")
+[ "${n:-1}" -eq 0 ] && pass "no tenant context returns zero correction requests" \
+                    || fail "DANGEROUS: ${n} correction request(s) visible with no tenant set"
+# A Techvein request about ABC School's employee: refused by WITH CHECK
+# (tenant) and, bypassing RLS, by the composite foreign key.
+out=$(run_as postgres "INSERT INTO people.correction_requests (tenant_id, employee_id, field, requested, requested_by)
+        VALUES ('$TECHVEIN','0e000000-0000-0000-0000-0000000000b2','other','iso-corr-forged','d1111111-1111-1111-1111-111111111111');" 2>&1)
+grep -qi 'foreign key' <<< "$out" \
+    && pass "a Techvein request cannot be about ABC School's employee, even bypassing RLS" \
+    || fail "LEAK: a Techvein correction request was filed against ABC School's employee"
+run_as tatvaos_app "DELETE FROM people.correction_requests WHERE false" >/dev/null 2>&1 \
+    && fail "the app can DELETE correction requests (they are the record of the request)" \
+    || pass "the app has no DELETE on correction requests"
+
 run_as postgres "DELETE FROM people.employees WHERE full_name LIKE 'iso-emp-%' AND reports_to IS NOT NULL;
     DELETE FROM people.employees WHERE full_name LIKE 'iso-emp-%';
     DELETE FROM people.hr_members WHERE tenant_id = '$SCHOOL' AND user_id = 'd2222222-2222-2222-2222-222222222222';" >/dev/null 2>&1

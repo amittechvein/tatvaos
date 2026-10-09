@@ -35,6 +35,8 @@ export interface PeopleMe {
   directReports: number;
   /** The staff directory: everyone by default, People HR only if the organisation says so. */
   canSeeDirectory: boolean;
+  /** The signed-in person's own correction requests still waiting for HR. */
+  openCorrections: number;
 }
 
 const Ctx = createContext<{ me: PeopleMe; reload: () => Promise<void> } | null>(null);
@@ -68,7 +70,7 @@ export function PeopleAccessProvider({ children, loading, denied }: {
 
   const reload = useCallback(async () => {
     const res = await authedFetch('/people/me');
-    setMe(res.ok ? await res.json() : { isHr: false, canNameHr: false, employee: null, directReports: 0, canSeeDirectory: false });
+    setMe(res.ok ? await res.json() : { isHr: false, canNameHr: false, employee: null, directReports: 0, canSeeDirectory: false, openCorrections: 0 });
   }, [authedFetch]);
 
   useEffect(() => { void reload(); }, [reload]);
