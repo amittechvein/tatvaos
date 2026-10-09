@@ -135,6 +135,32 @@ try
 }
 catch (ArgumentException) { Ok("an unknown data type is refused"); }
 
+Console.WriteLine("\n>> catch-up (mail that arrived after a person's copy finished)");
+await using (var su = new NpgsqlConnection(superConn))
+{
+    await su.OpenAsync();
+    // amit's copy finished, holding Gmail's marker; hr's stopped mid-copy
+    // (an "f:" cursor) and must not be re-queued as if finished.
+    await new NpgsqlCommand($$"""
+        UPDATE migration.jobs SET state = 'completed', finished_at = now(), cursor = 'd:5'
+         WHERE tenant_id = '{{TECHVEIN}}' AND data_type = 'mail' AND source_user = 'amit@techvein.local';
+        UPDATE migration.jobs SET state = 'completed', finished_at = now(), cursor = 'f:5:p9'
+         WHERE tenant_id = '{{TECHVEIN}}' AND data_type = 'mail' AND source_user = 'hr@techvein.local';
+        """, su).ExecuteNonQueryAsync();
+}
+var cu = await In(TECHVEIN, e => e.CatchUpMailAsync(null, CancellationToken.None));
+Same("everyone: only amit's finished mail job is re-queued", string.Join(",", cu), "amit@techvein.local");
+progress = await In(TECHVEIN, e => e.ProgressAsync(CancellationToken.None));
+Same("...amit's mail is pending again; his contacts untouched",
+    string.Join(",", progress.Single(p => p.GoogleAddress == "amit@techvein.local").Types.Select(t => $"{t.DataType}={t.State}")),
+    "contacts=planned,mail=pending");
+Same("...still holding its marker, so it brings only what was added",
+    await In(TECHVEIN, async e => { await using var su = new NpgsqlConnection(superConn); await su.OpenAsync();
+        return (await new NpgsqlCommand($"SELECT cursor FROM migration.jobs WHERE tenant_id = '{TECHVEIN}' AND data_type = 'mail' AND source_user = 'amit@techvein.local'", su).ExecuteScalarAsync())?.ToString(); }),
+    "d:5");
+var cu2 = await In(TECHVEIN, e => e.CatchUpMailAsync(["hr@techvein.local"], CancellationToken.None));
+Same("asked for hr by name: nothing, hr's copy never finished", cu2.Count, 0);
+
 Console.WriteLine("\n>> another organisation");
 var school = await In(SCHOOL, e => e.ProgressAsync(CancellationToken.None));
 Same("ABC School sees none of Techvein's migration", school.Count, 0);
