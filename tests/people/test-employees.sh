@@ -49,6 +49,8 @@ if [ -z "${TATVAOS_PSQL:-}" ]; then
     TATVAOS_PG_HOST="$TDB_HOST"
 fi
 PG() { $TATVAOS_PSQL "$1" 2>/dev/null | grep -v "^wsl:" | tr -d "\r" | tail -n1; }
+# With stderr, for checks that the DATABASE refuses something.
+PGRAW() { $TATVAOS_PSQL "$1" 2>&1 | grep -v "^wsl:" | tr -d "\r"; }
 
 PASSED=0; FAILED=0
 pass() { PASSED=$((PASSED+1)); printf "  ok    %s\n" "$1"; }
@@ -276,6 +278,40 @@ same "the change is audited, before and after" \
     "$(PG "SELECT (before_state->>'VisibleTo')||'->'||(after_state->>'VisibleTo') FROM core.audit_logs WHERE action='people_directory.settings_changed' ORDER BY id DESC LIMIT 1")" "everyone->hr_only"
 expect "back to everyone" 200 "$(call "$OWNER" PUT /people/directory/settings '{"visibleTo":"everyone","showManager":true}')"
 expect "an unknown setting is refused" 400 "$(call "$OWNER" PUT /people/directory/settings '{"visibleTo":"public"}')" "everyone or hr_only"
+
+step "14. Correction requests: your own record only; HR answers; a no comes with a reason"
+# The staff sign-in's record (Meera) left in step 7. Give the sign-in a current
+# record: unlink Meera (as postgres - the record is kept as it was), add Hari.
+PG "UPDATE people.employees SET user_id = NULL WHERE id = '$M'" >/dev/null
+r=$(mk "{\"fullName\":\"Hari Staff\",\"userId\":\"$STAFF_ID\",\"joinedOn\":\"2025-08-01\"}"); expect "the staff sign-in gets a current record (Hari)" 201 "$r"; H=$(id_of "$r")
+same "My record reads Hari's own record, with names" "$(jq_ "$(body "$(call "$STAFF" GET /people/me/record)")" "d['fullName']")" "Hari Staff"
+r=$(call "$STAFF" POST /people/me/corrections "{\"field\":\"location\",\"requested\":\"Pune office, since 1 Sept\",\"employeeId\":\"$X\"}")
+expect "Hari asks HR to correct his location (and the body tries to name Xavier)" 201 "$r"; C1=$(id_of "$r")
+same "the request is about HARI - an employee id in the body is ignored" \
+    "$(PG "SELECT (employee_id = '$H')::text FROM people.correction_requests WHERE id = '$C1'")" "true"
+same "/me counts it" "$(jq_ "$(body "$(call "$STAFF" GET /people/me)")" "d['openCorrections']")" "1"
+expect "a field that is not on the list" 400 "$(call "$STAFF" POST /people/me/corrections '{"field":"salary","requested":"more"}')" "which part"
+expect "nothing said" 400 "$(call "$STAFF" POST /people/me/corrections '{"field":"other","requested":"   "}')" "500 characters"
+long=$(printf 'x%.0s' $(seq 1 501))
+expect "501 characters" 400 "$(call "$STAFF" POST /people/me/corrections "{\"field\":\"other\",\"requested\":\"$long\"}")" "500 characters"
+same "the audit names the field and never what was asked" \
+    "$(PG "SELECT (after_state->>'Field' = 'location' AND after_state::text NOT LIKE '%Pune office%')::text FROM core.audit_logs WHERE action='employee.correction_requested' ORDER BY id DESC LIMIT 1")" "true"
+expect "a colleague who is not HR cannot list requests" 403 "$(call "$STAFF" GET /people/corrections)" "People HR"
+r=$(call "$OWNER" GET "/people/corrections?status=open")
+expect "HR lists what is waiting" 200 "$r"
+same "and sees Hari's, by name" "$(jq_ "$(body "$r")" "next(c['employeeName'] for c in d if c['id']=='$C1')")" "Hari Staff"
+same "ABC School's HR sees none of Techvein's" "$(jq_ "$(body "$(call "$OTHER" GET /people/corrections)")" "str(len(d))")" "0"
+expect "declining without a reason" 400 "$(call "$OWNER" POST /people/corrections/$C1/resolve '{"outcome":"declined"}')" "say why"
+out=$(PGRAW "UPDATE people.correction_requests SET status='declined', handled_by='$OWNER_ID', handled_at=now() WHERE id='$C1'")
+has "the database refuses a decline without a reason too" "$out" "ck_correction_decline_reason"
+expect "HR marks it done, with a note" 200 "$(call "$OWNER" POST /people/corrections/$C1/resolve '{"outcome":"done","response":"Moved you to Pune."}')"
+same "Hari sees it done, with the note" \
+    "$(jq_ "$(body "$(call "$STAFF" GET /people/me/corrections)")" "next(c['status']+'/'+c['response'] for c in d if c['id']=='$C1')")" "done/Moved you to Pune."
+expect "answering twice" 409 "$(call "$OWNER" POST /people/corrections/$C1/resolve '{"outcome":"declined","response":"no"}')" "already been answered"
+for n in $(seq 1 10); do call "$STAFF" POST /people/me/corrections "{\"field\":\"other\",\"requested\":\"burst $n\"}" >/dev/null; done
+expect "the eleventh waiting request is refused" 409 "$(call "$STAFF" POST /people/me/corrections '{"field":"other","requested":"one more"}')" "already have 10"
+expect "Hari leaves" 200 "$(call "$OWNER" POST /people/employees/$H/exit '{"exitOn":"2026-10-31"}')"
+expect "and can no longer ask (the record is kept as it was)" 409 "$(call "$STAFF" POST /people/me/corrections '{"field":"other","requested":"after leaving"}')" "kept as it was"
 
 step "11. Races"
 bad=0; answers=0

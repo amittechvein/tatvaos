@@ -430,8 +430,13 @@ export function peopleNav({ isHr, hasRecord, showDirectory, showHrList }: {
         ...(isHr || hasRecord
           ? [{ href: '/people', label: isHr ? 'Employees' : 'My team', icon: <Icon d={PATHS.users} colour="#00b8d9" /> }]
           : []),
+        // Your own record, and asking HR to correct it (20261009-c).
+        ...(hasRecord
+          ? [{ href: '/people/me', label: 'My record', icon: <Icon d={PATHS.notes} colour="#7367f0" /> }]
+          : []),
         ...(isHr
-          ? [{ href: '/people/new', label: 'Add employee', icon: <Icon d={PATHS.compose} colour="#6C3CE9" /> }]
+          ? [{ href: '/people/new', label: 'Add employee', icon: <Icon d={PATHS.compose} colour="#6C3CE9" /> },
+             { href: '/people/corrections', label: 'Correction requests', icon: <Icon d={PATHS.inbox} colour="#ff9f43" /> }]
           : []),
         // Administrators name People HR; HR may see who else is.
         ...(showHrList

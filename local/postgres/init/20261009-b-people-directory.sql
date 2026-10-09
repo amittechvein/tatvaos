@@ -2,7 +2,12 @@
 --  People — the staff directory's settings (decision 0018 §5)
 -- ============================================================================
 --
---  Depends on 20261009-people-employees.sql (same date, sorts after it).
+--  Depends on 20261008-people-employee-ids.sql (the people schema) only.
+--  CORRECTED 9 Oct: this line used to say it "sorts after" the employees file.
+--  It does not - "-b-" sorts BEFORE "-people-employees" - and it does not need
+--  to: nothing here references people.employees. Do not add a reference to
+--  it in this file; anything that needs that table goes in a file whose name
+--  sorts after it (see 20261009-r-people-corrections.sql).
 --
 --  0018 §5, decided by Amit on 9 Oct 2026 (Mr. Singh recommended it): the
 --  directory shows colleagues each other's name, designation, department,
