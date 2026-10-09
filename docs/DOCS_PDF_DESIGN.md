@@ -236,10 +236,11 @@ In every case where the service survived, its thread count at rest was the same 
 - **(a) a limit on PDFs in progress, checked BEFORE the body is read.** One or two at a time; the rest get "busy, try again" (Mr. Singh's semaphore, now measured as needed);
 - **(b) a PDF-route body limit well under the heap.** Better still, pictures shrunk before they're sent: case 0's recommendation, which also fixes (c);
 - **(c) #401's sentence chosen by whose bytes filled `/tmp`.**
+- **(d) Pictures downscaled and stripped of ALL metadata (Mr. Singh, 9 Oct 2026, his switch-on condition).** **The server-side PDF route is not switched on for anyone, Techvein included, until picture downscaling and metadata stripping are in** (the target below). Phone photos carry where they were taken, and Typst copies a photo into the PDF byte for byte (measured 7 Oct), so without this every emailed PDF would carry each photo's location. "Not because the order of work matters, but because the order of switching on does — and the person who eventually turns it on will not be the person who read this."
 
 **Today nothing calls `/render/pdf`, so production's Docs saves are not exposed** until someone wires PDF by email.
 
-### Mr. Singh's ruling (7 Oct) and the proposed target, for his decision
+### Mr. Singh's rulings (7 and 9 Oct): the picture target, DECIDED
 
 **Ruling:**
 - **Downscale and recompress pictures before Typst. Don't simply enlarge `/tmp`.** These PDFs go by email, and most mail servers refuse attachments over 10–25 MB: a bigger `/tmp` would build a PDF that bounces at the far end.
@@ -257,24 +258,32 @@ In every case where the service survived, its thread count at rest was the same 
 
 **Caution:** these test photos are synthetic, with sensor-like noise added. Real photos have more fine detail in some places and less in others. **Expect real phone photos at 1600 px q82 between roughly 250 and 500 KB.** A handful of real school photos would confirm it before the cap is fixed.
 
-**Proposed for his decision:**
+**Ruled 9 Oct 2026 (Mr. Singh, via Amit): approved as proposed — 1,600 px, JPEG q82, 6 MB total after downscaling, in the render container — with two additions:**
+1. **Apply the orientation, then strip everything.** Rotate the pixels by the orientation tag first, then remove the tag with the rest; stripped without rotating, a portrait photo arrives sideways.
+2. **Strip XMP and IPTC, not only EXIF.** Location lives in more than one block (phones and editors also write XMP; IPTC can carry location fields). **The test asserts there is no location of ANY kind in the output image** — loaded and inspected — from a source photo that definitely had it in all three; and it is **red first**: the same photo through the old path (straight into Typst) shows the coordinates.
 
-| | Proposal | Why |
+**And one confirmation:** a PDF at the full 6 MB cap, in the hardened container, with `/tmp` really 16 MB. If it is tight, `/tmp` is raised modestly rather than the cap lowered — `/tmp` was to be decided last, from the post-downscale numbers, and this is that moment.
+
+"Build it on these numbers now. It no longer waits for me; it waits for the usual green and the switch-on condition" — (d) above.
+
+| | Decided | Why |
 |---|---|---|
 | **Size** | **Longest side 1,600 px**, never enlarged | On A4 (about 6.7 in of printable width), a full-width photo prints at ~240 dpi and a half-width one at ~480: sharp on paper and on screen. 2,000 px roughly doubles the bytes for detail nobody sees in an email PDF; 1,200 px (~180 dpi full width) is visibly soft in print |
 | **Quality** | **JPEG quality 82** | About two-thirds of q90's bytes (measured above). That it looks no different, and that q75 begins to show blocking in skies and skin, is general JPEG behaviour, **not judged here by eye**: worth one look at a sample PDF before fixing it |
 | **Format** | JPEG for photos; a PNG with transparency stays PNG, downscaled the same way | Logos and diagrams keep crisp edges and transparent backgrounds |
 | **Orientation** | **Apply the EXIF orientation before re-encoding** | Re-encoding drops EXIF. A phone photo shot upright is stored sideways with an "orientation" tag, and without this step it would print on its side |
-| **Metadata** | Dropped (a side effect of re-encoding) | **Privacy, worth naming:** phone photos carry the GPS position where they were taken. **Checked 7 Oct: Typst keeps it.** In the real render image (Typst 0.14.2), a photo carrying an EXIF block (GPS position and a marker text) produced a PDF holding the marker, the EXIF header and the GPS bytes. The same photo without the block produced a PDF with none of them (the control). The PDF grew by exactly the block's 176 bytes: the JPEG goes in byte for byte. So **without re-encoding, every emailed PDF would carry each phone photo's GPS position.** Evidence: `pdf-exif-gps-check-2026-10-07.log` in `tatvaos-one` |
+| **Metadata** | **Stripped, all of it — EXIF, XMP and IPTC — explicitly, after the orientation is applied** (ruling, addition 2), not left to a side effect of re-encoding | **Privacy, worth naming:** phone photos carry the GPS position where they were taken. **Checked 7 Oct: Typst keeps it.** In the real render image (Typst 0.14.2), a photo carrying an EXIF block (GPS position and a marker text) produced a PDF holding the marker, the EXIF header and the GPS bytes. The same photo without the block produced a PDF with none of them (the control). The PDF grew by exactly the block's 176 bytes: the JPEG goes in byte for byte. So **without re-encoding, every emailed PDF would carry each phone photo's GPS position.** Evidence: `pdf-exif-gps-check-2026-10-07.log` in `tatvaos-one` |
 | **Total cap** | **6 MB of pictures after downscaling**, refused above that with the existing "remove some pictures" sentence | 6 MB of pictures means a PDF of about 6 MB: under the stricter 10 MB mail limits, with room for text. `/tmp` then needs about 12 MB (pictures + PDF), inside today's 16 MB. **So `/tmp` can stay as it is.** At 250–500 KB a photo, that's about 12–24 photos per document |
 
-**Still open (his, before building):**
-- **Where the downscaling runs:**
+**Decided by the 9 Oct ruling:**
+- **Where the downscaling runs: (i), the render container.** The options weighed:
   - (i) in the render container, before Typst. Needs an image library in the image: `sharp` is native libvips and grows the image; a WebAssembly encoder is slower but has no native code. Keeps the hardened container the only place that decodes untrusted pictures;
   - (ii) in the API, as it gathers the stored pictures (for example SkiaSharp, MIT-licensed). Smaller requests to the render service, which also helps with the heap crash in cases 2 and 3; but the API process then decodes untrusted images;
   - (iii) at upload, in the browser. Fixes neither pictures already stored nor a client that skips it, so it can only be an addition.
 
-  **I recommend (i).** Decoding untrusted image bytes belongs in the container that was hardened for exactly that.
+  (i) it is: decoding untrusted image bytes belongs in the container that was hardened for exactly that. Built with Alpine's own `vips-tools` (`vipsthumbnail`), pinned like Typst, run the way Typst is.
+
+**Still open:**
 - **The in-progress limit and the "busy, try again" sentence** (cases 2 and 3), which downscaling makes less urgent but doesn't remove.
 
 **Then fix the inconsistency, not just measure it:**
