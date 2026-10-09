@@ -32,7 +32,7 @@ export default function PeopleLayout({ children }: { children: React.ReactNode }
       >
         {(me) => (
           <AppShell scope="people" brand="TatvaOS"
-                    sections={peopleNav({ isHr: me.isHr, showHrList: me.isHr || me.canNameHr })}>
+                    sections={peopleNav({ isHr: me.isHr, hasRecord: !!me.employee, showDirectory: me.canSeeDirectory, showHrList: me.isHr || me.canNameHr })}>
             {children}
           </AppShell>
         )}

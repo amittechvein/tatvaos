@@ -1118,6 +1118,25 @@ for stmt in "DELETE FROM people.employees WHERE false" \
     run_as tatvaos_app "$stmt" >/dev/null 2>&1 && fail "app can still run: $stmt" || pass "app refused: $stmt"
 done
 
+# Directory settings (20261009-b): who may see an organisation's staff list.
+run_as postgres "INSERT INTO people.directory_settings (tenant_id, visible_to, show_manager) VALUES
+        ('$SCHOOL','hr_only',false) ON CONFLICT (tenant_id) DO UPDATE SET visible_to = 'hr_only';" >/dev/null 2>&1
+fx=$(scalar_as postgres "SELECT count(*) FROM people.directory_settings WHERE tenant_id = '$SCHOOL'")
+[ "${fx:-0}" -eq 1 ] && pass "fixture: ABC School has directory settings" \
+                     || fail "fixture missing for directory settings - the checks below would prove nothing"
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM people.directory_settings WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's directory settings" \
+                       || fail "LEAK: ABC School's directory settings visible to Techvein"
+n=$(no_context "SELECT count(*) FROM people.directory_settings")
+[ "${n:-1}" -eq 0 ] && pass "no tenant context returns zero directory settings" \
+                    || fail "DANGEROUS: ${n} directory settings visible with no tenant set"
+run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    UPDATE people.directory_settings SET visible_to = 'everyone' WHERE tenant_id = '$SCHOOL';" >/dev/null 2>&1
+still=$(scalar_as postgres "SELECT visible_to FROM people.directory_settings WHERE tenant_id = '$SCHOOL'")
+[ "$still" = "hr_only" ] && pass "Techvein cannot open ABC School's directory" \
+                         || fail "LEAK: Techvein changed ABC School's directory to '$still'"
+run_as postgres "DELETE FROM people.directory_settings WHERE tenant_id = '$SCHOOL';" >/dev/null 2>&1
+
 run_as postgres "DELETE FROM people.employees WHERE full_name LIKE 'iso-emp-%' AND reports_to IS NOT NULL;
     DELETE FROM people.employees WHERE full_name LIKE 'iso-emp-%';
     DELETE FROM people.hr_members WHERE tenant_id = '$SCHOOL' AND user_id = 'd2222222-2222-2222-2222-222222222222';" >/dev/null 2>&1

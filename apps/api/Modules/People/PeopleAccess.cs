@@ -41,6 +41,29 @@ public sealed class ReportingChange
     public DateTimeOffset ChangedAt { get; set; }
 }
 
+/// <summary>How much of the staff directory colleagues see (people.directory_settings, 0018 §5).</summary>
+public sealed class DirectorySettings
+{
+    public Guid TenantId { get; set; }
+    /// <summary>"everyone" (default) or "hr_only".</summary>
+    public string VisibleTo { get; set; } = "everyone";
+    public bool ShowManager { get; set; } = true;
+    public Guid? UpdatedBy { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// One person in the staff directory — and ONLY these fields (0018 §5,
+/// Amit 9 Oct 2026). Employee code, status, joining and exit dates and
+/// employment type are deliberately absent: "on notice" in a staff list tells
+/// everyone that someone is leaving before they have said so. Adding a field
+/// here is a change to what every colleague sees — tests/people step 13
+/// asserts this exact set.
+/// </summary>
+public sealed record DirectoryEntry(
+    Guid Id, string Name, string? Designation, string? Department, string? Location,
+    string? WorkEmail, string? Manager);
+
 /// <summary>Someone named People HR in their organisation (0018 §4).</summary>
 public sealed class PeopleHrMember
 {
@@ -180,6 +203,77 @@ public sealed class PeopleAccess(AppDbContext db, TenantContext tenant, IHttpCon
         await db.SaveChangesAsync(ct);
         _hr = null;
         return true;
+    }
+
+    // ------------------------------------------------------------ directory
+
+    /// <summary>This organisation's directory settings, or the defaults (not saved by reading).</summary>
+    public async Task<DirectorySettings> DirectorySettingsAsync(CancellationToken ct) =>
+        await db.Set<DirectorySettings>().AsNoTracking().FirstOrDefaultAsync(ct)
+        ?? new DirectorySettings { TenantId = tenant.TenantId };
+
+    /// <summary>
+    /// May this person see the directory. 'everyone': anyone signed in to the
+    /// organisation. 'hr_only': People HR — and administrators are not HR
+    /// until they name themselves, here as everywhere in People.
+    /// </summary>
+    public async Task<bool> CanSeeDirectoryAsync(CancellationToken ct)
+    {
+        if (http.HttpContext?.User?.Identity?.IsAuthenticated != true || tenant.UserId is null) return false;
+        var s = await DirectorySettingsAsync(ct);
+        return s.VisibleTo == "everyone" || await IsHrAsync(ct);
+    }
+
+    /// <summary>
+    /// The staff directory: everyone still here (not 'exited'), with the
+    /// directory's fields only. On notice is included and indistinguishable
+    /// from active, by design. The caller has checked CanSeeDirectoryAsync.
+    /// </summary>
+    public async Task<List<DirectoryEntry>> DirectoryAsync(
+        string? q, Guid? departmentId, Guid? locationId, CancellationToken ct)
+    {
+        var showManager = (await DirectorySettingsAsync(ct)).ShowManager;
+        var people = db.Set<Employee>().AsNoTracking().Where(e => e.Status != "exited");
+        if (departmentId is Guid d) people = people.Where(e => e.DepartmentId == d);
+        if (locationId is Guid l) people = people.Where(e => e.LocationId == l);
+
+        var rows = people.Select(e => new
+        {
+            e.Id,
+            Name = e.FullName,
+            Designation = db.OrgDesignations.Where(x => x.Id == e.DesignationId).Select(x => x.Title).FirstOrDefault(),
+            Department = db.Departments.Where(x => x.Id == e.DepartmentId).Select(x => x.Name).FirstOrDefault(),
+            Location = db.OrgLocations.Where(x => x.Id == e.LocationId).Select(x => x.Name).FirstOrDefault(),
+            e.WorkEmail,
+            Manager = db.Set<Employee>().Where(m => m.Id == e.ReportsTo).Select(m => m.FullName).FirstOrDefault(),
+        });
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var k = q.Trim().ToLower();
+            rows = rows.Where(r => r.Name.ToLower().Contains(k)
+                || (r.Designation != null && r.Designation.ToLower().Contains(k))
+                || (r.Department != null && r.Department.ToLower().Contains(k))
+                || (r.Location != null && r.Location.ToLower().Contains(k))
+                || (showManager && r.Manager != null && r.Manager.ToLower().Contains(k)));
+        }
+        var list = await rows.OrderBy(r => r.Name).Take(1000).ToListAsync(ct);
+        return list.Select(r => new DirectoryEntry(r.Id, r.Name, r.Designation, r.Department, r.Location,
+                                                   r.WorkEmail, showManager ? r.Manager : null)).ToList();
+    }
+
+    public async Task SaveDirectorySettingsAsync(string visibleTo, bool showManager, CancellationToken ct)
+    {
+        var row = await db.Set<DirectorySettings>().FirstOrDefaultAsync(ct);
+        if (row is null)
+        {
+            row = new DirectorySettings { TenantId = tenant.TenantId };
+            db.Set<DirectorySettings>().Add(row);
+        }
+        row.VisibleTo = visibleTo;
+        row.ShowManager = showManager;
+        row.UpdatedBy = tenant.UserId;
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
     }
 
     /// <summary>

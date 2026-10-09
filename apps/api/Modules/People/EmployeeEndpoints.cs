@@ -33,6 +33,10 @@ public static class EmployeeEndpoints
         var g = app.MapGroup("/api/people").RequireAuthorization("User").WithTags("People");
         g.MapGet("/me", MeAsync);
         g.MapGet("/options", OptionsAsync);
+        // The staff directory (0018 §5): colleagues, directory fields only.
+        g.MapGet("/directory", DirectoryAsync);
+        g.MapGet("/directory/settings", GetDirectorySettingsAsync);
+        g.MapPut("/directory/settings", PutDirectorySettingsAsync);
         g.MapGet("/employees", ListAsync);
         g.MapGet("/employees/{id:guid}", GetAsync);
         g.MapPost("/employees", CreateAsync);
@@ -50,6 +54,7 @@ public static class EmployeeEndpoints
         string? EmployeeCode, string? Status);
 
     public sealed record ExitRequest(DateOnly? ExitOn);
+    public sealed record DirectorySettingsRequest(string? VisibleTo, bool? ShowManager);
 
     private static object Shape(Employee e) => new
     {
@@ -71,6 +76,7 @@ public static class EmployeeEndpoints
             canNameHr = access.CanNameHr(),
             employee = me is null ? null : Shape(me),
             directReports = me is null ? 0 : await access.DirectReportsAsync(me.Id, ct),
+            canSeeDirectory = await access.CanSeeDirectoryAsync(ct),
         });
     }
 
@@ -130,6 +136,47 @@ public static class EmployeeEndpoints
         if (!await access.ExistsAsync(id, ct)) return Results.NotFound();
         var rows = await access.ReportingHistoryAsync(id, ct);
         return Results.Ok(rows.Select(r => new { r.FromManagerId, r.ToManagerId, r.ChangedBy, r.ChangedAt }));
+    }
+
+    // ================================================================ directory
+
+    /// <summary>
+    /// The staff directory. Everyone in the organisation by default; People
+    /// HR only if the organisation says so. Fields: name, designation,
+    /// department, location, work email, manager (if shown) — never code,
+    /// status, dates or employment type (PeopleAccess.DirectoryEntry).
+    /// </summary>
+    private static async Task<IResult> DirectoryAsync(
+        PeopleAccess access, string? q, Guid? departmentId, Guid? locationId, CancellationToken ct)
+    {
+        if (!await access.CanSeeDirectoryAsync(ct))
+            return Forbidden("Your organisation shows the staff directory to People HR only.");
+        return Results.Ok(await access.DirectoryAsync(q, departmentId, locationId, ct));
+    }
+
+    private static async Task<IResult> GetDirectorySettingsAsync(PeopleAccess access, CancellationToken ct)
+    {
+        if (!access.CanNameHr() && !await access.IsHrAsync(ct))
+            return Forbidden("Only administrators and People HR can see the directory settings.");
+        var s = await access.DirectorySettingsAsync(ct);
+        return Results.Ok(new { s.VisibleTo, s.ShowManager });
+    }
+
+    /// <summary>Narrowing only: the hidden fields are never returned, whatever this says.</summary>
+    private static async Task<IResult> PutDirectorySettingsAsync(
+        DirectorySettingsRequest req, PeopleAccess access, AuditWriter audit, TenantContext tenant, CancellationToken ct)
+    {
+        if (!access.CanNameHr() && !await access.IsHrAsync(ct))
+            return Forbidden("Only administrators and People HR can change who sees the directory.");
+        var visibleTo = req.VisibleTo ?? "everyone";
+        if (visibleTo is not ("everyone" or "hr_only"))
+            return Results.BadRequest(new { error = "Who sees the directory is everyone or hr_only." });
+        var before = await access.DirectorySettingsAsync(ct);
+        await access.SaveDirectorySettingsAsync(visibleTo, req.ShowManager ?? true, ct);
+        await audit.WriteAsync("people_directory.settings_changed", "directory_settings", tenant.TenantId.ToString(),
+            before: new { before.VisibleTo, before.ShowManager },
+            after: new { VisibleTo = visibleTo, ShowManager = req.ShowManager ?? true }, ct: ct, productCode: "people");
+        return Results.Ok(new { visibleTo, showManager = req.ShowManager ?? true });
     }
 
     // ================================================================ writes

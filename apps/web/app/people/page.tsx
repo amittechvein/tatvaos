@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
 import { Badge, Button, Card, Empty, Spinner, Table, Td } from '@/components/ui/Kit';
@@ -41,6 +42,13 @@ export default function PeoplePage() {
   }, [authedFetch, q, status]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Someone with no record who is neither HR nor an administrator has only
+  // the directory here; "My team" would be an empty page.
+  const router = useRouter();
+  useEffect(() => {
+    if (!me.isHr && !me.canNameHr && !me.employee && me.canSeeDirectory) router.replace('/people/directory');
+  }, [me, router]);
 
   async function nameMyselfHr() {
     if (!user) return;
