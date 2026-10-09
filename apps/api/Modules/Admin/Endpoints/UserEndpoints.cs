@@ -366,7 +366,7 @@ public static class UserEndpoints
         string? recoveryPhone = null;
         if (!string.IsNullOrWhiteSpace(req.RecoveryPhone))
         {
-            recoveryPhone = PhoneNumber.Normalise(req.RecoveryPhone);
+            recoveryPhone = PhoneNumber.Stored(req.RecoveryPhone);
             if (recoveryPhone is null)
                 return Results.BadRequest(new
                 {
@@ -854,7 +854,7 @@ public static class UserEndpoints
                     });
                     continue;
                 }
-                recoveryPhone = PhoneNumber.Normalise(rawPhone);
+                recoveryPhone = PhoneNumber.Stored(rawPhone);
                 if (recoveryPhone is null)
                 {
                     skipped.Add(new { address, displayName, reason = $"'{rawPhone}' is not a usable phone number" });

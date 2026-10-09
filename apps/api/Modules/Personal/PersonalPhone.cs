@@ -35,16 +35,10 @@ public sealed class PersonalPhone(IConfiguration config)
     /// +91XXXXXXXXXX. Anything else must already carry its "+". Null if it is
     /// not a usable number.
     /// </summary>
-    public static string? Canonical(string? raw)
-    {
-        var n = PhoneNumber.Normalise(raw);
-        if (n is null) return null;
-        if (n.StartsWith('+')) return n.Length >= 9 ? n : null;
-        if (n.Length == 10 && n[0] is >= '6' and <= '9') return "+91" + n;
-        if (n.Length == 11 && n[0] == '0' && n[1] is >= '6' and <= '9') return "+91" + n[1..];
-        if (n.Length == 12 && n.StartsWith("91") && n[2] is >= '6' and <= '9') return "+" + n;
-        return null;
-    }
+    public static string? Canonical(string? raw) => PhoneNumber.Canonical(raw);
+    // The rule itself lives in Shared.PhoneNumber since 9 Oct 2026 (#327):
+    // the organisation sign-in needed the same spelling, and two copies of a
+    // join key is how one number gets two accounts.
 
     /// <summary>Hex HMAC-SHA256 of the canonical number. Throws if unconfigured — check Configured.</summary>
     public string Fingerprint(string canonical) =>
