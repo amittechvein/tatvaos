@@ -45,8 +45,14 @@ public enum HireLevel { None = 0, HiringManager = 1, Recruiter = 2, Admin = 3 }
 ///  manager every job in the organisation, and nothing would look wrong —
 ///  the tenant filter would still be doing its job.
 ///
+///  The same holds for candidates, applications, their history and the
+///  pipeline (20260924-d): Candidates(level) and Applications(level) are the
+///  only reads, and a hiring manager sees a candidate only through an
+///  application to a job that names them.
+///
 ///  Two kinds of access leave this file, and only these:
-///    * Jobs(level): what THIS person may see. Every Hire screen uses it.
+///    * Jobs(level), Candidates(level), Applications(level): what THIS person
+///      may see. Every Hire screen uses them.
 ///    * OrganisationWide: counts and ids for Core's administrative "is this
 ///      in use" checks (location, designation, department deletion). They
 ///      return numbers and ids, never a query, so they cannot be extended
@@ -128,6 +134,223 @@ public sealed class HireAccess(AppDbContext db, TenantContext tenant, IHttpConte
         row.UpdatedAt = now;
         await db.SaveChangesAsync(ct);
     }
+
+    // ------------------------------------------------------------ candidates
+
+    /// <summary>
+    /// The candidates this person may see. Recruiters and administrators: all
+    /// of them. A hiring manager: only people with at least one application
+    /// to a job that names them — never the organisation's whole talent pool.
+    /// </summary>
+    public IQueryable<HireCandidate> Candidates(HireLevel level)
+    {
+        var q = db.Set<HireCandidate>().AsQueryable();
+        if (level >= HireLevel.Recruiter) return q;
+        if (level == HireLevel.HiringManager && tenant.UserId is Guid me)
+        {
+            var mine = Applications(level);
+            return q.Where(c => mine.Any(a => a.CandidateId == c.Id));
+        }
+        return q.Where(_ => false);
+    }
+
+    /// <summary>
+    /// The applications this person may see: all, or — for a hiring manager —
+    /// those to jobs that name them. Defined through Jobs(level), so the two
+    /// can never disagree about which jobs are theirs.
+    /// </summary>
+    public IQueryable<HireApplication> Applications(HireLevel level)
+    {
+        var q = db.Set<HireApplication>().AsQueryable();
+        if (level >= HireLevel.Recruiter) return q;
+        if (level == HireLevel.HiringManager)
+        {
+            var jobs = Jobs(level);
+            return q.Where(a => jobs.Any(j => j.Id == a.JobId));
+        }
+        return q.Where(_ => false);
+    }
+
+    /// <summary>History of applications this person may see.</summary>
+    public IQueryable<HireApplicationEvent> Events(HireLevel level)
+    {
+        var apps = Applications(level);
+        return db.Set<HireApplicationEvent>().Where(e => apps.Any(a => a.Id == e.ApplicationId));
+    }
+
+    /// <summary>
+    /// Is this email already a candidate anywhere in the organisation —
+    /// including people this person cannot see. Returns the id only when the
+    /// caller may see that candidate; otherwise just "taken", so a hiring
+    /// manager cannot use it to discover who else is being recruited.
+    /// </summary>
+    public async Task<(bool Taken, Guid? VisibleId)> CandidateEmailTakenAsync(
+        HireLevel level, string email, Guid? except, CancellationToken ct)
+    {
+        var key = email.ToLower();
+        var id = await db.Set<HireCandidate>()
+            .Where(c => c.Email != null && c.Email.ToLower() == key && c.Id != except)
+            .Select(c => (Guid?)c.Id)
+            .FirstOrDefaultAsync(ct);
+        if (id is null) return (false, null);
+        var visible = await Candidates(level).AnyAsync(c => c.Id == id, ct);
+        return (true, visible ? id : null);
+    }
+
+    /// <summary>Saves what the caller added or changed through this gate.</summary>
+    public Task<int> SaveAsync(CancellationToken ct) => db.SaveChangesAsync(ct);
+
+    public void AddCandidate(HireCandidate c) => db.Set<HireCandidate>().Add(c);
+    /// <summary>Erasure. Cascades to applications and their history in the database.</summary>
+    public void RemoveCandidate(HireCandidate c) => db.Set<HireCandidate>().Remove(c);
+    public void AddApplication(HireApplication a) => db.Set<HireApplication>().Add(a);
+    public void AddEvent(HireApplicationEvent e) => db.Set<HireApplicationEvent>().Add(e);
+
+    // ------------------------------------------------------------- settings
+
+    /// <summary>The default and the ceiling: 180 days (Amit, 24 Sept 2026).</summary>
+    public const int MaxRetentionDays = 180;
+    /// <summary>The floor: a mistyped "1" must not erase last week's candidates tonight.</summary>
+    public const int MinRetentionDays = 30;
+
+    /// <summary>This organisation's Hire settings, or the defaults if none are saved.</summary>
+    public async Task<HireSetting> SettingsAsync(CancellationToken ct) =>
+        await db.Set<HireSetting>().FirstOrDefaultAsync(ct)
+        ?? new HireSetting { TenantId = tenant.TenantId, RetentionDays = MaxRetentionDays };
+
+    /// <summary>How long a shorter period waits before it applies (Mr. Singh, 24 Sept 2026).</summary>
+    public static readonly TimeSpan ShorteningDelay = TimeSpan.FromDays(7);
+
+    private async Task<HireSetting> SettingsRowAsync(CancellationToken ct)
+    {
+        var row = await db.Set<HireSetting>().FirstOrDefaultAsync(ct);
+        if (row is null)
+        {
+            row = new HireSetting { TenantId = tenant.TenantId, RetentionDays = MaxRetentionDays, UpdatedAt = DateTimeOffset.UtcNow };
+            db.Set<HireSetting>().Add(row);
+        }
+        return row;
+    }
+
+    /// <summary>
+    /// A longer (or equal) period applies at once — it is the safe direction —
+    /// and cancels any shortening that was waiting.
+    /// </summary>
+    public async Task ApplyRetentionNowAsync(int days, CancellationToken ct)
+    {
+        var row = await SettingsRowAsync(ct);
+        row.RetentionDays = days;
+        row.UpdatedBy = tenant.UserId;
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        ClearPending(row);
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>A shorter period, to apply at <paramref name="effectiveAt"/>.</summary>
+    public async Task ScheduleShorteningAsync(int days, DateTimeOffset effectiveAt, CancellationToken ct)
+    {
+        var row = await SettingsRowAsync(ct);
+        row.PendingRetentionDays = days;
+        row.PendingEffectiveAt = effectiveAt;
+        row.PendingRequestedBy = tenant.UserId;
+        row.PendingRequestedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>Cancels a waiting shortening. True if there was one.</summary>
+    public async Task<bool> CancelShorteningAsync(CancellationToken ct)
+    {
+        var row = await db.Set<HireSetting>().FirstOrDefaultAsync(ct);
+        if (row?.PendingRetentionDays is null) return false;
+        ClearPending(row);
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    private static void ClearPending(HireSetting row)
+    {
+        row.PendingRetentionDays = null;
+        row.PendingEffectiveAt = null;
+        row.PendingRequestedBy = null;
+        row.PendingRequestedAt = null;
+    }
+
+    /// <summary>
+    /// How many of THIS organisation's candidates a period of
+    /// <paramref name="days"/> would delete at <paramref name="at"/> that the
+    /// current period would not — the number the settings page states before
+    /// anyone confirms. Uses hire.due_candidates(), the sweep's own
+    /// definition, inside the tenant's row-level security.
+    /// </summary>
+    public async Task<int> ShorteningImpactAsync(int days, DateTimeOffset at, CancellationToken ct) =>
+        await db.Database.SqlQuery<int>($@"
+            SELECT count(*)::int AS ""Value""
+              FROM hire.due_candidates({at}, {days}) d
+             WHERE NOT EXISTS (SELECT 1 FROM hire.due_candidates({at}, NULL) x WHERE x.id = d.id)")
+            .SingleAsync(ct);
+
+    // -------------------------------------------------------------- pipeline
+
+    /// <summary>
+    /// The roadmap's default pipeline (§3 Phase 1). Rejected and Withdrawn are
+    /// outcomes, not stages — see the migration.
+    /// </summary>
+    private static readonly (string Key, string Name)[] DefaultStages =
+    [
+        ("applied", "Applied"), ("screening", "Screening"), ("shortlisted", "Shortlisted"),
+        ("hr_interview", "HR Interview"), ("assessment", "Assessment"),
+        ("technical_interview", "Technical Interview"), ("final_interview", "Final Interview"),
+        ("selected", "Selected"), ("offer", "Offer"), ("offer_accepted", "Offer Accepted"),
+        ("pre_joining", "Pre-Joining"), ("joined", "Joined"),
+    ];
+
+    /// <summary>
+    /// This organisation's pipeline, in order — created with the defaults the
+    /// first time anyone needs it.
+    ///
+    /// TWO FIRST REQUESTS AT ONCE (Mr. Singh's question on PR 267). The
+    /// unique (tenant, key) index makes a second set of twelve impossible.
+    /// What it does not do is give the loser an answer, and the first version
+    /// of this method got that wrong: it added twelve entities and caught
+    /// DbUpdateException, expecting "duplicate key". But EF sorts a batch by
+    /// primary key, the keys were random Guids, so two requests inserted the
+    /// same twelve stages in DIFFERENT orders, each ended up holding a row the
+    /// other was waiting for, and Postgres killed one with 40P01 "deadlock
+    /// detected" — which EF wraps in InvalidOperationException, not
+    /// DbUpdateException. Nine of ten simultaneous first requests answered
+    /// 500 (tests/hire step 18, 28 Sept 2026). Never two sets; just an error
+    /// page for whoever lost.
+    ///
+    /// So: ONE statement, rows ALWAYS in the same order, ON CONFLICT DO
+    /// NOTHING. The loser waits for the winner's first row, skips all twelve,
+    /// and reads the winner's. Nothing to catch, so nothing is caught — a
+    /// failure here is a real one and should be seen. It also no longer calls
+    /// SaveChanges, which would have saved whatever else the caller had
+    /// pending.
+    /// </summary>
+    public async Task<List<HirePipelineStage>> PipelineAsync(CancellationToken ct)
+    {
+        var stages = await db.Set<HirePipelineStage>().AsNoTracking()
+            .OrderBy(s => s.Position).ToListAsync(ct);
+        if (stages.Count > 0) return stages;
+
+        var tenantId = tenant.TenantId;
+        var keys = DefaultStages.Select(s => s.Key).ToArray();
+        var names = DefaultStages.Select(s => s.Name).ToArray();
+        var last = DefaultStages.Length;
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO hire.pipeline_stages (tenant_id, key, name, position, is_final)
+            SELECT {tenantId}, s.key, s.name, (s.ord * 10)::int, s.ord = {last}
+              FROM unnest({keys}, {names}) WITH ORDINALITY AS s(key, name, ord)
+             ORDER BY s.ord
+            ON CONFLICT (tenant_id, key) DO NOTHING
+            """, ct);
+
+        return await db.Set<HirePipelineStage>().AsNoTracking()
+            .OrderBy(s => s.Position).ToListAsync(ct);
+    }
+
+    // ------------------------------------------------------------------ jobs
 
     /// <summary>A new job, for the caller to save. The caller has already checked the level.</summary>
     public void Add(JobOpening job) => db.Set<JobOpening>().Add(job);

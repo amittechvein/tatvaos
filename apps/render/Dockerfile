@@ -59,8 +59,14 @@ COPY --from=deps /repo/apps/render/node_modules ./apps/render/node_modules
 # pinned with the image; nothing from GitHub). Fonts are OFL / open licences:
 # Liberation is metric-compatible with Arial / Times / Courier (Amit's ruling);
 # Noto covers the Indian scripts.
+# vips-tools (vipsthumbnail): every picture is shrunk and stripped of ALL
+# metadata before Typst sees it (Mr. Singh's ruling of 9 Oct 2026; render-
+# pdf.mjs "PICTURES ARE SHRUNK"). From the same signed repository, pinned the
+# same way. Only the core package: no vips-magick, vips-poppler or vips-heif,
+# so libvips here cannot open anything but ordinary picture formats.
 RUN apk add --no-cache \
       typst=0.14.2-r0 \
+      vips-tools=8.18.2-r0 \
       font-liberation=2.1.5-r2 font-dejavu=2.37-r6 font-noto=2026.06.01-r0 \
       font-noto-devanagari=2026.06.01-r0 font-noto-bengali=2026.06.01-r0 \
       font-noto-tamil=2026.06.01-r0 font-noto-telugu=2026.06.01-r0 \

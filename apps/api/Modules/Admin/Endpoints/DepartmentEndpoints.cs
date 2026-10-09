@@ -280,6 +280,15 @@ public static class DepartmentEndpoints
                       + "deleting it would reset their storage and permissions to the organisation defaults.",
             });
 
+        // Employee records (People, 0018) are refused, not blanked: a person's
+        // department is part of their record, and RESTRICT stands behind this.
+        var employees = await TatvaOS.Api.Modules.People.PeopleAccess.OrganisationWide.CountNamingDepartmentAsync(db, id, ct);
+        if (employees > 0)
+            return Results.BadRequest(new
+            {
+                error = $"{employees} employee record(s) are in {dept.Name}. Move them to another department first.",
+            });
+
         // The database blanks department_id on every job opening naming this
         // department (ON DELETE SET NULL). That write would leave no trace in
         // the JOB's history, so the jobs are read first and each one gets its
