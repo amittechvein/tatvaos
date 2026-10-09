@@ -433,8 +433,8 @@ function SendToPending({ onClose, onSent }: {
           </ul>
           {counts.toSend > 0 && (
             <Alert tone="info" className="mb-0">
-              Tell them to expect a mail from no_reply@tatvaos.com and to look in
-              their spam folder. Any earlier link they were sent stops working.
+              Tell them to expect a mail from no_reply@tatvaos.com. Any earlier
+              link they were sent stops working.
             </Alert>
           )}
         </>

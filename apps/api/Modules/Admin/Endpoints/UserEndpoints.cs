@@ -1319,7 +1319,7 @@ public static class UserEndpoints
             dryRun = false,
             counts,
             note = $"Sending to {send.Count} people now, about one a second. "
-                   + "Each person's profile shows whether their mail went." + Invitations.CheckSpamNote,
+                   + "Each person's profile shows whether their mail went.",
         });
     }
 
