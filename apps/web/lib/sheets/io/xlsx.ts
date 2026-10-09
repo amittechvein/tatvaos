@@ -18,9 +18,14 @@
 //    3. Writing: the smallest set of parts Excel and Google Sheets open
 //       without a repair prompt.
 //
+//  Conditional formats are kept as colour rules (rules.ts) where TatvaOS has
+//  the kind — cell value, text contains/begins/ends, blanks — and written
+//  back the same way (readColourRules, colourRuleXml).
+//
 //  What an .xlsx can hold that the snapshot cannot, and so is dropped on
-//  import: hidden rows and columns, row/column default styles, conditional
-//  formats, data validation, comments, images and charts, defined names,
+//  import: hidden rows and columns, row/column default styles, the other
+//  conditional formats (colour scales, data bars, icon sets, formula rules),
+//  data validation, comments, images and charts, defined names,
 //  hyperlinks, rich text formatting inside a cell (the text is kept), and
 //  array-formula ranges (the formula is kept in its first cell).
 //
@@ -30,7 +35,10 @@
 
 import { colIndex, colName, cellName, parseRect, MAX_ROWS, MAX_COLS, type Rect } from '../engine/address';
 import { CellError, INDIA, type ErrorCode, type Scalar } from '../engine/types';
-import { parseInput } from '../engine/input';
+import { parseInput, parseNumberText } from '../engine/input';
+import {
+  cleanRule, cleanStyle, operandCount, type ColourRule, type RuleKind, type RuleStyle,
+} from '../rules';
 import {
   DEFAULT_COLS, DEFAULT_COL_WIDTH, DEFAULT_ROWS, DEFAULT_ROW_HEIGHT, cellKey, parseCellKey,
   type BorderSide, type BorderStyle, type CellData, type CellFormat, type SheetData, type WorkbookData,
@@ -504,6 +512,8 @@ const WRITE_BUILTIN: Record<string, number> = {
 interface Styles {
   /** cellXfs index → format (undefined for "no formatting"). */
   xfs: (CellFormat | undefined)[];
+  /** dxfs index → what a conditional format lays on a cell (undefined if nothing TatvaOS can show). */
+  dxfs: (RuleStyle | undefined)[];
 }
 
 const truthy = (v: string | undefined) => v !== undefined && v !== '0' && v !== 'false';
@@ -517,8 +527,20 @@ const BORDER_STYLES: Record<string, BorderStyle> = {
 };
 
 function readStyles(xml: string | undefined, theme: string[]): Styles {
-  if (!xml) return { xfs: [] };
+  if (!xml) return { xfs: [], dxfs: [] };
   const root = parseXml(xml);
+
+  // Differential formats (colour rules). In a dxf a solid fill's colour is
+  // bgColor — the opposite of a cell's fill — so bgColor is read first.
+  const dxfs = kids(kid(root, 'dxfs'), 'dxf').map((d): RuleStyle | undefined => {
+    const f = kid(d, 'font');
+    const p = kid(kid(d, 'fill'), 'patternFill');
+    return cleanStyle({
+      b: flag(kid(f, 'b')), i: flag(kid(f, 'i')), s: flag(kid(f, 'strike')),
+      color: readColor(kid(f, 'color'), theme),
+      bg: p && p.attrs.patternType !== 'none' ? readColor(kid(p, 'bgColor'), theme) ?? readColor(kid(p, 'fgColor'), theme) : undefined,
+    });
+  });
 
   const numFmts = new Map<number, string>();
   for (const nf of kids(kid(root, 'numFmts'), 'numFmt')) {
@@ -601,7 +623,7 @@ function readStyles(xml: string | undefined, theme: string[]): Styles {
     }
     return Object.keys(f).length ? f : undefined;
   });
-  return { xfs };
+  return { xfs, dxfs };
 }
 
 /** Text of a shared-string item or inline string: <t>, or the <t> of every run. Phonetic hints skipped. */
@@ -715,6 +737,68 @@ export async function readXlsx(bytes: Uint8Array): Promise<WorkbookData> {
   }
   if (sheets.length === 0) throw new Error('This file has no worksheets.');
   return { sheets };
+}
+
+const CELL_IS_KIND: Record<string, RuleKind> = {
+  greaterThan: 'gt', greaterThanOrEqual: 'gte', lessThan: 'lt', lessThanOrEqual: 'lte',
+  equal: 'eq', notEqual: 'ne', between: 'between', notBetween: 'notBetween',
+};
+const TEXT_KIND: Record<string, RuleKind> = {
+  containsText: 'contains', notContainsText: 'notContains', beginsWith: 'startsWith', endsWith: 'endsWith',
+  containsBlanks: 'empty', notContainsBlanks: 'notEmpty',
+};
+/** A file can hold any number of rules; a sheet keeps this many. */
+const MAX_RULES_PER_SHEET = 200;
+
+/**
+ * A cellIs operand as TatvaOS keeps it: a number or a quoted string. Anything
+ * else — a cell reference, an expression — is a formula rule TatvaOS cannot
+ * keep, so the rule is dropped (undefined), never evaluated.
+ */
+function cfOperand(f: string | undefined): string | undefined {
+  const t = (f ?? '').trim();
+  const q = /^"((?:[^"]|"")*)"$/.exec(t);
+  if (q) return q[1]!.replace(/""/g, '"');
+  return PLAIN_NUMBER.test(t) && Number.isFinite(Number(t)) ? t : undefined;
+}
+
+/**
+ * The file's conditional formats that TatvaOS can keep, as colour rules in
+ * the order they apply (Excel's priority, lowest first). Kept: "cell value
+ * is …", "text contains / begins / ends", "blanks / no blanks". Dropped:
+ * colour scales, data bars, icon sets, top/bottom, above average,
+ * duplicates, date periods, formula rules, and any rule whose look TatvaOS
+ * cannot show. A rule over several ranges becomes one rule per range.
+ */
+function readColourRules(root: XmlNode, styles: Styles): (Rect & ColourRule)[] {
+  const found: { priority: number; seq: number; rule: Rect & ColourRule }[] = [];
+  for (const cf of kids(root, 'conditionalFormatting')) {
+    const rects = (cf.attrs.sqref ?? '').trim().split(/\s+/)
+      .map((ref) => (ref ? parseRect(ref.replace(/\$/g, '')) : null))
+      .filter((r): r is Rect => r !== null);
+    for (const el of kids(cf, 'cfRule')) {
+      const style = styles.dxfs[Number(el.attrs.dxfId)];
+      if (!style) continue;
+      const type = el.attrs.type ?? '';
+      let rule: ColourRule | undefined;
+      if (type === 'cellIs') {
+        const kind = CELL_IS_KIND[el.attrs.operator ?? ''];
+        const [fa, fb] = kids(el, 'formula').map((f) => cfOperand(f.text));
+        if (kind) rule = cleanRule({ kind, a: fa, b: fb, style });
+      } else if (TEXT_KIND[type]) {
+        rule = cleanRule({ kind: TEXT_KIND[type], a: el.attrs.text, style });
+      }
+      if (!rule) continue;
+      const priority = Number(el.attrs.priority);
+      for (const rect of rects) {
+        found.push({ priority: Number.isFinite(priority) ? priority : Infinity, seq: found.length, rule: { ...rule, ...rect } });
+      }
+    }
+  }
+  return found
+    .sort((x, y) => x.priority - y.priority || x.seq - y.seq)
+    .slice(0, MAX_RULES_PER_SHEET)
+    .map((x) => x.rule);
 }
 
 function readSheet(
@@ -848,6 +932,12 @@ function readSheet(
     }
   }
 
+  const rules = readColourRules(root, styles);
+  if (rules.length > 0) {
+    sheet.rules = rules;
+    for (const rule of rules) grow(rule.r2, rule.c2);
+  }
+
   sheet.rows = Math.min(MAX_ROWS, Math.max(DEFAULT_ROWS, maxRow + 1, sheet.frozenRows + 1));
   sheet.cols = Math.min(MAX_COLS, Math.max(DEFAULT_COLS, maxCol + 1, sheet.frozenCols + 1));
 
@@ -906,6 +996,9 @@ class StyleTable {
   borders: string[] = ['<border><left/><right/><top/><bottom/><diagonal/></border>'];
   numFmts: { id: number; code: string }[] = [];
   xfs: string[] = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'];
+  /** Differential formats: what a colour rule lays over a cell (rules.ts). */
+  dxfs: string[] = [];
+  private dxfIx = new Map<string, number>();
   private index = new Map<string, number>();
   private fontIx = new Map<string, number>();
   private fillIx = new Map<string, number>();
@@ -982,6 +1075,17 @@ class StyleTable {
     return id;
   }
 
+  /** The dxfs index for a colour rule's style. In a dxf, a solid fill's colour is bgColor. */
+  dxf(s: RuleStyle): number {
+    const color = argb(s.color);
+    const bg = argb(s.bg);
+    const font = s.b || s.i || s.s || color
+      ? `<font>${s.b ? '<b/>' : ''}${s.i ? '<i/>' : ''}${s.s ? '<strike/>' : ''}${color ? `<color rgb="${color}"/>` : ''}</font>`
+      : '';
+    const fill = bg ? `<fill><patternFill patternType="solid"><fgColor rgb="${bg}"/><bgColor rgb="${bg}"/></patternFill></fill>` : '';
+    return this.intern(this.dxfs, this.dxfIx, `<dxf>${font}${fill}</dxf>`);
+  }
+
   toXml(): string {
     const nf = this.numFmts.length
       ? `<numFmts count="${this.numFmts.length}">${this.numFmts
@@ -994,7 +1098,7 @@ class StyleTable {
       '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
       `<cellXfs count="${this.xfs.length}">${this.xfs.join('')}</cellXfs>` +
       '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
-      '<dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>' +
+      `<dxfs count="${this.dxfs.length}">${this.dxfs.join('')}</dxfs>` + '<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>' +
       '</styleSheet>';
   }
 }
@@ -1077,6 +1181,50 @@ function cellXml(ref: string, cell: CellData, styles: StyleTable, strings: Strin
   return `<c r="${ref}"${s ? ` s="${s}"` : ''}${type ? ` t="${type}"` : ''}>${body}</c>`;
 }
 
+const CELL_IS_OPERATOR: Partial<Record<RuleKind, string>> = {
+  gt: 'greaterThan', gte: 'greaterThanOrEqual', lt: 'lessThan', lte: 'lessThanOrEqual',
+  eq: 'equal', ne: 'notEqual', between: 'between', notBetween: 'notBetween',
+};
+
+/** Text as an Excel string constant. */
+const xlString = (s: string) => `"${s.replace(/"/g, '""')}"`;
+
+/**
+ * One colour rule → its <conditionalFormatting> element ('' if it cannot be
+ * written). What a person typed into the rule goes in ONLY as a quoted
+ * string or a plain number — never as formula text — and every formula
+ * built here is also put through formulaIsSafe, the check the server runs
+ * on the file (XlsxGuard.cs); a rule that failed it would be left out of
+ * the file rather than cost the save. stopIfTrue: in TatvaOS the first
+ * matching rule wins whole (rules.ts); without it Excel would combine them.
+ */
+function colourRuleXml(rule: Rect & ColourRule, priority: number, styles: StyleTable): string {
+  const clean = cleanRule(rule);
+  const r1 = Math.min(rule.r1, rule.r2); const r2 = Math.max(rule.r1, rule.r2);
+  const c1 = Math.min(rule.c1, rule.c2); const c2 = Math.max(rule.c1, rule.c2);
+  if (!clean || r1 < 0 || c1 < 0 || r2 >= XL_MAX_ROWS || c2 >= XL_MAX_COLS) return '';
+  const sqref = r1 === r2 && c1 === c2 ? cellName(r1, c1) : `${cellName(r1, c1)}:${cellName(r2, c2)}`;
+  const tl = cellName(r1, c1); // formulas are written for the top-left cell, relative
+  const number = (s: string) => { const n = parseNumberText(s, INDIA); return n !== null && Number.isFinite(n) ? numberText(n) : xlString(s); };
+  const a = clean.a ?? ''; const qa = xlString(a);
+  let attrs: string; let formulas: string[];
+  switch (clean.kind) {
+    case 'contains': attrs = `type="containsText" operator="containsText" text="${escapeXml(a)}"`; formulas = [`NOT(ISERROR(SEARCH(${qa},${tl})))`]; break;
+    case 'notContains': attrs = `type="notContainsText" operator="notContains" text="${escapeXml(a)}"`; formulas = [`ISERROR(SEARCH(${qa},${tl}))`]; break;
+    case 'startsWith': attrs = `type="beginsWith" operator="beginsWith" text="${escapeXml(a)}"`; formulas = [`LEFT(${tl},LEN(${qa}))=${qa}`]; break;
+    case 'endsWith': attrs = `type="endsWith" operator="endsWith" text="${escapeXml(a)}"`; formulas = [`RIGHT(${tl},LEN(${qa}))=${qa}`]; break;
+    case 'empty': attrs = 'type="containsBlanks"'; formulas = [`LEN(TRIM(${tl}))=0`]; break;
+    case 'notEmpty': attrs = 'type="notContainsBlanks"'; formulas = [`LEN(TRIM(${tl}))>0`]; break;
+    default:
+      attrs = `type="cellIs" operator="${CELL_IS_OPERATOR[clean.kind]}"`;
+      formulas = operandCount(clean.kind) === 2 ? [number(a), number(clean.b ?? '')] : [number(a)];
+  }
+  if (!formulas.every((f) => formulaIsSafe(f))) return '';
+  const dxfId = styles.dxf(clean.style);
+  return `<conditionalFormatting sqref="${sqref}"><cfRule ${attrs} dxfId="${dxfId}" priority="${priority}" stopIfTrue="1">` +
+    `${formulas.map((f) => `<formula>${escapeXml(f)}</formula>`).join('')}</cfRule></conditionalFormatting>`;
+}
+
 function sheetXml(sheet: SheetData, selected: boolean, styles: StyleTable, strings: StringTable): string {
   // Rows, then cells within each row, in order: Excel insists.
   const byRow = new Map<number, [number, CellData][]>();
@@ -1156,6 +1304,8 @@ function sheetXml(sheet: SheetData, selected: boolean, styles: StyleTable, strin
     parts.push(`<mergeCells count="${merges.length}">${merges
       .map((m) => `<mergeCell ref="${cellName(m.r1, m.c1)}:${cellName(m.r2, m.c2)}"/>`).join('')}</mergeCells>`);
   }
+  // After mergeCells and before pageMargins: the order the schema requires.
+  parts.push(...(sheet.rules ?? []).map((rule, i) => colourRuleXml(rule, i + 1, styles)).filter((x) => x !== ''));
   parts.push('<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>');
   return parts.join('');
 }

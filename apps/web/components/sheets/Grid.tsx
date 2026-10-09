@@ -31,6 +31,7 @@ import { formatValue } from '@/lib/sheets/engine/format';
 import { formulaIsSafe } from '@/lib/sheets/io/safety';
 import { parseCell, norm, type Rect } from '@/lib/sheets/engine/address';
 import type { SheetsModel, Clip } from '@/lib/sheets/model';
+import { ruleStyleAt, withRuleStyle } from '@/lib/sheets/rules';
 import { Geometry } from './geometry';
 import { paint, fontFor, type Remote } from './paint';
 
@@ -134,9 +135,16 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
     const p = propsRef.current;
     const s = sel.current;
     const refBoxes = formulaRefBoxes(editingRef.current?.text ?? null, p.model, p.sheetId);
+    // Colour rules are read once per frame, then laid over each cell's own
+    // format as it is painted (rules.ts); a sheet with none pays nothing.
+    const rules = p.model.colourRules(p.sheetId);
+    const locale = p.model.locale();
     paint(ctx, geomRef.current, {
       value: (r, c) => p.model.value(p.sheetId, r, c),
-      format: (r, c) => p.model.format(p.sheetId, r, c),
+      format: rules.length === 0
+        ? (r, c) => p.model.format(p.sheetId, r, c)
+        : (r, c) => withRuleStyle(p.model.format(p.sheetId, r, c),
+          ruleStyleAt(rules, r, c, () => p.model.value(p.sheetId, r, c), locale)),
       merges: p.model.merges(p.sheetId),
       locale: p.model.locale(),
       hasComment: p.hasComment,
