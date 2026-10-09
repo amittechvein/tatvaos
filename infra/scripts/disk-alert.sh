@@ -72,7 +72,10 @@ STATE="${DISK_ALERT_STATE:-/srv/tatvaos-production/.disk-alert-state}"
 # script that sources it would have that secret in its environment.
 BACKUP_CONF="${DISK_ALERT_BACKUP_CONF:-/srv/backups/tatvaos/.backup-env}"
 POSTFIX="${DISK_ALERT_POSTFIX:-tatvaos-postfix-1}"
-HOST=$(hostname)
+# The server's own hostname is "localhost" (found by memory-alert.sh's first
+# dry run on production, 8 Oct 2026), so every disk alert so far was signed
+# "on localhost". DISK_ALERT_HOST names the box; the cron line sets it.
+HOST="${DISK_ALERT_HOST:-$(hostname)}"
 NOW() { date -u +%FT%TZ; }
 
 send() {  # $1 subject, $2 body — returns non-zero if Postfix did not take it
