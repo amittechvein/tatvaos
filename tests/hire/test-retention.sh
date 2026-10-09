@@ -44,8 +44,28 @@ T='11111111-1111-1111-1111-111111111111'   # Techvein: default period, 180 d
 S='22222222-2222-2222-2222-222222222222'   # ABC School: period set to 30 d
 RUN=$(date +%s)
 
+TDB_USED=""
 WSL_KEEPALIVE=""
-if [ -z "${TATVAOS_PSQL:-}" ]; then
+# House rule 13 (Mr. Singh, 29 Sept 2026): with no database given, this run
+# builds its OWN, applies every migration to it twice, and drops it at the
+# end - so another session's leftovers in the shared local database can make
+# it neither pass nor fail (converted 9 Oct 2026; it predated the rule). Set
+# TATVAOS_PGDATABASE to use a named database instead, as before; CI passes
+# TATVAOS_PSQL and is unchanged.
+if [ -z "${TATVAOS_PSQL:-}" ] && [ -z "${TATVAOS_PGDATABASE:-}" ]; then
+    # shellcheck source=../lib/throwaway-db.sh
+    source "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/throwaway-db.sh"
+    tdb_create hireretention || exit 2
+    TDB_USED=1
+    DB="$TDB_NAME"
+    TATVAOS_PG_HOST="$TDB_HOST"
+    if [ "${TDB__MODE:-}" = wsl ]; then
+        TATVAOS_PSQL_APP="${TATVAOS_PSQL_APP:-wsl -e psql postgresql://tatvaos_app:dev_app_pw@localhost/$TDB_NAME -Atc}"
+    else
+        TATVAOS_PSQL_APP="${TATVAOS_PSQL_APP:-psql postgresql://tatvaos_app:dev_app_pw@localhost/$TDB_NAME -Atc}"
+    fi
+    printf '  database: %s (throwaway)\n' "$TDB_NAME"
+elif [ -z "${TATVAOS_PSQL:-}" ]; then
     if command -v wsl >/dev/null 2>&1; then
         wsl -e sleep 600 >/dev/null 2>&1 &
         WSL_KEEPALIVE=$!
@@ -57,7 +77,7 @@ if [ -z "${TATVAOS_PSQL:-}" ]; then
         TATVAOS_PSQL_APP="${TATVAOS_PSQL_APP:-docker exec tv-postgres psql -U tatvaos_app -d $DB -Atc}"
     fi
 fi
-trap '[ -n "$WSL_KEEPALIVE" ] && kill "$WSL_KEEPALIVE" >/dev/null 2>&1' EXIT
+trap '[ -n "$WSL_KEEPALIVE" ] && kill "$WSL_KEEPALIVE" >/dev/null 2>&1; [ -n "$TDB_USED" ] && tdb_drop' EXIT
 
 PG()    { $TATVAOS_PSQL "$1" 2>/dev/null | grep -v "^wsl:" | tail -n1; }
 PGRAW() { $TATVAOS_PSQL "$1" 2>&1 | grep -v "^wsl:"; }
@@ -181,7 +201,7 @@ restore_switch() {
         true|false) PG "UPDATE core.platform_settings SET value='$ORIG_SW' WHERE key='hire.retention_sweep_enabled'" >/dev/null ;;
     esac
 }
-trap 'restore_switch; [ -n "$WSL_KEEPALIVE" ] && kill "$WSL_KEEPALIVE" >/dev/null 2>&1' EXIT
+trap 'restore_switch; [ -n "$WSL_KEEPALIVE" ] && kill "$WSL_KEEPALIVE" >/dev/null 2>&1; [ -n "$TDB_USED" ] && tdb_drop' EXIT
 ours="'$A','$B','$B2','$C','$D','$E','$F','$G','$G2','$H','$I'"
 for off in false TRUE; do
     PG "UPDATE core.platform_settings SET value='$off' WHERE key='hire.retention_sweep_enabled'" >/dev/null
