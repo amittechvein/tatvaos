@@ -75,7 +75,7 @@ NAME="Domain removal test $RUN"
 TECHVEIN="11111111-1111-1111-1111-111111111111"
 cleanup() {
     PG "DELETE FROM core.organisation_deletions WHERE name LIKE '$NAME%'" >/dev/null
-    PG "DELETE FROM core.retired_addresses WHERE source = 'test-domain-removal-$RUN'" >/dev/null
+    PG "DELETE FROM core.retired_addresses WHERE address LIKE '%-$RUN.test'" >/dev/null
     PG "SET session_replication_role = replica; DELETE FROM core.domains WHERE fqdn = '$REG'" >/dev/null
     if [ "$FAILED" -eq 0 ]; then rm -rf "$SCR"; else printf "  kept for reading: %s\n" "$SCR"; fi
 }
@@ -104,10 +104,12 @@ same "D is held" "$(PG "SELECT core.domain_mail_held('$D')")" "t"
 # Held addresses, uncounted, as deleting the organisation leaves them. OTHER's
 # belongs to another customer and must never be counted by D's removal.
 for a in "hr@$D" "principal@$D" "a1@$D2" "keep@$OTHER"; do
-    PG "INSERT INTO core.retired_addresses (address, source) VALUES ('$a', 'test-domain-removal-$RUN')" >/dev/null
+    # 'mailbox_deleted' is what deleting an organisation writes; source is a
+    # fixed list (a made-up value is refused, and PG() hides the refusal).
+    PG "INSERT INTO core.retired_addresses (address, source) VALUES ('$a', 'mailbox_deleted')" >/dev/null
 done
-uncounted() { PG "SELECT count(*) FROM core.retired_addresses WHERE source='test-domain-removal-$RUN' AND address LIKE '%@$1' AND files_checked_at IS NULL"; }
-counted0()  { PG "SELECT count(*) FROM core.retired_addresses WHERE source='test-domain-removal-$RUN' AND address LIKE '%@$1' AND files_left = 0 AND files_checked_at IS NOT NULL"; }
+uncounted() { PG "SELECT count(*) FROM core.retired_addresses WHERE address LIKE '%@$1' AND files_checked_at IS NULL"; }
+counted0()  { PG "SELECT count(*) FROM core.retired_addresses WHERE address LIKE '%@$1' AND files_left = 0 AND files_checked_at IS NOT NULL"; }
 same "four held addresses, none counted" "$(uncounted "$D")/$(uncounted "$D2")/$(uncounted "$OTHER")" "2/1/1"
 N0=$(allfiles)
 [ "${N0:-0}" -ge 15 ] && pass "$N0 files in the tree" || fail "the tree was not built ($N0 files)"
