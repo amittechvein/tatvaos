@@ -1,12 +1,20 @@
 # 0015 — Aadhaar, PAN and bank details: how People holds them
 
-**Status:** proposed. For Mr. Singh's review, as his Hire & People handover asks
-(§3, §6 step 4): *"Write the sensitive-data design document before any code
-touches Aadhaar, PAN or bank details."* Nothing here is built.
-**Date:** 2026-10-08
+**Status:** proposed. **Amit's decisions recorded 10 Oct 2026 (below).** Waiting
+for Mr. Singh's read. On Amit's instruction the build has started on a branch
+**held for that read**; no real Aadhaar, PAN or bank number goes into production
+until Mr. Singh has ruled and the lawyer's question 6 is answered.
+**Date:** 2026-10-08 (proposed) · 2026-10-10 (Amit's decisions)
 **Lane:** Hire & People
-**Needs:** Mr. Singh (design, access, keys) · Amit (what is collected at all, §2;
-who may see it, §5) · a lawyer (§9, through Mr. Singh)
+**Needs:** Mr. Singh (design, access, keys) · a lawyer (§9, through Mr. Singh).
+Amit's part is done.
+
+## Amit's decisions, 10 Oct 2026
+
+| § | Question | Amit | What changes |
+|---|---|---|---|
+| 1 | Is the full Aadhaar number ever stored? Card images? | **Store the full number. No card images, ever.** | §1's default ("last four only") is overruled. The full number is held as §4 describes (encrypted, own key, bound to its row, masked by default, one read-log row per reveal), and is never used for a duplicate check (no lookup hash for Aadhaar). **This makes the lawyer's question 6 live:** whether UIDAI's "Aadhaar Data Vault" rules bind an employer storing Aadhaar for payroll. **It must be answered before any real Aadhaar number is stored in production.** |
+| 5 | Who may reveal a full value? | **Only people the organisation names for it.** | As recommended. An owner may reveal only after naming themselves, which is recorded; the employee may always reveal their own. Not People HR automatically, and never a manager. |
 
 ---
 
