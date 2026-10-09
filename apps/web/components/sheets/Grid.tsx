@@ -34,6 +34,7 @@ import type { SheetsModel, Clip } from '@/lib/sheets/model';
 import { ruleStyleAt, withRuleStyle } from '@/lib/sheets/rules';
 import { asListed, dropdownAt as findDropdown, isChoice, itemsSummary } from '@/lib/sheets/dropdowns';
 import { Geometry } from './geometry';
+import { FilterMenu } from './FilterMenu';
 import { paint, fontFor, type Remote } from './paint';
 
 export interface Selection { rect: Rect; active: { r: number; c: number }; rowSel: boolean; colSel: boolean }
@@ -92,6 +93,8 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
   const [picker, setPicker] = useState<{ r: number; c: number; at: number } | null>(null);
   const pickerRef = useRef(picker);
   pickerRef.current = picker;
+  // The open filter menu (filter.ts), by column.
+  const [filterMenu, setFilterMenu] = useState<number | null>(null);
 
   const sel = useRef<Selection>({ rect: { r1: 0, c1: 0, r2: 0, c2: 0 }, active: { r: 0, c: 0 }, rowSel: false, colSel: false });
   const copyRect = useRef<Rect | null>(null);
@@ -107,10 +110,14 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
 
   const geom = useMemo(() => {
     const s = model.size(sheetId);
+    // Rows the filter hides (filter.ts) are laid out with no height. Worked
+    // out here, at layout time, so a row being typed in does not vanish
+    // under the cursor when its value stops matching (see filter.ts).
+    const hidden = model.filterHiddenRows(sheetId);
     return new Geometry({
       rows: s.rows, cols: s.cols, frozenRows, frozenCols, zoom,
       colWidth: (c) => model.colWidth(sheetId, c),
-      rowHeight: (r) => model.rowHeight(sheetId, r),
+      rowHeight: (r) => (hidden.has(r) ? 0 : model.rowHeight(sheetId, r)),
     });
     // version is the structural-change signal; model/sheetId identify the sheet.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -144,6 +151,7 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
     // format as it is painted (rules.ts); a sheet with none pays nothing.
     const rules = p.model.colourRules(p.sheetId);
     const lists = p.model.dropdowns(p.sheetId);
+    const flt = p.model.filter(p.sheetId);
     const locale = p.model.locale();
     paint(ctx, geomRef.current, {
       value: (r, c) => p.model.value(p.sheetId, r, c),
@@ -154,7 +162,10 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
       merges: p.model.merges(p.sheetId),
       locale: p.model.locale(),
       hasComment: p.hasComment,
+      filterButton: !flt ? undefined : (r, c) =>
+        (r === flt.r1 && c >= flt.c1 && c <= flt.c2 ? (flt.hidden.has(c) ? 'on' : 'off') : null),
       dropdown: lists.length === 0 ? undefined : (r, c) => {
+        if (flt && r === flt.r1 && c >= flt.c1 && c <= flt.c2) return null; // the filter button is there
         const d = findDropdown(lists, r, c);
         return d ? (isChoice(d, shownText(p, r, c)) ? 'ok' : 'bad') : null;
       },
@@ -489,6 +500,8 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
       let to = mod ? dataEdge(s.active.r, s.active.c, dr, dc) : { r: s.active.r + dr, c: s.active.c + dc };
       const m = mergeAt(s.active.r, s.active.c);
       if (!mod && m) to = { r: dr > 0 ? m.r2 + 1 : dr < 0 ? m.r1 - 1 : s.active.r, c: dc > 0 ? m.c2 + 1 : dc < 0 ? m.c1 - 1 : s.active.c };
+      // Rows the filter hides have no height: step over them, as Sheets does.
+      if (dr !== 0) while (to.r > 0 && to.r < g.rows - 1 && g.rowHeight(to.r) <= 0) to = { ...to, r: to.r + dr };
       setSel({ r1: to.r, c1: to.c, r2: to.r, c2: to.c }, to);
     };
 
@@ -731,10 +744,14 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
       const m = mergeAt(h.r, h.c);
       const at = m ? { r: m.r1, c: m.c1 } : { r: h.r, c: h.c };
       setSel({ r1: at.r, c1: at.c, r2: at.r, c2: at.c }, at, { scroll: false });
-      // A click on a dropdown cell's arrow (the right-most 18 px, where
-      // paint.ts draws it) opens its list.
+      // A click on a filter button or a dropdown cell's arrow (the right-most
+      // 18 px, where paint.ts draws both; the filter's wins in a header) opens it.
       const right = g.colX[(m ? m.c2 : h.c) + 1]!;
-      if (h.sx > right - 18 && openPicker(at.r, at.c)) return;
+      if (h.sx > right - 18) {
+        const f = p.model.filter(p.sheetId);
+        if (f && at.r === f.r1 && at.c >= f.c1 && at.c <= f.c2) { setFilterMenu(at.c); return; }
+        if (openPicker(at.r, at.c)) return;
+      }
     }
     drag.current = { kind: 'cells', start: sel.current.active };
   }
@@ -946,7 +963,7 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={scroller} className="sheets-scroller absolute inset-0 overflow-auto"
-        onScroll={() => { repaint(); props.onHover(null); if (pickerRef.current) setPicker(null); }}>
+        onScroll={() => { repaint(); props.onHover(null); if (pickerRef.current) setPicker(null); setFilterMenu(null); }}>
         <div style={{ width: geom.headerW + geom.totalW + 60, height: geom.headerH + geom.totalH + 60 }}>
           <canvas ref={canvas} className="sticky left-0 top-0 block"
             onMouseDown={onMouseDown} onDoubleClick={onDoubleClick} onContextMenu={onContextMenu}
@@ -1000,6 +1017,20 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
             className="block w-full px-3 py-1.5 text-left text-xs text-ink-muted hover:bg-canvas">Clear cell</button>
         </div>
       )}
+
+      {filterMenu !== null && scroller.current && (() => {
+        const f = model.filter(sheetId);
+        if (!f || filterMenu < f.c1 || filterMenu > f.c2) return null;
+        const sc = scroller.current;
+        // Under the header cell, right-aligned to it, kept inside the grid.
+        const left = Math.max(geom.headerW, Math.min(size.w - 264, geom.viewX(geom.colX[filterMenu + 1]!, sc.scrollLeft) - 256));
+        const top = geom.viewY(geom.rowY[f.r1 + 1]!, sc.scrollTop) + 2;
+        return (
+          <FilterMenu model={model} sheetId={sheetId} col={filterMenu} readOnly={props.readOnly}
+            style={{ left, top }}
+            onClose={() => { setFilterMenu(null); sink.current?.focus({ preventScroll: true }); }} />
+        );
+      })()}
     </div>
   );
 });
