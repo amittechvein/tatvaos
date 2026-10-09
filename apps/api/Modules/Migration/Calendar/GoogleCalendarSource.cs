@@ -33,10 +33,15 @@ namespace TatvaOS.Api.Modules.Migration.Calendar;
 ///  in the organisation who is never migrated does not arrive. The skip
 ///  reason names the organiser, so the per-person progress shows why.
 ///
-///  TWO PASSES, because Google does not promise to list a recurring event
-///  before its changed occurrences: the cursor is "m:<token>" while reading
-///  the events themselves, then "x:<token>" for the changed and cancelled
-///  occurrences (calendar.event_exceptions), whose event is by then here.
+///  THREE PASSES. "m:<token>" reads the events themselves; "s:<token>" is the
+///  SWEEP (decision 0019 §3, proposed): a meeting skipped in "m" because its
+///  organiser is in this organisation is created here after all if that
+///  organiser's calendar is not being migrated - never while their calendar
+///  job is queued or running (the page waits and is retried), so the
+///  organiser keeps it whenever they are being migrated; then "x:<token>"
+///  for the changed and cancelled occurrences (calendar.event_exceptions),
+///  LAST, because Google does not promise to list a recurring event before
+///  its occurrences, and so a swept meeting's occurrences find it here.
 ///
 ///  SAFE TO REPEAT: an event whose uid is already here, and an exception
 ///  already recorded for its occurrence, are skipped.
@@ -56,17 +61,18 @@ public sealed class GoogleCalendarSource(
 
     private int PageSize => Math.Clamp(config.GetValue("Migration:Calendar:PageSize", 250), 1, 2500);
 
-    public sealed record Item(JsonElement Event, string Zone);
+    public sealed record Item(JsonElement Event, string Zone, bool Sweep = false);
 
     public async Task<MigrationPage> FetchAsync(MigrationJobView job, CancellationToken ct)
     {
         var account = await credentials.ForTenantAsync(job.TenantId, ct)
                       ?? throw new InvalidOperationException("this organisation has no Google service account on file");
-        var exceptionsPass = job.Cursor?.StartsWith("x:") == true;
+        var pass = job.Cursor is { Length: >= 2 } c0 && c0[1] == ':' ? c0[0] : 'm';
         var token = job.Cursor is { Length: > 2 } c ? c[2..] : null;
+        var exceptionsPass = pass == 'x';
 
         // The exceptions pass needs cancelled occurrences, which only appear
-        // with showDeleted; the events pass must NOT see deleted events.
+        // with showDeleted; the events and sweep passes must NOT see deleted events.
         var page = await google.ListEventsAsync(account, job.SourceUser, token, exceptionsPass, PageSize, ct);
         var zone = page.TimeZone ?? "Asia/Kolkata";
 
@@ -74,26 +80,36 @@ public sealed class GoogleCalendarSource(
             .Where(e => exceptionsPass ? Str(e, "recurringEventId") is not null : Str(e, "recurringEventId") is null)
             .Where(e => exceptionsPass || Str(e, "status") != "cancelled")
             .Where(e => Str(e, "id") is not null)
+            // The sweep looks only at meetings someone else organised.
+            .Where(e => pass != 's' || (!True(e.TryGetProperty("organizer", out var o) ? o : default, "self")
+                                        && e.TryGetProperty("organizer", out var o2) && Str(o2, "email") is not null))
             // No dedupe key: a recurring event and its exceptions share one
             // iCalUID, and the runner would take the exceptions for duplicates.
-            .Select(e => new MigrationSourceItem(Str(e, "id")!, null, new Item(e, zone)))
+            // Sweep items carry their own source id: the ledger already holds
+            // the "m" pass's skip for the same event and would drop them.
+            .Select(e => new MigrationSourceItem((pass == 's' ? "sweep:" : "") + Str(e, "id")!, null, new Item(e, zone, pass == 's')))
             .ToList();
 
         if (page.NextPageToken is { } next)
-            return new MigrationPage(items, (exceptionsPass ? "x:" : "m:") + next, IsLast: false);
-        return exceptionsPass
-            ? new MigrationPage(items, null, IsLast: true)
-            : new MigrationPage(items, "x:", IsLast: false);   // events done; now their exceptions
+            return new MigrationPage(items, $"{pass}:{next}", IsLast: false);
+        return pass switch
+        {
+            'm' => new MigrationPage(items, "s:", IsLast: false),   // events done; now the sweep
+            's' => new MigrationPage(items, "x:", IsLast: false),   // sweep done; now the occurrences
+            _ => new MigrationPage(items, null, IsLast: true),
+        };
     }
 
     public async Task<MigrationWriteResult> WriteAsync(MigrationJobView job, MigrationSourceItem item, CancellationToken ct)
     {
-        var (e, zone) = (Item)item.Payload!;
+        var (e, zone, _) = (Item)item.Payload!;
         await using var scope = scopes.CreateAsyncScope();
         scope.ServiceProvider.GetRequiredService<TenantContext>().EnterAnonymousScope(job.TenantId, "system");
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.SyncTenantAsync(ct);
 
+        var it = (Item)item.Payload!;
+        if (it.Sweep) return await SweepAsync(db, job, e, zone, ct);
         return Str(e, "recurringEventId") is null
             ? await WriteEventAsync(db, job, e, zone, ct)
             : await WriteExceptionAsync(db, job, e, zone, ct);
@@ -117,6 +133,45 @@ public sealed class GoogleCalendarSource(
             if (inOrg.ContainsKey(orgEmail.Trim().ToLowerInvariant()))
                 return MigrationWriteResult.Skipped($"organised by {orgEmail.Trim().ToLowerInvariant()}, in this organisation: it arrives with their calendar");
         }
+        return await CreateEventAsync(db, job, e, calendarZone, self, ct);
+    }
+
+    /// <summary>
+    /// The sweep: a meeting organised by someone in this organisation, still
+    /// not here once the "m" pass is done. Created in this attendee's
+    /// calendar unless the organiser's own calendar job is queued or running
+    /// - then the page fails on purpose and the runner retries it later, so
+    /// the organiser keeps their meeting whenever their calendar is moving.
+    /// </summary>
+    private async Task<MigrationWriteResult> SweepAsync(
+        AppDbContext db, MigrationJobView job, JsonElement e, string calendarZone, CancellationToken ct)
+    {
+        var uid = UidOf(e);
+        if (await OwnerOfAsync(db, uid, ct) is { } owner)
+            return MigrationWriteResult.Skipped(owner.UserId == job.TargetUserId
+                ? "already migrated" : $"arrived with {owner.Email ?? "another person"}'s calendar");
+
+        var orgEmail = Str(e.GetProperty("organizer"), "email")!.Trim().ToLowerInvariant();
+        var organiserId = (await PeopleAsync(db, [orgEmail], ct)).TryGetValue(orgEmail, out var id) ? id : (Guid?)null;
+        if (organiserId is Guid oid)
+        {
+            var moving = await db.MigrationJobs.AsNoTracking().AnyAsync(j =>
+                j.Source == "google_workspace" && j.DataType == "calendar" && j.TargetUserId == oid
+                && (j.State == "pending" || j.State == "running"), ct);
+            if (moving)
+                throw new InvalidOperationException($"waiting for {orgEmail}'s calendar to finish before placing their meetings with attendees");
+        }
+
+        var created = await CreateEventAsync(db, job, e, calendarZone, self: false, ct);
+        return created.Outcome != "done" ? created
+            : new MigrationWriteResult("done", 0,
+                $"organised by {orgEmail}, whose calendar is not being migrated: placed with this attendee");
+    }
+
+    private async Task<MigrationWriteResult> CreateEventAsync(
+        AppDbContext db, MigrationJobView job, JsonElement e, string calendarZone, bool self, CancellationToken ct)
+    {
+        var uid = UidOf(e);
 
         var zone = e.TryGetProperty("start", out var st) && Str(st, "timeZone") is { } z ? z : calendarZone;
         var start = ReadWhen(e, "start", zone);
