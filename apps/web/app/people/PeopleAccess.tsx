@@ -33,6 +33,8 @@ export interface PeopleMe {
   canNameHr: boolean;
   employee: Employee | null;
   directReports: number;
+  /** The staff directory: everyone by default, People HR only if the organisation says so. */
+  canSeeDirectory: boolean;
 }
 
 const Ctx = createContext<{ me: PeopleMe; reload: () => Promise<void> } | null>(null);
@@ -66,12 +68,12 @@ export function PeopleAccessProvider({ children, loading, denied }: {
 
   const reload = useCallback(async () => {
     const res = await authedFetch('/people/me');
-    setMe(res.ok ? await res.json() : { isHr: false, canNameHr: false, employee: null, directReports: 0 });
+    setMe(res.ok ? await res.json() : { isHr: false, canNameHr: false, employee: null, directReports: 0, canSeeDirectory: false });
   }, [authedFetch]);
 
   useEffect(() => { void reload(); }, [reload]);
 
   if (!me) return <>{loading}</>;
-  if (!me.isHr && !me.canNameHr && !me.employee) return <>{denied}</>;
+  if (!me.isHr && !me.canNameHr && !me.employee && !me.canSeeDirectory) return <>{denied}</>;
   return <Ctx.Provider value={{ me, reload }}>{children(me)}</Ctx.Provider>;
 }

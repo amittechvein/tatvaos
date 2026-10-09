@@ -18,6 +18,10 @@
 #      a number already given (#409 + 0018 §1)
 #  10. a department, designation or location named by a record cannot be
 #      deleted
+#  13. the staff directory (0018 §5): exactly name, designation, department,
+#      location, work email, manager - never code, status, dates or type; on
+#      notice listed and indistinguishable, left not listed; another
+#      organisation's people absent; HR may hide managers or close it to HR
 #  11. RACE (check 3): rounds of A->B and B->A at once - never both, never a
 #      loop, never a 500; and simultaneous creates never share a code (check 4)
 #
@@ -88,6 +92,7 @@ cleanup() {
         PG "DELETE FROM people.employees WHERE tenant_id IN ('$TECHVEIN','$SCHOOL');
             DELETE FROM people.hr_members WHERE tenant_id IN ('$TECHVEIN','$SCHOOL');
             DELETE FROM people.employee_id_settings WHERE tenant_id IN ('$TECHVEIN','$SCHOOL');
+            DELETE FROM people.directory_settings WHERE tenant_id IN ('$TECHVEIN','$SCHOOL');
             DELETE FROM core.locations WHERE name LIKE 'People test %';
             DELETE FROM core.departments WHERE name LIKE 'People test dept %';" >/dev/null
     fi
@@ -136,7 +141,8 @@ OWNER=$(signin '+919999900001'); STAFF=$(signin '+919999900002'); OTHER=$(signin
 [ -n "$OTHER" ] && pass "signed in as the ABC School admin" || fail "School admin sign-in failed"
 PG "DELETE FROM people.employees WHERE tenant_id IN ('$TECHVEIN','$SCHOOL');
     DELETE FROM people.hr_members WHERE tenant_id IN ('$TECHVEIN','$SCHOOL');
-    DELETE FROM people.employee_id_settings WHERE tenant_id IN ('$TECHVEIN','$SCHOOL');" >/dev/null
+    DELETE FROM people.employee_id_settings WHERE tenant_id IN ('$TECHVEIN','$SCHOOL');
+    DELETE FROM people.directory_settings WHERE tenant_id IN ('$TECHVEIN','$SCHOOL');" >/dev/null
 FLOOR=$(PG "SELECT coalesce(max(id),0) FROM core.audit_logs")
 # A department of Meera's own, with no sign-ins in it: step 10 must be refused
 # BECAUSE OF THE EMPLOYEE RECORD, not because people sign in from it (the
@@ -240,6 +246,36 @@ expect "Meera's department" 400 "$(call "$OWNER" DELETE /org/departments/$DEPT_T
 LOC=$(id_of "$(call "$OWNER" POST /org/locations '{"name":"People test office"}')")
 expect "Ravi moves to a location" 200 "$(put "$R1" "{\"fullName\":\"Ravi Report\",\"reportsTo\":\"$O\",\"locationId\":\"$LOC\",\"joinedOn\":\"2025-05-01\"}")"
 expect "that location" 409 "$(call "$OWNER" DELETE /org/locations/$LOC)" "employee record"
+
+step "13. The staff directory (0018 §5): directory fields only, and narrowable"
+# Sita goes on notice: she must be in the directory and nothing there may say so.
+expect "Sita is put on notice" 200 "$(put "$R2" "{\"fullName\":\"Sita Second\",\"reportsTo\":\"$R1\",\"joinedOn\":\"2025-06-01\",\"status\":\"on_notice\"}")"
+r=$(call "$STAFF" GET /people/directory)
+expect "a colleague (no longer anyone's manager, record exited) reads the directory" 200 "$r"
+same "each entry has EXACTLY the directory fields - no code, status, dates or type" \
+    "$(jq_ "$(body "$r")" "','.join(sorted(set().union(*[e.keys() for e in d])))")" "department,designation,id,location,manager,name,workEmail"
+names=$(jq_ "$(body "$r")" "','.join(sorted(e['name'] for e in d))")
+has "Sita, on notice, is listed" "$names" "Sita Second"
+same "Meera, who has left, is not" "$(grep -c 'Meera' <<< "$names")" "0"
+for word in on_notice exited employeeCode joinedOn exitOn employmentType status; do
+    same "the response never contains '$word'" "$(grep -c -- "$word" <<< "$(body "$r")")" "0"
+done
+same "Ravi's manager is shown by name" "$(jq_ "$(body "$r")" "next(e['manager'] for e in d if e['name']=='Ravi Report')")" "Amit Owner"
+same "his location by name" "$(jq_ "$(body "$r")" "next(e['location'] for e in d if e['name']=='Ravi Report')")" "People test office"
+r=$(call "$OTHER" GET /people/directory)
+same "ABC School's directory holds only ABC School" "$(jq_ "$(body "$r")" "','.join(sorted(e['name'] for e in d))")" "School Person"
+expect "a colleague cannot change who sees it" 403 "$(call "$STAFF" PUT /people/directory/settings '{"visibleTo":"hr_only","showManager":true}')"
+expect "HR hides managers" 200 "$(call "$OWNER" PUT /people/directory/settings '{"visibleTo":"everyone","showManager":false}')"
+same "then nobody's manager is shown" \
+    "$(jq_ "$(body "$(call "$STAFF" GET /people/directory)")" "str(sum(1 for e in d if e['manager'] is not None))")" "0"
+expect "HR makes it People HR only" 200 "$(call "$OWNER" PUT /people/directory/settings '{"visibleTo":"hr_only","showManager":true}')"
+expect "then a colleague is refused, with a sentence" 403 "$(call "$STAFF" GET /people/directory)" "People HR only"
+same "and is told so by /me" "$(jq_ "$(body "$(call "$STAFF" GET /people/me)")" "d['canSeeDirectory']")" "False"
+expect "HR still reads it" 200 "$(call "$OWNER" GET /people/directory)"
+same "the change is audited, before and after" \
+    "$(PG "SELECT (before_state->>'VisibleTo')||'->'||(after_state->>'VisibleTo') FROM core.audit_logs WHERE action='people_directory.settings_changed' ORDER BY id DESC LIMIT 1")" "everyone->hr_only"
+expect "back to everyone" 200 "$(call "$OWNER" PUT /people/directory/settings '{"visibleTo":"everyone","showManager":true}')"
+expect "an unknown setting is refused" 400 "$(call "$OWNER" PUT /people/directory/settings '{"visibleTo":"public"}')" "everyone or hr_only"
 
 step "11. Races"
 bad=0; answers=0

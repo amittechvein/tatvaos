@@ -415,12 +415,21 @@ export function hireNav({ showTeam, showCareers = false, showSettings = false }:
 //  until Amit launches it (the product row is is_available=false); reached at
 //  /people directly. HR sees everyone; anyone else themselves and their team.
 // ============================================================================
-export function peopleNav({ isHr, showHrList }: { isHr: boolean; showHrList: boolean }): NavSection[] {
+export function peopleNav({ isHr, hasRecord, showDirectory, showHrList }: {
+  isHr: boolean; hasRecord: boolean; showDirectory: boolean; showHrList: boolean;
+}): NavSection[] {
   return [
     {
       heading: 'People',
       items: [
-        { href: '/people', label: isHr ? 'Employees' : 'My team', icon: <Icon d={PATHS.users} colour="#00b8d9" /> },
+        // Colleagues' names, titles and teams (0018 §5) - everyone, by default.
+        ...(showDirectory
+          ? [{ href: '/people/directory', label: 'Directory', icon: <Icon d={PATHS.building} colour="#28c76f" /> }]
+          : []),
+        // HR: every record. Anyone else with a record: themselves and their team.
+        ...(isHr || hasRecord
+          ? [{ href: '/people', label: isHr ? 'Employees' : 'My team', icon: <Icon d={PATHS.users} colour="#00b8d9" /> }]
+          : []),
         ...(isHr
           ? [{ href: '/people/new', label: 'Add employee', icon: <Icon d={PATHS.compose} colour="#6C3CE9" /> }]
           : []),
