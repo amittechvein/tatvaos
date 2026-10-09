@@ -178,6 +178,69 @@ public sealed class HireAccess(AppDbContext db, TenantContext tenant, IHttpConte
         return db.Set<HireApplicationEvent>().Where(e => apps.Any(a => a.Id == e.ApplicationId));
     }
 
+    // ------------------------------------------------------------ interviews
+
+    /// <summary>
+    /// Interviews this person may see: those on applications they may see
+    /// (Applications(level)), so a hiring manager sees only their own jobs'.
+    /// </summary>
+    public IQueryable<HireInterview> Interviews(HireLevel level)
+    {
+        var apps = Applications(level);
+        return db.Set<HireInterview>().Where(i => apps.Any(a => a.Id == i.ApplicationId));
+    }
+
+    /// <summary>Panel rows for interviews the caller has already been allowed to see.</summary>
+    public Task<List<HireInterviewPanelMember>> PanelsAsync(IEnumerable<Guid> interviewIds, CancellationToken ct)
+    {
+        var ids = interviewIds.ToList();
+        return db.Set<HireInterviewPanelMember>().AsNoTracking().Where(p => ids.Contains(p.InterviewId)).ToListAsync(ct);
+    }
+
+    /// <summary>Feedback for interviews the caller has already been allowed to see.</summary>
+    public Task<List<HireInterviewFeedback>> FeedbackAsync(IEnumerable<Guid> interviewIds, CancellationToken ct)
+    {
+        var ids = interviewIds.ToList();
+        return db.Set<HireInterviewFeedback>().AsNoTracking().Where(f => ids.Contains(f.InterviewId)).ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// Who may sit on a panel for an application to this job: exactly the
+    /// people who can ALREADY see that application — administrators,
+    /// recruiters, and the job's own hiring manager. Putting someone on a panel
+    /// must never show them a candidate they could not see before, so a hiring
+    /// manager of another job is not eligible. Active people only; names only.
+    /// </summary>
+    public async Task<List<(Guid Id, string Name)>> PanelCandidatesAsync(Guid jobId, CancellationToken ct)
+    {
+        var recruiters = await db.HireTeamMembers.AsNoTracking()
+            .Where(m => m.Role == "recruiter").Select(m => m.UserId).ToListAsync(ct);
+        var manager = await db.Set<JobOpening>().AsNoTracking()
+            .Where(j => j.Id == jobId).Select(j => j.HiringManagerId).FirstOrDefaultAsync(ct);
+        var rows = await db.Users.AsNoTracking()
+            .Where(u => u.Status == "active"
+                        && (AdminRoles.Contains(u.Role) || recruiters.Contains(u.Id) || (manager != null && u.Id == manager)))
+            .OrderBy(u => u.DisplayName)
+            .Select(u => new { u.Id, u.DisplayName })
+            .ToListAsync(ct);
+        return rows.Select(r => (r.Id, r.DisplayName)).ToList();
+    }
+
+    public void AddInterview(HireInterview i) => db.Set<HireInterview>().Add(i);
+    public void AddPanelMember(HireInterviewPanelMember p) => db.Set<HireInterviewPanelMember>().Add(p);
+    public void RemovePanelMember(HireInterviewPanelMember p) => db.Set<HireInterviewPanelMember>().Remove(p);
+    public void AddFeedback(HireInterviewFeedback f) => db.Set<HireInterviewFeedback>().Add(f);
+
+    /// <summary>For changes: the tracked panel rows of one interview.</summary>
+    public Task<List<HireInterviewPanelMember>> PanelForChangeAsync(Guid interviewId, CancellationToken ct) =>
+        db.Set<HireInterviewPanelMember>().Where(p => p.InterviewId == interviewId).ToListAsync(ct);
+
+    /// <summary>The caller's own feedback on one interview, tracked, or null.</summary>
+    public Task<HireInterviewFeedback?> MyFeedbackForChangeAsync(Guid interviewId, CancellationToken ct) =>
+        tenant.UserId is Guid me
+            ? db.Set<HireInterviewFeedback>().FirstOrDefaultAsync(f => f.InterviewId == interviewId && f.InterviewerId == me, ct)
+            : Task.FromResult<HireInterviewFeedback?>(null);
+
     /// <summary>
     /// Is this email already a candidate anywhere in the organisation —
     /// including people this person cannot see. Returns the id only when the

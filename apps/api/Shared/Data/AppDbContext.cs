@@ -440,6 +440,26 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .HasForeignKey(e => new { e.TenantId, e.ApplicationId })
             .HasPrincipalKey(a => new { a.TenantId, a.Id })
             .OnDelete(DeleteBehavior.Cascade);
+        // 20261009-s: interviews, panels, feedback. No DbSet - HireAccess only.
+        b.Entity<TatvaOS.Api.Modules.Hire.HireInterview>().ToTable("interviews", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireInterview>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireInterviewPanelMember>().ToTable("interview_panel", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireInterviewPanelMember>().HasKey(p => new { p.InterviewId, p.UserId });
+        b.Entity<TatvaOS.Api.Modules.Hire.HireInterviewPanelMember>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // Declared so EF inserts the interview BEFORE its panel when both are
+        // saved together (scheduling does). Undeclared, EF may order the panel
+        // first and the composite FK refuses it (23503) - the lesson of
+        // application_events (#267) and DkimKeys.
+        b.Entity<TatvaOS.Api.Modules.Hire.HireInterviewPanelMember>()
+            .HasOne<TatvaOS.Api.Modules.Hire.HireInterview>().WithMany()
+            .HasForeignKey(p => new { p.TenantId, p.InterviewId })
+            .HasPrincipalKey(i => new { i.TenantId, i.Id })
+            .OnDelete(DeleteBehavior.Cascade);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireInterviewFeedback>().ToTable("interview_feedback", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireInterviewFeedback>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         // 20260924-f: careers sites. No DbSet, like every Hire record.
         b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>().ToTable("careers_sites", "hire");
         b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>().HasKey(s => s.TenantId);
