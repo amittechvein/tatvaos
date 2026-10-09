@@ -169,6 +169,32 @@ export type AttendanceSave = {
   records: { student_profile_id: number; status: AttendanceMark; remark?: string | null; leave_application_id?: number | null }[];
 };
 
+// Teachers: student leave requests (Phase 2, FR-T04), as the website lists and reviews them.
+export type LeaveStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+export type StaffLeave = {
+  id: number;
+  status: LeaveStatus;
+  first_name: string;
+  last_name: string | null;
+  admission_no: string | null;
+  roll_number: string | number | null;
+  class_name: string | null;
+  section_name: string | null;
+  leave_type_name: string | null;
+  start_date: string;
+  end_date: string;
+  total_days: number | string;
+  reason: string | null;
+  applied_at: string | null;
+  applied_by_name: string | null;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  review_remark: string | null;
+  exceeds_quota: boolean | null;
+  current_available_quota: number | string | null;
+};
+export type StaffLeaveDetail = StaffLeave & { documents: { id: number; file_name: string; mime_type: string | null; download_url: string | null }[] };
+
 export type OtpLoginChoice = { id: number; name: string; role: "STUDENT" | "EMPLOYEE" | "ADMIN"; detail: string };
 export type OtpLoginAnswer = { choose: true; token: string; accounts: OtpLoginChoice[] };
 
@@ -268,6 +294,16 @@ export const api = {
     call<{ data: Roster }>(host, "/api/mobile/v1/staff/attendance/roster", { token, query: { section_id: sectionId, date } }).then((r) => r.data),
   saveAttendance: (host: string, token: string, body: AttendanceSave) =>
     call(host, "/api/mobile/v1/staff/attendance", { method: "POST", token, body: { ...body, device_name: "TatvaOS School app" } }),
+
+  staffLeaves: (host: string, token: string, status: LeaveStatus, page = 1) =>
+    call<{ data: StaffLeave[]; pagination: { total: number; page: number; totalPages: number } }>(host, "/api/mobile/v1/staff/leave-applications", {
+      token,
+      query: { status, page, limit: 25 },
+    }),
+  staffLeave: (host: string, token: string, id: number) =>
+    call<{ data: StaffLeaveDetail }>(host, `/api/mobile/v1/staff/leave-applications/${id}`, { token }).then((r) => r.data),
+  reviewLeave: (host: string, token: string, id: number, status: "APPROVED" | "REJECTED", remark: string) =>
+    call(host, `/api/mobile/v1/staff/leave-applications/${id}/review`, { method: "PATCH", token, body: { status, review_remark: remark.trim() || null } }),
 
   bootstrap: (host: string, token: string) => call<{ data: Bootstrap }>(host, "/api/mobile/v1/bootstrap", { token }).then((r) => r.data),
   attendance: (host: string, token: string, month: string) =>

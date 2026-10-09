@@ -49,6 +49,8 @@ export default function StaffHome() {
   const insets = useSafeAreaInsets();
   const { active, accounts, signOut, switchTo } = useAccounts();
   const sections = useMe("staff-sections", api.staffSections);
+  const leaves = useMe("staff-leaves", (h, tk) => api.staffLeaves(h, tk, "PENDING"), ["PENDING"]);
+  const waitingLeaves = leaves.data?.pagination.total ?? 0;
   const sendWaiting = useSendWaiting();
   const [waiting, setWaiting] = useState(0);
   const [sending, setSending] = useState(false);
@@ -56,7 +58,7 @@ export default function StaffHome() {
   const countWaiting = useCallback(async () => {
     if (active) setWaiting((await Queue.read(active.id)).length);
   }, [active]);
-  useFocusEffect(useCallback(() => { countWaiting(); sections.refetch(); }, [countWaiting])); // eslint-disable-line react-hooks/exhaustive-deps
+  useFocusEffect(useCallback(() => { countWaiting(); sections.refetch(); leaves.refetch(); }, [countWaiting])); // eslint-disable-line react-hooks/exhaustive-deps
 
   const noFeature = sections.error instanceof ApiError && sections.error.status === 403;
   const student = accounts.find((a) => a.role === "STUDENT");
@@ -77,7 +79,7 @@ export default function StaffHome() {
         data={sections.data?.sections ?? []}
         keyExtractor={(s) => String(s.id)}
         contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
-        refreshControl={<RefreshControl refreshing={sections.isRefetching} onRefresh={() => { sections.refetch(); countWaiting(); }} />}
+        refreshControl={<RefreshControl refreshing={sections.isRefetching} onRefresh={() => { sections.refetch(); leaves.refetch(); countWaiting(); }} />}
         ListHeaderComponent={
           <View style={{ gap: 12, paddingTop: 12 }}>
             <OfflineBanner at={sections.offlineAt} />
@@ -91,6 +93,26 @@ export default function StaffHome() {
                   onPress={async () => { setSending(true); await sendWaiting(); await countWaiting(); setSending(false); }}
                 />
               </View>
+            ) : null}
+            {leaves.data ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${t("leaveRequests")}: ${waitingLeaves === 1 ? t("leavesWaitingOne") : waitingLeaves ? t("leavesWaiting", { n: waitingLeaves }) : t("leavesNoneWaiting")}`}
+                onPress={() => router.push("/leave-requests")}
+                style={({ pressed }) => [
+                  { marginHorizontal: size.side, padding: 16, borderRadius: 18, backgroundColor: pressed ? colors.lineSoft : colors.white, flexDirection: "row", alignItems: "center", gap: 14 },
+                  cardShadow,
+                ]}
+              >
+                <Icon name="notices" size={36} />
+                <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                  <Text size={16} weight={800}>{t("leaveRequests")}</Text>
+                  <Text size={12} weight={700} color={waitingLeaves ? colors.absentText : colors.textSoft}>
+                    {waitingLeaves === 1 ? t("leavesWaitingOne") : waitingLeaves ? t("leavesWaiting", { n: waitingLeaves }) : t("leavesNoneWaiting")}
+                  </Text>
+                </View>
+                <Icon name="arrowRight" size={20} color={colors.textSoft} />
+              </Pressable>
             ) : null}
             {noFeature ? <View style={{ marginHorizontal: size.side }}><Notice text={t("noAttendanceFeature")} /></View> : null}
             {sections.data?.sections.length ? <SectionTitle text={t("takeAttendance")} /> : null}
