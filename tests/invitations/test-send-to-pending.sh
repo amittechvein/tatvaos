@@ -146,7 +146,10 @@ for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
 "$PY" "$HERE/smtp-sink.py" "$SMTP_PORT" "$SCRATCH/mail" > "$SCRATCH/sink.log" 2>&1 &
 SINK_PID=$!
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long" ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+# Rule 13: a caller that sourced tests/lib/throwaway-db.sh passes its own
+# database as TDB_CONN (and TATVAOS_PSQL); the shared tatvaos_mail is only the
+# fallback. Without this the API and PG() would talk to different databases.
+export ConnectionStrings__Postgres="${TDB_CONN:-Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true}"
 export Smtp__Host=127.0.0.1 Smtp__Port="$SMTP_PORT"
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 start_api() { # appends to the log: step 12 starts the API a second time
