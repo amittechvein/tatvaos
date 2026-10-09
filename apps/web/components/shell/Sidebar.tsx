@@ -176,6 +176,14 @@ export function Sidebar({ sections, brand, scope, footer, header, rail, onPeek, 
                       + (active
                         ? 'bg-brand-500 text-white'
                         : 'text-rail-text hover:bg-rail-soft hover:text-ink');
+                    // Each icon carries its product colour as an INLINE style
+                    // (lib/nav.tsx Icon), which beats the row's text-white. On the
+                    // purple active pill, a purple (#6C3CE9) icon vanished - New
+                    // meeting, New job opening, Shared with me, Add employee (seen
+                    // 9 Oct 2026). Active rows force the icon white; `!` (important)
+                    // is what outranks an inline style. Inactive icons keep colour.
+                    const iconCls = 'grid h-5 w-5 shrink-0 place-items-center text-[18px]'
+                      + (active ? ' [&_svg]:!text-white' : '');
 
                     if (item.children) {
                       return (
@@ -186,7 +194,7 @@ export function Sidebar({ sections, brand, scope, footer, header, rail, onPeek, 
                             aria-expanded={expanded}
                             onClick={() => setOpen(expanded ? '' : item.href)}
                           >
-                            <span className="grid h-5 w-5 shrink-0 place-items-center text-[18px]">{item.icon}</span>
+                            <span className={iconCls}>{item.icon}</span>
                             <span className={`min-w-0 flex-1 truncate text-left ${labels}`}>{item.label}</span>
                             <i className={`ri-arrow-right-s-line shrink-0 transition-transform ${expanded ? 'rotate-90' : ''} ${labels}`} />
                           </button>
@@ -228,7 +236,7 @@ export function Sidebar({ sections, brand, scope, footer, header, rail, onPeek, 
                           // having worked, so people tap it again.
                           onClick={onCloseMobile}
                         >
-                          <span className="grid h-5 w-5 shrink-0 place-items-center text-[18px]">{item.icon}</span>
+                          <span className={iconCls}>{item.icon}</span>
                           <span className={`min-w-0 flex-1 truncate ${labels}`}>{item.label}</span>
                           {item.badge && (
                             <span className={`rounded-full bg-brand-500/10 px-2 py-0.5 text-[11px] font-semibold text-brand-700 ${labels}`}>

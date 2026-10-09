@@ -21,6 +21,7 @@ import {
 import { DocsLiveProvider, type LiveEvent } from '@/lib/docsLive';
 import { formatDateTime } from '@/lib/dates';
 import { ShareDialog } from '@/components/space/ShareDialog';
+import { AccountButton } from '@/components/shell/AccountButton';
 import { Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Kit';
 
@@ -794,6 +795,9 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
               {canEdit ? 'Editor' : perm === 'comment' ? 'Commenter' : 'Viewer'}
             </span>
           )}
+          {/* Who is signed in. The circles further left are the people IN
+              the document; this one is you, and opens the account menu. */}
+          <AccountButton />
         </div>
       </header>
 

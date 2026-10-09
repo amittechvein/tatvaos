@@ -279,7 +279,7 @@ echo "== 8. a PDF whose pictures do not fit in /tmp gets a refusal a person can 
 # level 0) so each is ~3 MB on disk whatever compresses. 2 of them fit: that
 # is the calibration — pictures as such are not refused. 7 do not.
 PDFMAKE='import * as Y from "yjs"; import { getSchema } from "@tiptap/core"; import { prosemirrorJSONToYDoc } from "@tiptap/y-tiptap"; import { documentExtensions } from "../web/components/docs/schema.ts"; import zlib from "node:zlib"; import { randomBytes } from "node:crypto"; const n = Number(process.argv[1]); const side = 1000; const chunk = (t, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); const c = Buffer.alloc(4); c.writeUInt32BE(zlib.crc32(td)); return Buffer.concat([l, td, c]); }; const png = () => { const ih = Buffer.alloc(13); ih.writeUInt32BE(side, 0); ih.writeUInt32BE(side, 4); ih[8] = 8; ih[9] = 2; const row = side * 3 + 1; const raw = Buffer.alloc(row * side); for (let y = 0; y < side; y++) randomBytes(side * 3).copy(raw, y * row + 1); return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ih), chunk("IDAT", zlib.deflateSync(raw, { level: 0 })), chunk("IEND", Buffer.alloc(0))]); }; const pictures = {}; const content = [{ type: "paragraph", content: [{ type: "text", text: "Newsletter" }] }]; for (let i = 1; i <= n; i++) { const src = "/api/docs/00000000-0000-4000-8000-000000000001/images/" + i; pictures[src] = png().toString("base64"); content.push({ type: "paragraph", content: [{ type: "image", attrs: { src, alt: null, title: null, width: "320", height: null } }] }); } const s = Y.encodeStateAsUpdate(prosemirrorJSONToYDoc(getSchema(documentExtensions()), { type: "doc", content }, "default")); process.stdout.write(JSON.stringify({ updates: [Buffer.from(s).toString("base64")], pictures }));'
-for n in 2 7; do
+for n in 1 2 7; do
   DC run --rm --no-deps -T --entrypoint node render \
     --no-warnings --import ./src/register.mjs --input-type=module -e "$PDFMAKE" "$n" > "$TMP/pdf-$n.json" 2>/dev/null
   docker cp "$TMP/pdf-$n.json" "$(DC ps -q apistub)":/tmp/pdf-"$n".json >/dev/null
@@ -305,6 +305,25 @@ same "the log names the reason and where /tmp filled (twice: two refusals above)
 same "…at the picture writes, not elsewhere" \
   "$(grep -c -F -- "stage=write pictures=7" <<<"$render_log")" 2
 same "a document save still works afterwards" \
+  "$(DC exec -T apistub node -e "$POST" http://render:8080/render/doc /tmp/nested-lists.json 2>&1 | tail -1)" "200 html"
+# Ten ONE-picture PDFs at once (§10, cases 2 and 3, measured 7 Oct 2026): the
+# shared /tmp fills with the OTHER jobs' files. The first version of this
+# refusal told those single-picture documents to remove pictures - wrong
+# advice; trying again would work. None may get the 413 now. The calibration
+# is that /tmp really did fill: at least one no_room in the log, or the check
+# above it proved nothing.
+BURST='const [url,f,k]=process.argv.slice(1);const body=require("fs").readFileSync(f);Promise.all(Array.from({length:+k},()=>fetch(url,{method:"POST",headers:{"content-type":"application/json"},body}).then(async r=>{const b=await r.json().catch(()=>({}));return r.status+" "+(b.reason||(b.pdf?"pdf":b.error||"-"))},e=>"error "+(e.cause?.code||e.message)))).then(a=>{const c={};for(const x of a)c[x]=(c[x]||0)+1;console.log(Object.entries(c).map(([k,v])=>v+"x "+k).sort().join(", "))})'
+burst="$(DC exec -T apistub node -e "$BURST" http://render:8080/render/pdf /tmp/pdf-1.json 10 2>&1 | tail -1)"
+echo "        ten one-picture PDFs at once: $burst"
+case "$burst" in
+  *413*|*pictures_too_large*) bad "ten one-picture PDFs at once: none is told to remove pictures" "$burst" ;;
+  *) ok "ten one-picture PDFs at once: none is told to remove pictures" ;;
+esac
+render_log="$(DC logs --no-color render 2>&1)"
+nr=$(grep -c -F -- "pdf FAILED no_room" <<<"$render_log")
+if [ "$nr" -ge 1 ]; then ok "…and /tmp really did fill from the others ($nr no_room in the log) - the calibration"
+else bad "…calibration: /tmp never filled (0 no_room in the log), so the check above proved nothing"; fi
+same "the service survived the ten (a document save still works)" \
   "$(DC exec -T apistub node -e "$POST" http://render:8080/render/doc /tmp/nested-lists.json 2>&1 | tail -1)" "200 html"
 
 echo

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# TatvaOS Hire — HireAccess is the only route to hire.job_openings.
+# TatvaOS Hire — HireAccess is the only route to Hire's records: job
+# openings (24 Sept, PR 264), and candidates, applications, their history
+# and the pipeline (24 Sept, candidates change).
 #
 # Mr. Singh, 24 Sept 2026 (PR 264): "make the gate structural, not
 # documented". A hiring manager sees only the jobs that name them because
@@ -26,10 +28,11 @@ GATE="Modules/Hire/HireAccess.cs"
 
 # Careers sites (20260924-f) joined 24 Sept: the public page resolves them
 # through hire.resolve_careers_site(), a function, which is not matched here.
-SET_RE='Set<[[:space:]]*(TatvaOS\.Api\.Modules\.Hire\.)?(JobOpening|HireCareersSite)[[:space:]]*>'
-DBSET_RE='DbSet<[[:space:]]*(TatvaOS\.Api\.Modules\.Hire\.)?(JobOpening|HireCareersSite)[[:space:]]*>'
-SQL_RE='hire\.(job_openings|careers_sites)\b'
-PROP_RE='\.JobOpenings\b'
+TYPES='(JobOpening|HireCareersSite|HireCandidate|HireApplication|HireApplicationEvent|HirePipelineStage|HireSetting)'
+SET_RE="Set<[[:space:]]*(TatvaOS\\.Api\\.Modules\\.Hire\\.)?${TYPES}[[:space:]]*>"
+DBSET_RE="DbSet<[[:space:]]*(TatvaOS\\.Api\\.Modules\\.Hire\\.)?${TYPES}[[:space:]]*>"
+SQL_RE='hire\.(job_openings|careers_sites|candidates|applications|application_events|pipeline_stages|settings)\b'
+PROP_RE='\.(JobOpenings|HireCareersSites|CareersSites|HireCandidates|HireApplications|HireApplicationEvents|HirePipelineStages|Candidates|Applications)\b[^(]'
 
 fails=0
 bad() { printf '  ✗ %s\n' "$1"; fails=$((fails+1)); }
@@ -54,21 +57,21 @@ scan() {
 }
 
 hit=$(scan "$SET_RE" | grep -v "^$GATE:" | head -5)
-[ -n "$hit" ] && bad "Set<JobOpening>() outside HireAccess — go through the gate:
+[ -n "$hit" ] && bad "Set<> of a Hire record outside HireAccess — go through the gate:
 $hit"
 hit=$(scan "$SQL_RE" | grep -v "^$GATE:" | head -5)
-[ -n "$hit" ] && bad "hire.job_openings named in code (raw SQL?) — go through the gate:
+[ -n "$hit" ] && bad "a Hire table named in code (raw SQL?) — go through the gate:
 $hit"
 hit=$(scan "$PROP_RE" | head -5)
-[ -n "$hit" ] && bad "a JobOpenings member is used — the DbSet must not come back:
+[ -n "$hit" ] && bad "a Hire DbSet member is used — it must not come back:
 $hit"
 hit=$(scan "$DBSET_RE" | head -5)
-[ -n "$hit" ] && bad "a DbSet<JobOpening> exists again — HireAccess is the only route:
+[ -n "$hit" ] && bad "a DbSet of a Hire record exists — HireAccess is the only route:
 $hit"
 
 if [ "$fails" -eq 0 ]; then
-    ok "HireAccess is the only route to hire.job_openings"
+    ok "HireAccess is the only route to Hire's records (jobs, candidates, applications, history, pipeline)"
     exit 0
 fi
-printf '\n  %d finding(s). A hiring manager could see jobs that are not theirs.\n' "$fails"
+printf '\n  %d finding(s). A hiring manager could see jobs or candidates that are not theirs.\n' "$fails"
 exit 1
