@@ -127,10 +127,13 @@ await Super($"""
 
 Console.WriteLine("\n>> amit's calendar");
 var a1 = await RunAll(Job("amit@customer.test", AMIT));
-Same("outcomes: events, then the sweep, then the moved occurrence (listed first by Google, written last)",
+Same("outcomes: events, then the sweep, then the moved occurrence (listed first by Google, written last), then the extra calendar",
     Outcomes(a1), "weekly=done,allday=done,byhr=skipped,external=done,bynomig=skipped," +
                   "sweep:byhr=threw InvalidOperationException,sweep:external=skipped,sweep:bynomig=done," +
-                  "weekly_moved=done,weekly_gone=done");
+                  "weekly_moved=done,weekly_gone=done,cricket@group.calendar.google.com/match1=done");
+Same("the extra calendar is a calendar of amit's own, by name, not his primary, holding its event",
+    await Super($"SELECT c.name || '|' || c.is_primary || '|' || string_agg(e.title, ',') FROM calendar.calendars c JOIN calendar.events e ON e.calendar_id = c.id WHERE c.owner_user_id = '{AMIT}' AND NOT c.is_primary GROUP BY c.name, c.is_primary"),
+    "Cricket club|false|Net practice");
 Same("the sweep WAITS while hr's own calendar is queued",
     a1.Single(r => r.Id == "sweep:byhr").Reason, "waiting for hr@techvein.local's calendar to finish before placing their meetings with attendees");
 Same("the sweep places nomig's meeting with amit - nomig is not being migrated, saying so",
@@ -236,6 +239,20 @@ sealed class FakeCalendar : HttpMessageHandler
         {
             var who = Token[req.Headers.Authorization!.Parameter!];
             var q = req.RequestUri.Query;
+            if (path.EndsWith("/users/me/calendarList"))
+            {
+                // amit owns an extra calendar; a calendar merely SHARED with
+                // him is not listed (minAccessRole=owner) and must not arrive.
+                body = who.StartsWith("amit")
+                    ? """{"items":[{"id":"cricket@group.calendar.google.com","summary":"Cricket club"},{"id":"amit@techvein.local","summary":"amit@techvein.local","primary":true}]}"""
+                    : """{"items":[{"id":"hr@techvein.local","summary":"hr@techvein.local","primary":true}]}""";
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+            }
+            if (path.Contains("cricket"))
+            {
+                body = """{"timeZone":"Asia/Kolkata","items":[{"id":"match1","iCalUID":"match1@google.com","status":"confirmed","summary":"Net practice","start":{"dateTime":"2026-10-11T07:00:00+05:30"},"end":{"dateTime":"2026-10-11T09:00:00+05:30"},"organizer":{"email":"cricket@group.calendar.google.com","self":true}}]}""";
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+            }
             var showDeleted = q.Contains("showDeleted=true");
             var size = int.Parse(System.Text.RegularExpressions.Regex.Match(q, "maxResults=(\\d+)").Groups[1].Value);
             var from = q.Contains("pageToken=") ? int.Parse(System.Text.RegularExpressions.Regex.Match(q, "pageToken=(\\d+)").Groups[1].Value) : 0;

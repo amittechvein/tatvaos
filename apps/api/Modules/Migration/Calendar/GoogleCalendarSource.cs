@@ -46,8 +46,10 @@ namespace TatvaOS.Api.Modules.Migration.Calendar;
 ///  SAFE TO REPEAT: an event whose uid is already here, and an exception
 ///  already recorded for its occurrence, are skipped.
 ///
-///  NOT REGISTERED in Program.cs: like the other sources, it needs section 9's
-///  IGoogleCredentialProvider.
+///  EVERY CALENDAR THE PERSON OWNS, main one first: the cursor is
+///  "<n>/<pass>:<token>" for the n-th (no "<n>/" = the main one). An extra
+///  calendar becomes a personal calendar of the same name here; the sweep
+///  runs on the main calendar only, where other people's meetings are.
 /// ─────────────────────────────────────────────────────────────────────────
 /// </summary>
 public sealed class GoogleCalendarSource(
@@ -61,19 +63,32 @@ public sealed class GoogleCalendarSource(
 
     private int PageSize => Math.Clamp(config.GetValue("Migration:Calendar:PageSize", 250), 1, 2500);
 
-    public sealed record Item(JsonElement Event, string Zone, bool Sweep = false);
+    /// <param name="CalendarName">Null for the main calendar; else the person's own extra calendar's name.</param>
+    public sealed record Item(JsonElement Event, string Zone, bool Sweep = false, string? CalendarName = null);
 
     public async Task<MigrationPage> FetchAsync(MigrationJobView job, CancellationToken ct)
     {
         var account = await credentials.ForTenantAsync(job.TenantId, ct)
                       ?? throw new InvalidOperationException("this organisation has no Google service account on file");
-        var pass = job.Cursor is { Length: >= 2 } c0 && c0[1] == ':' ? c0[0] : 'm';
-        var token = job.Cursor is { Length: > 2 } c ? c[2..] : null;
+        // "<n>/<pass>:<token>": the person's n-th OWNED calendar, main one
+        // first. A cursor with no "<n>/" is the main calendar (n = 0).
+        var cursor = job.Cursor;
+        var calIndex = 0;
+        if (cursor is not null && cursor.IndexOf('/') is var slash and > 0 && int.TryParse(cursor[..slash], out var n))
+            (calIndex, cursor) = (n, cursor[(slash + 1)..]);
+        var calendars = await google.OwnedCalendarsAsync(account, job.SourceUser, ct);
+        if (calIndex >= calendars.Count) return new MigrationPage([], job.Cursor, IsLast: true);
+        var cal = calendars[calIndex];
+        var main = calIndex == 0;
+        string Next(int i, string rest) => i == 0 ? rest : $"{i}/{rest}";
+
+        var pass = cursor is { Length: >= 2 } c0 && c0[1] == ':' ? c0[0] : 'm';
+        var token = cursor is { Length: > 2 } c ? c[2..] : null;
         var exceptionsPass = pass == 'x';
 
         // The exceptions pass needs cancelled occurrences, which only appear
         // with showDeleted; the events and sweep passes must NOT see deleted events.
-        var page = await google.ListEventsAsync(account, job.SourceUser, token, exceptionsPass, PageSize, ct);
+        var page = await google.ListEventsAsync(account, job.SourceUser, main ? "primary" : cal.Id, token, exceptionsPass, PageSize, ct);
         var zone = page.TimeZone ?? "Asia/Kolkata";
 
         var items = page.Events
@@ -87,22 +102,26 @@ public sealed class GoogleCalendarSource(
             // iCalUID, and the runner would take the exceptions for duplicates.
             // Sweep items carry their own source id: the ledger already holds
             // the "m" pass's skip for the same event and would drop them.
-            .Select(e => new MigrationSourceItem((pass == 's' ? "sweep:" : "") + Str(e, "id")!, null, new Item(e, zone, pass == 's')))
+            .Select(e => new MigrationSourceItem(
+                (pass == 's' ? "sweep:" : "") + (main ? "" : $"{cal.Id}/") + Str(e, "id")!, null,
+                new Item(e, zone, pass == 's', main ? null : cal.Name)))
             .ToList();
 
         if (page.NextPageToken is { } next)
-            return new MigrationPage(items, $"{pass}:{next}", IsLast: false);
+            return new MigrationPage(items, Next(calIndex, $"{pass}:{next}"), IsLast: false);
         return pass switch
         {
-            'm' => new MigrationPage(items, "s:", IsLast: false),   // events done; now the sweep
-            's' => new MigrationPage(items, "x:", IsLast: false),   // sweep done; now the occurrences
+            // The sweep is for meetings others organised: the main calendar's.
+            'm' => new MigrationPage(items, Next(calIndex, main ? "s:" : "x:"), IsLast: false),
+            's' => new MigrationPage(items, Next(calIndex, "x:"), IsLast: false),
+            _ when calIndex + 1 < calendars.Count => new MigrationPage(items, Next(calIndex + 1, "m:"), IsLast: false),
             _ => new MigrationPage(items, null, IsLast: true),
         };
     }
 
     public async Task<MigrationWriteResult> WriteAsync(MigrationJobView job, MigrationSourceItem item, CancellationToken ct)
     {
-        var (e, zone, _) = (Item)item.Payload!;
+        var (e, zone, _, calendarName) = (Item)item.Payload!;
         await using var scope = scopes.CreateAsyncScope();
         scope.ServiceProvider.GetRequiredService<TenantContext>().EnterAnonymousScope(job.TenantId, "system");
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -111,14 +130,14 @@ public sealed class GoogleCalendarSource(
         var it = (Item)item.Payload!;
         if (it.Sweep) return await SweepAsync(db, job, e, zone, ct);
         return Str(e, "recurringEventId") is null
-            ? await WriteEventAsync(db, job, e, zone, ct)
+            ? await WriteEventAsync(db, job, e, zone, calendarName, ct)
             : await WriteExceptionAsync(db, job, e, zone, ct);
     }
 
     private static string UidOf(JsonElement e) => Str(e, "iCalUID") ?? $"{Str(e, "id")}@google.com";
 
     private async Task<MigrationWriteResult> WriteEventAsync(
-        AppDbContext db, MigrationJobView job, JsonElement e, string calendarZone, CancellationToken ct)
+        AppDbContext db, MigrationJobView job, JsonElement e, string calendarZone, string? calendarName, CancellationToken ct)
     {
         var uid = UidOf(e);
         if (await OwnerOfAsync(db, uid, ct) is { } owner)
@@ -133,7 +152,7 @@ public sealed class GoogleCalendarSource(
             if (inOrg.ContainsKey(orgEmail.Trim().ToLowerInvariant()))
                 return MigrationWriteResult.Skipped($"organised by {orgEmail.Trim().ToLowerInvariant()}, in this organisation: it arrives with their calendar");
         }
-        return await CreateEventAsync(db, job, e, calendarZone, self, ct);
+        return await CreateEventAsync(db, job, e, calendarZone, self, calendarName, ct);
     }
 
     /// <summary>
@@ -162,14 +181,14 @@ public sealed class GoogleCalendarSource(
                 throw new InvalidOperationException($"waiting for {orgEmail}'s calendar to finish before placing their meetings with attendees");
         }
 
-        var created = await CreateEventAsync(db, job, e, calendarZone, self: false, ct);
+        var created = await CreateEventAsync(db, job, e, calendarZone, self: false, calendarName: null, ct);
         return created.Outcome != "done" ? created
             : new MigrationWriteResult("done", 0,
                 $"organised by {orgEmail}, whose calendar is not being migrated: placed with this attendee");
     }
 
     private async Task<MigrationWriteResult> CreateEventAsync(
-        AppDbContext db, MigrationJobView job, JsonElement e, string calendarZone, bool self, CancellationToken ct)
+        AppDbContext db, MigrationJobView job, JsonElement e, string calendarZone, bool self, string? calendarName, CancellationToken ct)
     {
         var uid = UidOf(e);
 
@@ -180,7 +199,9 @@ public sealed class GoogleCalendarSource(
         var (rule, exDates, notCarried) = Recurrence(e, zone);
         if (rule is { Length: > 500 }) return MigrationWriteResult.Failed("its recurrence rule is longer than the calendar module keeps (500)");
 
-        var calendarId = await CalendarProvisioning.EnsurePrimaryAsync(db, job.TenantId, job.TargetUserId, ct);
+        var calendarId = calendarName is null
+            ? await CalendarProvisioning.EnsurePrimaryAsync(db, job.TenantId, job.TargetUserId, ct)
+            : await OwnCalendarAsync(db, job, calendarName, zone, ct);
         var ev = new CalendarEvent
         {
             TenantId = job.TenantId,
@@ -268,6 +289,28 @@ public sealed class GoogleCalendarSource(
         db.CalendarEventExceptions.Add(ex);
         await db.SaveChangesAsync(ct);
         return MigrationWriteResult.Done(0);
+    }
+
+    /// <summary>
+    /// The person's own extra calendar of this name, made the first time: a
+    /// personal calendar, theirs, not their primary. Found by name, so two
+    /// Google calendars with one name become one here.
+    /// </summary>
+    private static async Task<Guid> OwnCalendarAsync(AppDbContext db, MigrationJobView job, string name, string zone, CancellationToken ct)
+    {
+        var clipped = name.Length > 200 ? name[..200] : name;
+        var existing = await db.Calendars.Where(c => c.OwnerUserId == job.TargetUserId && !c.IsPrimary
+                && c.DeletedAt == null && c.Name == clipped)
+            .Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
+        if (existing is Guid id) return id;
+        var cal = new CalendarCalendar
+        {
+            TenantId = job.TenantId, OwnerUserId = job.TargetUserId, Name = clipped,
+            Kind = "personal", IsPrimary = false, Timezone = zone.Length <= 64 ? zone : "Asia/Kolkata",
+        };
+        db.Calendars.Add(cal);
+        await db.SaveChangesAsync(ct);
+        return cal.Id;
     }
 
     /// <summary>Whose calendar an event with this uid is in, if it is here at all.</summary>
