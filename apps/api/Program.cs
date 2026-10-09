@@ -952,6 +952,9 @@ app.MapOrgAiUsageEndpoints();
 // Offering Mail AI to one organisation, and resetting its own Mail AI with it.
 app.MapOrgMailAiOfferEndpoints();
 app.MapOrganisationDetailEndpoints();
+// Deleting an organisation for good: suspended first, name typed, never one
+// that was invoiced. The rules are in 20260929-organisation-deletions.sql.
+app.MapOrganisationDeletionEndpoints();
 app.MapPlanFeatureEndpoints();
 TatvaOS.Api.Modules.Billing.BillingEndpoints.MapBillingEndpoints(app);
 TatvaOS.Api.Modules.Billing.PaymentEndpoints.MapPaymentEndpoints(app);

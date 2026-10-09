@@ -18,6 +18,7 @@ import { readXlsx, writeXlsx, functionsNeedingNewerExcel, olderExcelNote } from 
 import { readCsv, writeCsv } from '@/lib/sheets/io/csv';
 import type { CellFormat } from '@/lib/sheets/workbook';
 import { ShareDialog } from '@/components/space/ShareDialog';
+import { AccountButton } from '@/components/shell/AccountButton';
 import { Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Kit';
 import { MenuBar, type MenuItem } from '@/components/docs/Toolbar';
@@ -873,6 +874,8 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
               {canEdit ? 'Editor' : perm === 'comment' ? 'Commenter' : 'Viewer'}
             </span>
           )}
+          {/* Who is signed in — as in Docs; the circles are the people here. */}
+          <AccountButton />
         </div>
       </header>
 
