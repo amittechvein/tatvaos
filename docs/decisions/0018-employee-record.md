@@ -1,12 +1,61 @@
 # 0018 — The employee record, and who reports to whom
 
-**Status:** proposed. For Mr. Singh, together with the reporting-hierarchy
-question put to him on 8 Oct (handover §6 step 3; option (c) there). Amit asked
-for it on 9 Oct. Nothing here is built.
-**Date:** 2026-10-09
+**Status:** **accepted by Mr. Singh, 9 Oct 2026, with the three additions
+below.** Amit's two decisions (§5 directory, §4 owners) are recorded in the
+ruling table once he gives them. Nothing here is built yet.
+**Date:** 2026-10-09 (proposed and ruled)
 **Lane:** Hire & People
-**Needs:** Mr. Singh (the table, the hierarchy rule, access) · Amit (§5, who
-sees what in the directory)
+**Needs:** Amit (§4, §5). Mr. Singh's part is done.
+
+## The ruling — read this before the proposal
+
+Forwarded by Amit, 9 Oct 2026. **Where the ruling adds to the proposal, the
+ruling wins.**
+
+| § | Ruling | What it adds |
+|---|---|---|
+| Hierarchy question (8 Oct) | **Closed by this record** | One nullable `reports_to`, composite FK, `CHECK` for self, trigger for loops. `people.reporting_changes` kept, because "who was this person's manager on 3 March" is what leave approval asks a year later. |
+| §2 Trigger + advisory lock | **Accepted. Keep it in the trigger** | A lock in the endpoint can be forgotten by the next writer (an import, a migration, a hand fix); a lock in the trigger cannot. A closure table or materialised path was considered and rejected: more machinery, same race. **Addition 1, below:** state the lock-key derivation. |
+| §3 Manager from `reports_to`, never `core.users.role` | **Accepted, as the right model, not a workaround** | Manager-ness is a relationship: a role cannot say *of whom*. People does not care what `role = 'manager'` comes to mean elsewhere. **Addition 2, below:** writing `reports_to` grants access. |
+| §7 check 6 | **Extended** | **Addition 3, below.** |
+| §5, §4 | Recommended to Amit as proposed | Mr. Singh: hiding "on notice" is the half that matters; manager's name is the only field with an edge (it shows the whole hierarchy in a small school), and he thinks it is fine. Organisations may narrow the directory. Owners see records only if they name themselves, which costs one click and buys the audit record of the moment they did. **Amit decides.** |
+
+### Addition 1: the advisory-lock key, written down
+
+`pg_advisory_xact_lock` takes an integer, and `tenant_id` is a uuid. The
+trigger uses:
+
+```sql
+PERFORM pg_advisory_xact_lock(hashtextextended('people.reporting_to:' || NEW.tenant_id::text, 0));
+```
+
+- **Namespaced** with `people.reporting_to:`, so a future lock on the same
+  organisation for another purpose does not queue behind hierarchy edits.
+- **A hash collision makes two organisations' hierarchy edits queue behind each
+  other.** That costs contention, **never correctness**: both still check for
+  loops under a lock. If someone asks why two unrelated customers' edits
+  serialise, this paragraph is the answer.
+
+### Addition 2: setting `reports_to` grants access
+
+Because manager rights come from data, **writing `reports_to` is granting
+access**: whoever sets it can make someone a manager and so let them see that
+person's record. §4 restricts it to People HR. That is the guard, and it is
+stated as a **security property** in the migration header and in
+`PeopleAccess`:
+
+> **Setting `reports_to` grants access. It is an access change, not an
+> organisational detail, and it is audited as one.**
+
+`people.reporting_changes` is therefore an **access audit**, not only an HR
+history, and it is read and kept as one.
+
+### Addition 3: check 6 covers self-appointment
+
+Check 6 (*manager by data*) gains: **a person who sets themselves as someone's
+manager appears in `people.reporting_changes` as plainly as a permission
+grant**, naming who did it, whose manager they became, and when. *Red:* write
+`reports_to` by a path that skips the history row.
 
 ---
 
