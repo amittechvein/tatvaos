@@ -442,7 +442,7 @@ public static class AuthEndpoints
         Shared.Notify.ISmsSender sms, Shared.Settings.SettingsReader settings,
         HttpContext http, CancellationToken ct)
     {
-        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        var phone = Shared.PhoneNumber.Stored(req.Phone);
         if (phone is null)
             return Results.BadRequest(new
             {
@@ -504,7 +504,7 @@ public static class AuthEndpoints
         TenantContext tenant, HttpContext http, IServiceScopeFactory scopeFactory,
         IConfiguration config, TotpService totp, CancellationToken ct)
     {
-        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        var phone = Shared.PhoneNumber.Stored(req.Phone);
         var code = req.Code?.Trim() ?? "";
 
         if (phone is null || code.Length != 6)
@@ -1724,7 +1724,7 @@ public static class AuthEndpoints
         Shared.Notify.ISmsSender sms, Shared.Settings.SettingsReader settings,
         IPasswordHasher hasher, CancellationToken ct)
     {
-        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        var phone = Shared.PhoneNumber.Stored(req.Phone);
         if (phone is null)
             return Results.BadRequest(new
             {
@@ -2352,7 +2352,7 @@ public static class AuthEndpoints
         Shared.Notify.ISmsSender sms, Shared.Settings.SettingsReader settings,
         CancellationToken ct)
     {
-        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        var phone = Shared.PhoneNumber.Stored(req.Phone);
         if (phone is null)
             return Results.BadRequest(new
             {
@@ -2406,7 +2406,7 @@ public static class AuthEndpoints
         ResetPasswordOtpRequest req, AppDbContext db, IPasswordHasher hasher,
         TenantContext tenant, AuditWriter audit, CancellationToken ct)
     {
-        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        var phone = Shared.PhoneNumber.Stored(req.Phone);
         var code = req.Code?.Trim() ?? "";
 
         if (string.IsNullOrEmpty(req.NewPassword))
