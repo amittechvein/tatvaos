@@ -18,6 +18,7 @@ import { readXlsx, writeXlsx, functionsNeedingNewerExcel, olderExcelNote } from 
 import { readCsv, writeCsv } from '@/lib/sheets/io/csv';
 import type { CellFormat } from '@/lib/sheets/workbook';
 import { ShareDialog } from '@/components/space/ShareDialog';
+import { AccountButton } from '@/components/shell/AccountButton';
 import { Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Kit';
 import { MenuBar, type MenuItem } from '@/components/docs/Toolbar';
@@ -31,6 +32,8 @@ import { FormulaBar } from './FormulaBar';
 import { SheetsToolbar, NUMBER_FORMATS } from './SheetsToolbar';
 import { SheetTabs } from './SheetTabs';
 import { SheetsAiPanel, type AiContext } from './SheetsAiPanel';
+import { ColourRulesDialog } from './ColourRulesDialog';
+import { DropdownDialog } from './DropdownDialog';
 import { SheetGlyph } from './icons';
 import type { Remote } from './paint';
 
@@ -198,7 +201,7 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
   const [zoom, setZoom] = useState(100);
   const [title, setTitle] = useState(meta.title);
   const [sharing, setSharing] = useState(false);
-  const [dialog, setDialog] = useState<null | 'keys' | 'numberFormat' | 'find' | 'sort' | 'settings' | 'nameVersion' | 'import' | 'print'>(null);
+  const [dialog, setDialog] = useState<null | 'keys' | 'numberFormat' | 'find' | 'sort' | 'settings' | 'nameVersion' | 'import' | 'print' | 'rules' | 'dropdown'>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [selection, setSelection] = useState<Selection>({ rect: { r1: 0, c1: 0, r2: 0, c2: 0 }, active: { r: 0, c: 0 }, rowSel: false, colSel: false });
@@ -462,6 +465,17 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
   }
 
   const fmt = (patch: Partial<CellFormat>) => { if (guard()) model.setFormat(sheetId, rect, patch); };
+
+  /**
+   * Data > Create a filter. On a single cell, the block of data around it
+   * (as Sheets does); the block's first row becomes the header row.
+   */
+  function createFilter() {
+    if (!guard()) return;
+    const one = rect.r1 === rect.r2 && rect.c1 === rect.c2;
+    const range = one ? dataRegion(model, sheetId, active.r, active.c) : rect;
+    if (!model.createFilter(sheetId, range)) setNotice('A filter needs a header row and at least one row of data below it. Select them and try again.');
+  }
 
   function changeDecimals(delta: 1 | -1) {
     if (!guard()) return;
@@ -750,12 +764,21 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
       { label: 'Merge all', disabled: !editOk, onClick: () => { if (guard()) model.merge(sheetId, rect, 'all'); } },
       { label: 'Unmerge', disabled: !editOk, onClick: () => { if (guard()) model.unmergeIn(sheetId, rect); } },
       'sep',
+      // Open to viewers too: they can read which rules colour the sheet.
+      { label: 'Colour rules…', onClick: () => setDialog('rules') },
+      'sep',
       { label: 'Clear formatting', shortcut: 'Ctrl+\\', disabled: !editOk, onClick: () => model.clear(sheetId, rect, 'formats') },
     ] },
     { name: 'Data', items: [
       { label: `Sort A → Z by column ${colName(active.c)}`, disabled: !editOk, onClick: () => sortBy(false) },
       { label: `Sort Z → A by column ${colName(active.c)}`, disabled: !editOk, onClick: () => sortBy(true) },
       { label: 'Sort range…', disabled: !editOk, onClick: () => setDialog('sort') },
+      'sep',
+      { label: 'Dropdown…', disabled: !editOk, onClick: () => setDialog('dropdown') },
+      'sep',
+      model.filter(sheetId)
+        ? { label: 'Remove filter', disabled: !editOk, onClick: () => { if (guard()) model.removeFilter(sheetId); } }
+        : { label: 'Create a filter', disabled: !editOk, onClick: () => createFilter() },
     ] },
     { name: 'Tools', items: [
       { label: 'TatvaOS AI', onClick: () => setPanel('ai') },
@@ -865,7 +888,7 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
           <HeaderButton title="TatvaOS AI" active={panel === 'ai'} onClick={() => setPanel(panel === 'ai' ? null : 'ai')}><I.sparkle /></HeaderButton>
           {canShare ? (
             <button type="button" onClick={() => setSharing(true)}
-              className="flex items-center gap-2 rounded-full bg-[#c2e7ff] px-5 py-2 text-sm font-medium text-[#001d35] hover:shadow">
+              className="flex items-center gap-2 rounded-full bg-brand-600 px-5 py-2 text-sm font-medium text-white hover:bg-brand-700">
               <I.share className="h-4 w-4" /> Share
             </button>
           ) : (
@@ -873,6 +896,8 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
               {canEdit ? 'Editor' : perm === 'comment' ? 'Commenter' : 'Viewer'}
             </span>
           )}
+          {/* Who is signed in — as in Docs; the circles are the people here. */}
+          <AccountButton />
         </div>
       </header>
 
@@ -904,10 +929,10 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
         </div>
       )}
       {preview && (
-        <div className="mx-3 mb-1 flex flex-wrap items-center gap-3 rounded-lg bg-[#e8f0fe] px-4 py-2 text-sm text-[#174ea6]">
+        <div className="mx-3 mb-1 flex flex-wrap items-center gap-3 rounded-lg bg-brand-50 px-4 py-2 text-sm text-brand-700 dark:bg-brand-600/25 dark:text-white">
           <span className="flex-1">Viewing {preview.v.name ? `“${preview.v.name}”` : 'the version'} from {formatDateTime(preview.v.createdAt)} (read only)</span>
           {canEdit && <button type="button" onClick={() => void restore()} className="rounded-full bg-brand-600 px-4 py-1 text-xs font-semibold text-white">Restore this version</button>}
-          <button type="button" onClick={() => setPreview(null)} className="rounded-full border border-[#174ea6]/40 px-4 py-1 text-xs font-semibold">Back to current</button>
+          <button type="button" onClick={() => setPreview(null)} className="rounded-full border border-brand-600/40 px-4 py-1 text-xs font-semibold">Back to current</button>
         </div>
       )}
 
@@ -1063,6 +1088,14 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
             model.sortRange(sheetId, hasHeader ? { ...rect, r1: rect.r1 + 1 } : rect, keys);
           }} />
       )}
+      {dialog === 'dropdown' && (
+        <DropdownDialog model={model} sheetId={sheetId} selection={rect} active={active} onNotice={setNotice}
+          onClose={() => { setDialog(null); grid.current?.focus(); }} />
+      )}
+      {dialog === 'rules' && (
+        <ColourRulesDialog model={model} sheetId={sheetId} selection={rect} canEdit={editOk}
+          onClose={() => { setDialog(null); grid.current?.focus(); }} />
+      )}
       {dialog === 'settings' && (
         <SettingsDialog grouping={model.locale().grouping} dateOrder={model.locale().dateOrder}
           onClose={() => setDialog(null)}
@@ -1118,7 +1151,7 @@ function range(a: number, b: number): number[] {
 function HeaderButton({ title, active, onClick, children }: { title: string; active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button type="button" title={title} aria-label={title} aria-pressed={active} onClick={onClick}
-      className={`flex h-9 w-9 items-center justify-center rounded-full ${active ? 'bg-[#d3e3fd] text-[#0b57d0]' : 'text-ink hover:bg-canvas'}`}>
+      className={`flex h-9 w-9 items-center justify-center rounded-full ${active ? 'bg-brand-100 text-brand-700 dark:bg-brand-600/35 dark:text-white' : 'text-ink hover:bg-ink/[0.06]'}`}>
       {children}
     </button>
   );
@@ -1434,4 +1467,21 @@ function ShortcutsDialog({ onClose }: { onClose: () => void }) {
       </dl>
     </Modal>
   );
+}
+
+/** The block of filled cells around (r, c): grown a row or column at a time while the next one has anything in it. */
+function dataRegion(model: SheetsModel, sheetId: string, r: number, c: number): Rect {
+  const size = model.size(sheetId);
+  const filled = (rr: number, cc: number) => (model.input(sheetId, rr, cc) ?? '') !== '';
+  let box = { r1: r, c1: c, r2: r, c2: c };
+  for (let grew = true, i = 0; grew && i < 10_000; i += 1) {
+    grew = false;
+    const rowHas = (rr: number) => rr >= 0 && rr < size.rows && Array.from({ length: box.c2 - box.c1 + 1 }, (_, k) => box.c1 + k).some((cc) => filled(rr, cc));
+    const colHas = (cc: number) => cc >= 0 && cc < size.cols && Array.from({ length: box.r2 - box.r1 + 1 }, (_, k) => box.r1 + k).some((rr) => filled(rr, cc));
+    if (rowHas(box.r1 - 1)) { box = { ...box, r1: box.r1 - 1 }; grew = true; }
+    if (rowHas(box.r2 + 1)) { box = { ...box, r2: box.r2 + 1 }; grew = true; }
+    if (colHas(box.c1 - 1)) { box = { ...box, c1: box.c1 - 1 }; grew = true; }
+    if (colHas(box.c2 + 1)) { box = { ...box, c2: box.c2 + 1 }; grew = true; }
+  }
+  return box;
 }
