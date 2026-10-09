@@ -15,6 +15,8 @@
 //                rules      Y.Map<ruleId, { r1, c1, r2, c2, kind, a, b, style, n }>
 //                           colour rules (rules.ts); OPTIONAL — sheets made
 //                           before 9 Oct 2026 have none
+//                lists      Y.Map<listId, { r1, c1, r2, c2, items, strict, n }>
+//                           dropdowns (dropdowns.ts); OPTIONAL, as rules
 //    settings  Y.Map                        locale grouping, date order
 //
 //  WHY IDS AND NOT POSITIONS. Cells are keyed by the ids of their row and
@@ -53,6 +55,11 @@ import {
   cleanFormat, type CellFormat, type SheetData, type WorkbookData,
 } from './workbook';
 import { cleanRule, type ColourRule, type PlacedRule } from './rules';
+import { cleanDropdown, dropdownAt as findDropdown, type Dropdown, type PlacedDropdown } from './dropdowns';
+
+/** The per-sheet maps of ranges with something attached (see placed()). */
+type PlacedField = 'rules' | 'lists';
+const PLACED_FIELDS: readonly PlacedField[] = ['rules', 'lists'];
 
 /** Transactions from this tab carry this origin; the undo manager tracks only these. */
 export const LOCAL = { local: true };
@@ -628,7 +635,7 @@ export class SheetsModel {
     const n = Math.min(count, total - at, total - 1);
     if (n <= 0) return;
     this.write(() => {
-      this.shrinkRules(sheetId, axis, at, n);
+      this.shrinkPlaced(sheetId, axis, at, n);
       const arr = this.sub<Y.Array<string>>(sheetId, axis === 'row' ? 'rows' : 'cols');
       const gone = new Set(arr.slice(at, at + n));
       arr.delete(at, n);
@@ -694,52 +701,54 @@ export class SheetsModel {
   }
 
   // ------------------------------------------------------------------
-  //  Colour rules (rules.ts)
+  //  Ranges with something attached: colour rules (rules.ts) and dropdowns
+  //  (dropdowns.ts). Both are stored the same way — a per-sheet Y.Map of
+  //  { r1, c1, r2, c2 (row/col IDS, as merges), …the payload, n (order) } —
+  //  and both shrink, rather than vanish, when an edge row is deleted.
   // ------------------------------------------------------------------
 
   /**
-   * The sheet's colour rules, in the order they apply (first match wins).
-   * 'rules' is OPTIONAL in a sheet's map — every sheet made before 9 Oct 2026
-   * has none — so sheetY does not require it, and a malformed one reads as
-   * no rules. Each rule is cleaned (cleanRule): a hand-made client's junk is
-   * dropped, never half-applied.
+   * A sheet's placed ranges of one kind, in order. The map is OPTIONAL —
+   * every sheet made before 9 Oct 2026 has neither — so sheetY does not
+   * require it, and a malformed one reads as none. Each payload is cleaned:
+   * a hand-made client's junk is dropped, never half-applied.
    */
-  colourRules(sheetId: string): PlacedRule[] {
+  private placed<T extends object>(sheetId: string, field: PlacedField, clean: (raw: unknown) => T | undefined): (T & Rect & { id: string })[] {
     const cache = this.cache(sheetId);
-    const m = cache?.y.get('rules');
+    const m = cache?.y.get(field);
     if (!cache || !(m instanceof Y.Map)) return [];
-    const out: { rule: PlacedRule; n: number }[] = [];
+    const out: { item: T & Rect & { id: string }; n: number }[] = [];
     for (const [id, raw] of m as Y.Map<unknown>) {
-      const rule = cleanRule(raw);
-      if (!rule) continue;
+      const payload = clean(raw);
+      if (!payload) continue;
       const p = raw as Record<string, unknown>;
       const at = (v: unknown, index: Map<string, number>) => (typeof v === 'string' ? index.get(v) : undefined);
       const r1 = at(p.r1, cache.rowIndex); const r2 = at(p.r2, cache.rowIndex);
       const c1 = at(p.c1, cache.colIndex); const c2 = at(p.c2, cache.colIndex);
       if (r1 === undefined || r2 === undefined || c1 === undefined || c2 === undefined) continue;
       if (r1 > r2 || c1 > c2) continue;
-      out.push({ rule: { ...rule, id, r1, c1, r2, c2 }, n: typeof p.n === 'number' && Number.isFinite(p.n) ? p.n : 0 });
+      out.push({ item: { ...payload, id, r1, c1, r2, c2 }, n: typeof p.n === 'number' && Number.isFinite(p.n) ? p.n : 0 });
     }
-    return out.sort((x, y) => x.n - y.n || (x.rule.id < y.rule.id ? -1 : 1)).map((x) => x.rule);
+    return out.sort((x, y) => x.n - y.n || (x.item.id < y.item.id ? -1 : 1)).map((x) => x.item);
   }
 
   /**
-   * The sheet's rules map, made on first use. Two people adding the very
-   * first rule of a sheet in the same instant both make the map, and Yjs
-   * keeps one — so one of those two rules is lost. New sheets get the map at
+   * The map, made on first use. Two people adding the very first rule (or
+   * dropdown) of a sheet in the same instant both make the map, and Yjs
+   * keeps one — so one of the two is lost. New sheets get both maps at
    * creation (addSheet), which closes that for them; the seed sheet cannot
    * (seedUpdate must stay byte-identical across every browser version).
    */
-  private rulesMap(sheetId: string): Y.Map<unknown> {
+  private placedMap(sheetId: string, field: PlacedField): Y.Map<unknown> {
     const y = this.sheetsMap.get(sheetId)!;
-    const m = y.get('rules');
+    const m = y.get(field);
     if (m instanceof Y.Map) return m as Y.Map<unknown>;
     const fresh = new Y.Map<unknown>();
-    y.set('rules', fresh);
+    y.set(field, fresh);
     return fresh;
   }
 
-  private ruleCorners(sheetId: string, rect: Rect) {
+  private corners(sheetId: string, rect: Rect) {
     const n = norm(rect);
     const cache = this.cache(sheetId);
     const r1 = cache?.rowIds[n.r1]; const r2 = cache?.rowIds[n.r2];
@@ -747,13 +756,9 @@ export class SheetsModel {
     return r1 && r2 && c1 && c2 ? { r1, c1, r2, c2 } : null;
   }
 
-  /** Add a rule over a rectangle. It goes last: it applies only where no earlier rule matched. */
-  addColourRule(sheetId: string, rect: Rect, rule: ColourRule): string | null {
-    const clean = cleanRule(rule);
-    const corners = this.ruleCorners(sheetId, rect);
-    if (!clean || !corners) return null;
-    const id = newId();
-    const m = this.sheetsMap.get(sheetId)!.get('rules');
+  /** The order number after every existing one: a new entry goes last. */
+  private nextOrder(sheetId: string, field: PlacedField): number {
+    const m = this.sheetsMap.get(sheetId)!.get(field);
     let next = 0;
     if (m instanceof Y.Map) {
       for (const raw of (m as Y.Map<unknown>).values()) {
@@ -761,14 +766,63 @@ export class SheetsModel {
         if (typeof n === 'number' && Number.isFinite(n)) next = Math.max(next, n + 1);
       }
     }
-    this.write(() => { this.rulesMap(sheetId).set(id, { ...clean, ...corners, n: next }); });
+    return next;
+  }
+
+  /**
+   * Inside remove(), before the rows or columns go: a rule or dropdown whose
+   * first or last row (column) is being deleted shrinks to what remains of
+   * its range, and goes only when none of it remains. Without this a rule
+   * over A2:A1000 would vanish when row 1000 was deleted — the way a merge
+   * does, which is right for a merge and wrong for these.
+   */
+  private shrinkPlaced(sheetId: string, axis: 'row' | 'col', at: number, n: number) {
+    const cache = this.cache(sheetId);
+    if (!cache) return;
+    const ids = axis === 'row' ? cache.rowIds : cache.colIds;
+    const last = at + n - 1;
+    for (const field of PLACED_FIELDS) {
+      const m = this.sheetsMap.get(sheetId)!.get(field);
+      if (!(m instanceof Y.Map)) continue;
+      const anyObject = (raw: unknown) => (typeof raw === 'object' && raw !== null ? {} : undefined);
+      for (const item of this.placed(sheetId, field, anyObject)) {
+        const lo = axis === 'row' ? item.r1 : item.c1;
+        const hi = axis === 'row' ? item.r2 : item.c2;
+        if (hi < at || lo > last) continue;            // untouched
+        if (lo >= at && hi <= last) { m.delete(item.id); continue; } // all of it deleted
+        const newLo = lo >= at ? last + 1 : lo;        // first surviving
+        const newHi = hi <= last ? at - 1 : hi;        // last surviving
+        if (newLo === lo && newHi === hi) continue;    // deleted rows were inside; its corners stay
+        const raw = m.get(item.id) as Record<string, unknown>;
+        m.set(item.id, axis === 'row'
+          ? { ...raw, r1: ids[newLo], r2: ids[newHi] }
+          : { ...raw, c1: ids[newLo], c2: ids[newHi] });
+      }
+    }
+  }
+
+  // ---- colour rules (rules.ts) ----
+
+  /** The sheet's colour rules, in the order they apply (first match wins). */
+  colourRules(sheetId: string): PlacedRule[] {
+    return this.placed(sheetId, 'rules', cleanRule);
+  }
+
+  /** Add a rule over a rectangle. It goes last: it applies only where no earlier rule matched. */
+  addColourRule(sheetId: string, rect: Rect, rule: ColourRule): string | null {
+    const clean = cleanRule(rule);
+    const corners = this.corners(sheetId, rect);
+    if (!clean || !corners) return null;
+    const id = newId();
+    const n = this.nextOrder(sheetId, 'rules');
+    this.write(() => { this.placedMap(sheetId, 'rules').set(id, { ...clean, ...corners, n }); });
     return id;
   }
 
   /** Change a rule's range, condition or style. It keeps its place in the list. */
   updateColourRule(sheetId: string, id: string, rect: Rect, rule: ColourRule): boolean {
     const clean = cleanRule(rule);
-    const corners = this.ruleCorners(sheetId, rect);
+    const corners = this.corners(sheetId, rect);
     const m = this.sheetsMap.get(sheetId)!.get('rules');
     if (!clean || !corners || !(m instanceof Y.Map) || !m.has(id)) return false;
     const n = (m.get(id) as { n?: unknown } | null)?.n;
@@ -781,32 +835,46 @@ export class SheetsModel {
     if (m instanceof Y.Map) this.write(() => { m.delete(id); });
   }
 
+  // ---- dropdowns (dropdowns.ts) ----
+
+  /** The sheet's dropdowns, oldest first; where two cover a cell the LAST wins (dropdownAt). */
+  dropdowns(sheetId: string): PlacedDropdown[] {
+    return this.placed(sheetId, 'lists', cleanDropdown);
+  }
+
+  dropdownAt(sheetId: string, r: number, c: number): PlacedDropdown | undefined {
+    return findDropdown(this.dropdowns(sheetId), r, c);
+  }
+
   /**
-   * Inside remove(), before the rows or columns go: a rule whose first or
-   * last row (column) is being deleted shrinks to what remains of its range,
-   * and goes only when none of it remains. Without this a rule over A2:A1000
-   * would vanish when row 1000 was deleted — the way a merge does, which is
-   * right for a merge and wrong for a rule.
+   * Put a dropdown on a rectangle. Any dropdown lying wholly inside it is
+   * replaced (Sheets does the same); one that only overlaps stays, and this
+   * newer one wins where they meet.
    */
-  private shrinkRules(sheetId: string, axis: 'row' | 'col', at: number, n: number) {
-    const m = this.sheetsMap.get(sheetId)!.get('rules');
-    const cache = this.cache(sheetId);
-    if (!(m instanceof Y.Map) || !cache) return;
-    const ids = axis === 'row' ? cache.rowIds : cache.colIds;
-    const last = at + n - 1;
-    for (const rule of this.colourRules(sheetId)) {
-      const lo = axis === 'row' ? rule.r1 : rule.c1;
-      const hi = axis === 'row' ? rule.r2 : rule.c2;
-      if (hi < at || lo > last) continue;            // untouched
-      if (lo >= at && hi <= last) { m.delete(rule.id); continue; } // all of it deleted
-      const newLo = lo >= at ? last + 1 : lo;        // first surviving
-      const newHi = hi <= last ? at - 1 : hi;        // last surviving
-      if (newLo === lo && newHi === hi) continue;    // deleted rows were inside; its corners stay
-      const raw = m.get(rule.id) as Record<string, unknown>;
-      m.set(rule.id, axis === 'row'
-        ? { ...raw, r1: ids[newLo], r2: ids[newHi] }
-        : { ...raw, c1: ids[newLo], c2: ids[newHi] });
-    }
+  addDropdown(sheetId: string, rect: Rect, dd: Dropdown): string | null {
+    const clean = cleanDropdown(dd);
+    const corners = this.corners(sheetId, rect);
+    if (!clean || !corners) return null;
+    const box = norm(rect);
+    const id = newId();
+    const n = this.nextOrder(sheetId, 'lists');
+    this.write(() => {
+      const m = this.placedMap(sheetId, 'lists');
+      for (const old of this.dropdowns(sheetId)) {
+        if (old.r1 >= box.r1 && old.r2 <= box.r2 && old.c1 >= box.c1 && old.c2 <= box.c2) m.delete(old.id);
+      }
+      m.set(id, { ...clean, ...corners, n });
+    });
+    return id;
+  }
+
+  /** Remove every dropdown that touches the rectangle. Returns how many went. The cells' values stay. */
+  removeDropdownsIn(sheetId: string, rect: Rect): number {
+    const box = norm(rect);
+    const gone = this.dropdowns(sheetId).filter((d) => d.r1 <= box.r2 && d.r2 >= box.r1 && d.c1 <= box.c2 && d.c2 >= box.c1);
+    const m = this.sheetsMap.get(sheetId)!.get('lists');
+    if (gone.length > 0 && m instanceof Y.Map) this.write(() => { for (const d of gone) m.delete(d.id); });
+    return gone.length;
   }
 
   /**
@@ -875,8 +943,8 @@ export class SheetsModel {
       const cy = new Y.Array<string>(); cy.push(Array.from({ length: cols }, newId));
       s.set('rows', ry);
       s.set('cols', cy);
-      // 'rules' too, so the first two rules added at once cannot race to create it (rulesMap).
-      for (const k of ['values', 'formats', 'colWidths', 'rowHeights', 'merges', 'rules']) s.set(k, new Y.Map());
+      // 'rules' and 'lists' too, so the first two added at once cannot race to create the map (placedMap).
+      for (const k of ['values', 'formats', 'colWidths', 'rowHeights', 'merges', ...PLACED_FIELDS]) s.set(k, new Y.Map());
       const at = afterId ? this.order.toArray().indexOf(afterId) + 1 : this.order.length;
       this.order.insert(at > 0 ? at : this.order.length, [id]);
     });
@@ -941,6 +1009,7 @@ export class SheetsModel {
       for (let r = 0; r < size.rows; r += 1) { const h = this.rowHeight(id, r); if (h) this.setRowHeight(copyId, [r], h); }
       for (const m of merges) this.merge(copyId, m, 'all');
       for (const rule of this.colourRules(id)) this.addColourRule(copyId, rule, rule);
+      for (const dd of this.dropdowns(id)) this.addDropdown(copyId, dd, dd);
       this.freeze(copyId, src.frozenRows, src.frozenCols);
       if (src.tabColor) this.sheetsMap.get(copyId)!.set('tabColor', src.tabColor);
     });
@@ -1014,12 +1083,14 @@ export class SheetsModel {
         const rowHeights: Record<number, number> = {};
         for (let r = 0; r < size.rows; r += 1) { const h = this.rowHeight(id, r); if (h) rowHeights[r] = h; }
         const rules = this.colourRules(id).map(({ id: _id, ...rule }) => rule);
+        const dropdowns = this.dropdowns(id).map(({ id: _id, ...dd }) => dd);
         return {
           name: meta.name, rows: size.rows, cols: size.cols, cells, colWidths, rowHeights,
           merges: this.merges(id).map(({ r1, c1, r2, c2 }) => ({ r1, c1, r2, c2 })),
           frozenRows: meta.frozenRows, frozenCols: meta.frozenCols,
           tabColor: meta.tabColor, hidden: meta.hidden,
           ...(rules.length > 0 ? { rules } : {}),
+          ...(dropdowns.length > 0 ? { dropdowns } : {}),
         };
       }),
     };
@@ -1069,6 +1140,7 @@ export class SheetsModel {
         // Rules from a file go through addColourRule, so each is cleaned (cleanRule)
         // and placed by id like everything else; their file order is kept.
         for (const rule of s.rules ?? []) this.addColourRule(id, rule, rule);
+        for (const dd of s.dropdowns ?? []) this.addDropdown(id, dd, dd);
         const y = this.sheetsMap.get(id)!;
         y.set('frozenRows', s.frozenRows);
         y.set('frozenCols', s.frozenCols);

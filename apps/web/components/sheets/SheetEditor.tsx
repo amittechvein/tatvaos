@@ -33,6 +33,7 @@ import { SheetsToolbar, NUMBER_FORMATS } from './SheetsToolbar';
 import { SheetTabs } from './SheetTabs';
 import { SheetsAiPanel, type AiContext } from './SheetsAiPanel';
 import { ColourRulesDialog } from './ColourRulesDialog';
+import { DropdownDialog } from './DropdownDialog';
 import { SheetGlyph } from './icons';
 import type { Remote } from './paint';
 
@@ -200,7 +201,7 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
   const [zoom, setZoom] = useState(100);
   const [title, setTitle] = useState(meta.title);
   const [sharing, setSharing] = useState(false);
-  const [dialog, setDialog] = useState<null | 'keys' | 'numberFormat' | 'find' | 'sort' | 'settings' | 'nameVersion' | 'import' | 'print' | 'rules'>(null);
+  const [dialog, setDialog] = useState<null | 'keys' | 'numberFormat' | 'find' | 'sort' | 'settings' | 'nameVersion' | 'import' | 'print' | 'rules' | 'dropdown'>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [selection, setSelection] = useState<Selection>({ rect: { r1: 0, c1: 0, r2: 0, c2: 0 }, active: { r: 0, c: 0 }, rowSel: false, colSel: false });
@@ -761,6 +762,8 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
       { label: `Sort A → Z by column ${colName(active.c)}`, disabled: !editOk, onClick: () => sortBy(false) },
       { label: `Sort Z → A by column ${colName(active.c)}`, disabled: !editOk, onClick: () => sortBy(true) },
       { label: 'Sort range…', disabled: !editOk, onClick: () => setDialog('sort') },
+      'sep',
+      { label: 'Dropdown…', disabled: !editOk, onClick: () => setDialog('dropdown') },
     ] },
     { name: 'Tools', items: [
       { label: 'TatvaOS AI', onClick: () => setPanel('ai') },
@@ -1069,6 +1072,10 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
             if (!guard()) return;
             model.sortRange(sheetId, hasHeader ? { ...rect, r1: rect.r1 + 1 } : rect, keys);
           }} />
+      )}
+      {dialog === 'dropdown' && (
+        <DropdownDialog model={model} sheetId={sheetId} selection={rect} active={active} onNotice={setNotice}
+          onClose={() => { setDialog(null); grid.current?.focus(); }} />
       )}
       {dialog === 'rules' && (
         <ColourRulesDialog model={model} sheetId={sheetId} selection={rect} canEdit={editOk}

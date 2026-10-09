@@ -32,6 +32,7 @@ import { formulaIsSafe } from '@/lib/sheets/io/safety';
 import { parseCell, norm, type Rect } from '@/lib/sheets/engine/address';
 import type { SheetsModel, Clip } from '@/lib/sheets/model';
 import { ruleStyleAt, withRuleStyle } from '@/lib/sheets/rules';
+import { asListed, dropdownAt as findDropdown, isChoice, itemsSummary } from '@/lib/sheets/dropdowns';
 import { Geometry } from './geometry';
 import { paint, fontFor, type Remote } from './paint';
 
@@ -87,6 +88,10 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
   const [editing, setEditing] = useState<{ r: number; c: number; text: string } | null>(null);
   const editingRef = useRef(editing);
   editingRef.current = editing;
+  // An open dropdown list (dropdowns.ts) and its highlighted choice.
+  const [picker, setPicker] = useState<{ r: number; c: number; at: number } | null>(null);
+  const pickerRef = useRef(picker);
+  pickerRef.current = picker;
 
   const sel = useRef<Selection>({ rect: { r1: 0, c1: 0, r2: 0, c2: 0 }, active: { r: 0, c: 0 }, rowSel: false, colSel: false });
   const copyRect = useRef<Rect | null>(null);
@@ -138,6 +143,7 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
     // Colour rules are read once per frame, then laid over each cell's own
     // format as it is painted (rules.ts); a sheet with none pays nothing.
     const rules = p.model.colourRules(p.sheetId);
+    const lists = p.model.dropdowns(p.sheetId);
     const locale = p.model.locale();
     paint(ctx, geomRef.current, {
       value: (r, c) => p.model.value(p.sheetId, r, c),
@@ -148,6 +154,10 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
       merges: p.model.merges(p.sheetId),
       locale: p.model.locale(),
       hasComment: p.hasComment,
+      dropdown: lists.length === 0 ? undefined : (r, c) => {
+        const d = findDropdown(lists, r, c);
+        return d ? (isChoice(d, shownText(p, r, c)) ? 'ok' : 'bad') : null;
+      },
       textInDownloads: (r, c) => textInDownloads(p.model.input(p.sheetId, r, c)),
     }, {
       scrollLeft: sc.scrollLeft, scrollTop: sc.scrollTop, width: w, height: h,
@@ -243,9 +253,29 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
       rowSel: !!opts.rowSel, colSel: !!opts.colSel,
     };
     if (opts.scroll !== false) scrollTo(sel.current.active.r, sel.current.active.c);
+    setPicker(null); // a list belongs to the cell it opened on
     announce();
     repaint();
-  }, [expandForMerges, repaint]);  
+  }, [expandForMerges, repaint]);
+
+  /** Open the dropdown list of (r, c), if it has one and the sheet may be edited. */
+  const openPicker = useCallback((r: number, c: number): boolean => {
+    const p = propsRef.current;
+    if (p.readOnly) return false;
+    const d = p.model.dropdownAt(p.sheetId, r, c);
+    if (!d) return false;
+    const now = (shownText(p, r, c) ?? '').trim().toLowerCase();
+    setPicker({ r, c, at: Math.max(0, d.items.findIndex((it) => it.toLowerCase() === now)) });
+    return true;
+  }, []);
+
+  const choose = useCallback((item: string | null) => {
+    const pk = pickerRef.current;
+    const p = propsRef.current;
+    setPicker(null);
+    if (pk) p.model.setInputs(p.sheetId, [{ r: pk.r, c: pk.c, input: item }]);
+    sink.current?.focus({ preventScroll: true });
+  }, []);
 
   function scrollTo(r: number, c: number) {
     const sc = scroller.current;
@@ -292,6 +322,20 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
       const open = (text.match(/\(/g) ?? []).length - (text.match(/\)/g) ?? []).length;
       if (open > 0 && !/"[^"]*$/.test(text)) text += ')'.repeat(open);
     }
+    // A dropdown cell (dropdowns.ts): a typed choice is stored as listed
+    // ("absent" → "Absent"); a value not on a STRICT list is refused, said,
+    // and the cell keeps what it had — as in Sheets. Formulas are not checked.
+    const dd = text !== '' && !text.startsWith('=') ? p.model.dropdownAt(p.sheetId, e.r, e.c) : undefined;
+    if (dd && isChoice(dd, text)) text = asListed(dd, text);
+    else if (dd && dd.strict) {
+      p.onNotice(`“${text.trim()}” is not one of this cell’s choices: ${itemsSummary(dd)}.`);
+      editingRef.current = null;
+      setEditing(null);
+      p.onDraft(null);
+      sink.current?.focus();
+      repaint();
+      return;
+    }
     if (text !== before) p.model.setInputs(p.sheetId, [{ r: e.r, c: e.c, input: text === '' ? null : text }]);
     setEditing(null);
     p.onDraft(null);
@@ -307,7 +351,7 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
     editingRef.current = null;
     setSel({ r1: r, c1: c, r2: r, c2: c }, { r, c });
     sink.current?.focus();
-  }, [mergeAt, setSel]);
+  }, [mergeAt, setSel, repaint]);
 
   const cancel = useCallback(() => {
     editingRef.current = null;
@@ -418,6 +462,19 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
     const p = propsRef.current;
     const g = geomRef.current;
     const s = sel.current;
+    // An open dropdown list takes the keys: arrows move, Enter/Tab choose, Escape closes.
+    const pk = pickerRef.current;
+    if (pk) {
+      e.preventDefault();
+      const items = p.model.dropdownAt(p.sheetId, pk.r, pk.c)?.items ?? [];
+      if (e.key === 'Escape' || items.length === 0) setPicker(null);
+      else if (e.key === 'ArrowDown') setPicker({ ...pk, at: Math.min(items.length - 1, pk.at + 1) });
+      else if (e.key === 'ArrowUp') setPicker({ ...pk, at: Math.max(0, pk.at - 1) });
+      else if (e.key === 'Enter' || e.key === 'Tab') choose(items[pk.at] ?? null);
+      return;
+    }
+    // Alt+Down opens the active cell's list, as in Sheets and Excel.
+    if (e.key === 'ArrowDown' && e.altKey && openPicker(s.active.r, s.active.c)) { e.preventDefault(); return; }
     const mod = e.ctrlKey || e.metaKey;
     const move = (dr: number, dc: number) => {
       e.preventDefault();
@@ -674,6 +731,10 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
       const m = mergeAt(h.r, h.c);
       const at = m ? { r: m.r1, c: m.c1 } : { r: h.r, c: h.c };
       setSel({ r1: at.r, c1: at.c, r2: at.r, c2: at.c }, at, { scroll: false });
+      // A click on a dropdown cell's arrow (the right-most 18 px, where
+      // paint.ts draws it) opens its list.
+      const right = g.colX[(m ? m.c2 : h.c) + 1]!;
+      if (h.sx > right - 18 && openPicker(at.r, at.c)) return;
     }
     drag.current = { kind: 'cells', start: sel.current.active };
   }
@@ -866,10 +927,26 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
     };
   }
 
+  // ---- the open dropdown list, just under its cell ------------------------------
+  let pickerBox: React.CSSProperties | null = null;
+  const pickerItems = picker ? model.dropdownAt(sheetId, picker.r, picker.c)?.items ?? [] : [];
+  if (picker && scroller.current && pickerItems.length > 0) {
+    const g = geom;
+    const sc = scroller.current;
+    const m = mergeAt(picker.r, picker.c);
+    const below = g.viewY(g.rowY[(m ? m.r2 : picker.r) + 1]!, sc.scrollTop);
+    pickerBox = {
+      left: g.viewX(g.colX[picker.c]!, sc.scrollLeft),
+      top: below + 2,
+      minWidth: Math.max(140, g.colX[(m ? m.c2 : picker.c) + 1]! - g.colX[picker.c]!),
+      maxHeight: Math.max(120, size.h - below - 12),
+    };
+  }
+
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={scroller} className="sheets-scroller absolute inset-0 overflow-auto"
-        onScroll={() => { repaint(); props.onHover(null); }}>
+        onScroll={() => { repaint(); props.onHover(null); if (pickerRef.current) setPicker(null); }}>
         <div style={{ width: geom.headerW + geom.totalW + 60, height: geom.headerH + geom.totalH + 60 }}>
           <canvas ref={canvas} className="sticky left-0 top-0 block"
             onMouseDown={onMouseDown} onDoubleClick={onDoubleClick} onContextMenu={onContextMenu}
@@ -903,9 +980,39 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
           className="sheets-cell-editor absolute z-20 resize-none overflow-hidden whitespace-pre-wrap border-2 border-[#1a73e8] bg-white px-[3px] py-0 text-black shadow-lg outline-none dark:bg-[#1f1f1f] dark:text-[#e8eaed]"
           style={editorBox} rows={Math.max(1, editing.text.split('\n').length)} />
       )}
+
+      {picker && pickerBox && (
+        // Focus stays in the keyboard sink (onSinkKey drives the list), so
+        // mousedown — not click — chooses, and keeps that focus.
+        <div role="listbox" aria-label={`Choices for ${cellLabel(picker.r, picker.c)}`}
+          className="absolute z-30 overflow-y-auto rounded-lg border border-line bg-surface py-1 text-sm text-ink shadow-raised"
+          style={pickerBox}>
+          {pickerItems.map((it, i) => (
+            <button key={it} type="button" role="option" aria-selected={i === picker.at}
+              onMouseDown={(e) => { e.preventDefault(); choose(it); }}
+              onMouseEnter={() => setPicker({ ...picker, at: i })}
+              className={`block w-full truncate px-3 py-1.5 text-left ${i === picker.at ? 'bg-canvas' : ''}`}>
+              {it}
+            </button>
+          ))}
+          <div className="my-1 h-px bg-line" />
+          <button type="button" onMouseDown={(e) => { e.preventDefault(); choose(null); }}
+            className="block w-full px-3 py-1.5 text-left text-xs text-ink-muted hover:bg-canvas">Clear cell</button>
+        </div>
+      )}
     </div>
   );
 });
+
+/** What a cell shows, as text — what was typed, or a formula's result — for the dropdown checks. */
+function shownText(p: { model: SheetsModel; sheetId: string }, r: number, c: number): string | null {
+  const input = p.model.input(p.sheetId, r, c);
+  if (input === null) return null;
+  if (input.startsWith("'")) return input.slice(1);
+  if (!input.startsWith('=')) return input;
+  const v = p.model.value(p.sheetId, r, c);
+  return typeof v === 'string' || typeof v === 'number' ? String(v) : null;
+}
 
 // ---------------------------------------------------------------------------
 

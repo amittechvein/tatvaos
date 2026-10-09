@@ -23,9 +23,14 @@
 //  back the same way (readColourRules, colourRuleXml).
 //
 //  What an .xlsx can hold that the snapshot cannot, and so is dropped on
+//  List validations are kept as dropdowns (dropdowns.ts): a typed list, or
+//  a range on the same sheet read as values (readDropdowns, dropdownsXml).
+//
+//  What an .xlsx can hold that the snapshot cannot, and so is dropped on
 //  import: hidden rows and columns, row/column default styles, the other
 //  conditional formats (colour scales, data bars, icon sets, formula rules),
-//  data validation, comments, images and charts, defined names,
+//  other data validation (numbers, dates, lists from another sheet or a
+//  name), comments, images and charts, defined names,
 //  hyperlinks, rich text formatting inside a cell (the text is kept), and
 //  array-formula ranges (the formula is kept in its first cell).
 //
@@ -39,6 +44,7 @@ import { parseInput, parseNumberText } from '../engine/input';
 import {
   cleanRule, cleanStyle, operandCount, type ColourRule, type RuleKind, type RuleStyle,
 } from '../rules';
+import { cleanDropdown, MAX_ITEMS, type Dropdown } from '../dropdowns';
 import {
   DEFAULT_COLS, DEFAULT_COL_WIDTH, DEFAULT_ROWS, DEFAULT_ROW_HEIGHT, cellKey, parseCellKey,
   type BorderSide, type BorderStyle, type CellData, type CellFormat, type SheetData, type WorkbookData,
@@ -801,6 +807,49 @@ function readColourRules(root: XmlNode, styles: Styles): (Rect & ColourRule)[] {
     .map((x) => x.rule);
 }
 
+/** A file can hold any number of validations; a sheet keeps this many dropdowns. */
+const MAX_DROPDOWNS_PER_SHEET = 200;
+
+/**
+ * The file's list validations as dropdowns. Two sources are read: a list
+ * typed into the rule ("Paid,Due,Waived"), and a range on the SAME sheet
+ * ($H$2:$H$6), whose cells are read now, as values — the dropdown keeps the
+ * choices, not a link to those cells. A range on another sheet, a named
+ * range or any other formula is dropped, never evaluated; so are the other
+ * validation types (whole number, date, text length, custom).
+ */
+function readDropdowns(root: XmlNode, cells: Map<string, CellData>): (Rect & Dropdown)[] {
+  const out: (Rect & Dropdown)[] = [];
+  for (const v of kids(kid(root, 'dataValidations'), 'dataValidation')) {
+    if (v.attrs.type !== 'list' || out.length >= MAX_DROPDOWNS_PER_SHEET) continue;
+    const f = (kid(v, 'formula1')?.text ?? '').trim();
+    let items: string[] | null = null;
+    const literal = /^"((?:[^"]|"")*)"$/.exec(f);
+    if (literal) {
+      items = literal[1]!.replace(/""/g, '"').split(',');
+    } else {
+      const src = /^\$?[A-Za-z]{1,3}\$?\d+(:\$?[A-Za-z]{1,3}\$?\d+)?$/.test(f) ? parseRect(f.replace(/\$/g, '')) : null;
+      if (src && (src.r2 - src.r1 + 1) * (src.c2 - src.c1 + 1) <= MAX_ITEMS) {
+        items = [];
+        for (let r = Math.min(src.r1, src.r2); r <= Math.max(src.r1, src.r2); r += 1) {
+          for (let c = Math.min(src.c1, src.c2); c <= Math.max(src.c1, src.c2); c += 1) {
+            const cell = cells.get(cellKey(r, c));
+            const shown = cell?.input?.startsWith('=') ? cell.value : cell?.input;
+            if (typeof shown === 'string' || typeof shown === 'number') items.push(String(shown).replace(/^'/, ''));
+          }
+        }
+      }
+    }
+    const dd = items ? cleanDropdown({ items, strict: truthy(v.attrs.showErrorMessage) && v.attrs.errorStyle !== 'warning' && v.attrs.errorStyle !== 'information' }) : undefined;
+    if (!dd) continue;
+    for (const ref of (v.attrs.sqref ?? '').trim().split(/\s+/)) {
+      const rect = ref ? parseRect(ref.replace(/\$/g, '')) : null;
+      if (rect && out.length < MAX_DROPDOWNS_PER_SHEET) out.push({ ...dd, ...rect });
+    }
+  }
+  return out;
+}
+
 function readSheet(
   root: XmlNode, name: string, strings: string[], styles: Styles, theme: string[], date1904: boolean,
 ): SheetData {
@@ -936,6 +985,11 @@ function readSheet(
   if (rules.length > 0) {
     sheet.rules = rules;
     for (const rule of rules) grow(rule.r2, rule.c2);
+  }
+  const dropdowns = readDropdowns(root, sheet.cells);
+  if (dropdowns.length > 0) {
+    sheet.dropdowns = dropdowns;
+    for (const d of dropdowns) grow(d.r2, d.c2);
   }
 
   sheet.rows = Math.min(MAX_ROWS, Math.max(DEFAULT_ROWS, maxRow + 1, sheet.frozenRows + 1));
@@ -1225,6 +1279,38 @@ function colourRuleXml(rule: Rect & ColourRule, priority: number, styles: StyleT
     `${formulas.map((f) => `<formula>${escapeXml(f)}</formula>`).join('')}</cfRule></conditionalFormatting>`;
 }
 
+/** Excel's limit on a list typed into the rule itself ("a,b,c"). */
+const XL_LIST_MAX = 255;
+
+/**
+ * A sheet's dropdowns → one <dataValidations> ('' if none can be written).
+ * Written as a list typed into the rule, so the file needs no helper sheet.
+ * That form holds at most 255 characters and cannot hold a comma inside an
+ * item: a dropdown that does not fit is left out of the FILE only — the
+ * values in its cells are written as ever, and it stays in TatvaOS. Strict
+ * → Excel's "stop" message; loose → no message, the nearest Excel has to
+ * TatvaOS's red corner. The list goes in as a quoted string, and through
+ * formulaIsSafe, like a colour rule's operands (colourRuleXml).
+ */
+function dropdownsXml(list: (Rect & Dropdown)[]): string {
+  const out: string[] = [];
+  for (const d of list) {
+    const clean = cleanDropdown(d);
+    const r1 = Math.min(d.r1, d.r2); const r2 = Math.max(d.r1, d.r2);
+    const c1 = Math.min(d.c1, d.c2); const c2 = Math.max(d.c1, d.c2);
+    if (!clean || r1 < 0 || c1 < 0 || r2 >= XL_MAX_ROWS || c2 >= XL_MAX_COLS) continue;
+    if (clean.items.some((it) => it.includes(','))) continue;
+    const literal = clean.items.join(',');
+    if (literal.length > XL_LIST_MAX) continue;
+    const formula = xlString(literal);
+    if (!formulaIsSafe(formula)) continue;
+    const sqref = r1 === r2 && c1 === c2 ? cellName(r1, c1) : `${cellName(r1, c1)}:${cellName(r2, c2)}`;
+    out.push(`<dataValidation type="list" allowBlank="1" showErrorMessage="${clean.strict ? 1 : 0}" sqref="${sqref}">` +
+      `<formula1>${escapeXml(formula)}</formula1></dataValidation>`);
+  }
+  return out.length ? `<dataValidations count="${out.length}">${out.join('')}</dataValidations>` : '';
+}
+
 function sheetXml(sheet: SheetData, selected: boolean, styles: StyleTable, strings: StringTable): string {
   // Rows, then cells within each row, in order: Excel insists.
   const byRow = new Map<number, [number, CellData][]>();
@@ -1304,8 +1390,11 @@ function sheetXml(sheet: SheetData, selected: boolean, styles: StyleTable, strin
     parts.push(`<mergeCells count="${merges.length}">${merges
       .map((m) => `<mergeCell ref="${cellName(m.r1, m.c1)}:${cellName(m.r2, m.c2)}"/>`).join('')}</mergeCells>`);
   }
-  // After mergeCells and before pageMargins: the order the schema requires.
+  // After mergeCells and before pageMargins: the order the schema requires
+  // (conditionalFormatting, then dataValidations).
   parts.push(...(sheet.rules ?? []).map((rule, i) => colourRuleXml(rule, i + 1, styles)).filter((x) => x !== ''));
+  const lists = dropdownsXml(sheet.dropdowns ?? []);
+  if (lists) parts.push(lists);
   parts.push('<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>');
   return parts.join('');
 }
