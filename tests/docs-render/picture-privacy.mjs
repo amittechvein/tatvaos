@@ -148,5 +148,18 @@ out('new_gps', now.gps); out('new_exif', now.exif); out('new_xmp', now.xmp); out
 out('new_orientation', now.orientation); out('new_size', now.size);
 
 // ---- 5. the whole PDF ---------------------------------------------------------
+// The photo's metadata block headers are looked for IN THE PICTURE's bytes.
+// The PDF as a whole legitimately carries ONE XMP packet of its own — the
+// document's metadata (creator tool, dates) that Typst writes for PDF/A-style
+// readers — so a whole-file search for the XMP namespace finds that, not the
+// photo's (first CI run, 9 Oct 2026: 1 header found, the picture clean). Its
+// content is checked instead: no location field in it or anywhere else.
+const headers = { exif: 'Exif\0\0', xmp: 'http://ns.adobe.com/xap/1.0/', iptc: 'Photoshop 3.0', '8bim': '8BIM' };
+const picture = readFileSync(join(dir, 'new.jpg'));
+out('new_picture_block_headers', Object.values(headers).filter((m) => holds(picture, m)).length);
+out('new_pdf_block_headers_found', Object.entries(headers).filter(([, m]) => holds(pdf, m)).map(([k]) => k).join('+') || 'none');
+out('old_pdf_block_headers_found', Object.entries(headers).filter(([, m]) => holds(oldPdf, m)).map(([k]) => k).join('+') || 'none');
 out('new_markers', [MARK.exif, MARK.xmp, MARK.iptc].filter((m) => holds(pdf, m)).length);
-out('new_block_headers', ['Exif\0\0', 'http://ns.adobe.com/xap/1.0/', 'Photoshop 3.0', '8BIM'].filter((m) => holds(pdf, m)).length);
+// Location by name, anywhere in the PDF: EXIF/XMP GPS tags and IPTC's location fields.
+out('new_location_fields', ['GPSLatitude', 'GPSLongitude', 'exif:GPS', 'photoshop:City', 'Iptc4xmpCore:Location'].filter((m) => holds(pdf, m)).length);
+out('old_location_fields', ['GPSLatitude', 'GPSLongitude', 'exif:GPS', 'photoshop:City', 'Iptc4xmpCore:Location'].filter((m) => holds(oldPdf, m)).length);

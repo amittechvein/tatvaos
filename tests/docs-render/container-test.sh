@@ -357,7 +357,9 @@ same "new path: the picture in the PDF has NO GPS field of any kind" "$(pv new_g
 same "…no EXIF, no XMP, no IPTC" "$(pv new_exif) $(pv new_xmp) $(pv new_iptc)" "false false false"
 same "…and it is UPRIGHT: turned before the strip (200x400, no orientation tag)" "$(pv new_size) $(pv new_orientation)" "200x400 none"
 same "the whole PDF holds none of the three location markers" "$(pv new_markers)" 0
-same "…and no EXIF, XMP or IPTC block header" "$(pv new_block_headers)" 0
+same "the picture's own bytes hold no EXIF, XMP or IPTC block at all" "$(pv new_picture_block_headers)" 0
+same "RED FIRST — the old PDF names location fields (GPSLatitude, exif:GPS…)" "$( [ "$(pv old_location_fields)" -ge 1 ] && echo yes || echo no)" yes
+same "the new PDF names no location field anywhere (its own document XMP included)" "$(pv new_location_fields)" 0
 
 echo
 echo "  passed: $pass   failed: $fail"
