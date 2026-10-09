@@ -331,6 +331,8 @@ export default function PeoplePage() {
 
 interface PendingCounts {
   pending: number; toSend: number; signInLinks: number; invitations: number;
+  /** One press reaches at most this many (20); the rest wait for the next. */
+  perPress: number; waiting: number;
   skipped: {
     linkStillWorks: number; noRecoveryEmail: number; unconfirmedEmail: number; onHold: number;
     owners: number; yourself: number;
@@ -411,6 +413,14 @@ function SendToPending({ onClose, onSent }: {
               ? 'There is nobody to send to.'
               : `${people(counts.toSend)} will be sent a link.`}
           </p>
+          {counts.waiting > 0 && (
+            // The per-press limit (Mr. Singh's condition, Amit's twenty): say
+            // plainly that this press does not reach everybody.
+            <Alert tone="info" className="mb-3">
+              One press sends to at most {counts.perPress}. {people(counts.waiting)}{' '}
+              {counts.waiting === 1 ? 'is' : 'are'} waiting and will be offered on the next press.
+            </Alert>
+          )}
           <ul className="mb-3 text-sm text-ink-muted list-disc pl-5">
             {counts.signInLinks > 0 && (
               <li>{people(counts.signInLinks)}: a sign-in link, which works for 24 hours.
