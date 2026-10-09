@@ -181,7 +181,7 @@ function SetDialog({ employeeId, kind, replacing, onClose, onSaved }: {
              <Button variant="primary" onClick={() => void save()} disabled={busy || !value.trim()}>Save</Button>
            </>}>
       {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
-      {replacing && <p className="mb-3 text-[0.8125rem] text-ink-muted">The old number is replaced, and "original seen" is cleared until HR sees the new one.</p>}
+      {replacing && <p className="mb-3 text-[0.8125rem] text-ink-muted">The old number is replaced, and &ldquo;original seen&rdquo; is cleared until HR sees the new one.</p>}
       <Field label={KIND_LABEL[kind]} required hint={hint}>
         <Input aria-label={KIND_LABEL[kind]} value={value} onChange={(e) => setValue(e.target.value)}
                autoComplete="off" spellCheck={false} inputMode={kind === 'pan' ? 'text' : 'numeric'} />
