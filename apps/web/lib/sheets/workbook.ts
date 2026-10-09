@@ -10,6 +10,7 @@
 
 import type { Rect } from './engine/address';
 import type { Scalar } from './engine/types';
+import type { ColourRule } from './rules';
 
 export type BorderStyle = 'thin' | 'medium' | 'thick' | 'dashed' | 'dotted' | 'double';
 export interface BorderSide { style: BorderStyle; color: string }
@@ -56,6 +57,8 @@ export interface SheetData {
   frozenCols: number;
   tabColor?: string;
   hidden?: boolean;
+  /** Colour rules (conditional formatting), first match wins. Absent = none. See rules.ts. */
+  rules?: (Rect & ColourRule)[];
 }
 
 export interface WorkbookData {
