@@ -181,7 +181,14 @@ same "hr's and ghost's eight unfinished jobs cancelled" "$(bd "$r" | J "d['jobsC
 case "$(bd "$r")" in *"Manage domain-wide delegation"*) pass "...and the admin is told how to remove it in Google";; *) fail "no removal instructions";; esac
 same "amit's finished jobs stay finished" "$(PG "SELECT string_agg(DISTINCT state, ',') FROM migration.jobs WHERE source_user='amit@techvein.local'")" "completed"
 same "starting anything now: 409" "$(st "$(call POST /start "$OWNER" '{}')")" "409"
-same "the runner sees no organisation to work for" "$(PG "SELECT count(*) FROM migration.job_tenants()")" "0"
+# A job put back to pending BY HAND after the revoke - the stray a bug or a
+# hand fix could leave. With every job finished or cancelled, "no organisation
+# to work for" would be true whatever the grant check did; this makes the
+# grant the only thing that can keep the runner off it.
+PG "UPDATE migration.jobs SET state='pending', finished_at=NULL, next_attempt_at=now() WHERE source_user='hr@techvein.local' AND data_type='contacts'" >/dev/null
+same "a pending job after the revoke: the runner sees no organisation to work for" "$(PG "SELECT count(*) FROM migration.job_tenants()")" "0"
+sleep 4
+same "...and does not take it" "$(PG "SELECT state || ' ' || (started_at IS NULL) FROM migration.jobs WHERE source_user='hr@techvein.local' AND data_type='contacts'")" "pending true"
 same "an employee is refused the progress page" "$(st "$(call GET /people "$EMP")")" "403"
 grep -q "Migration sweep failed" "$SCRATCH/api.log" && fail "the runner logged a sweep failure" || pass "the runner logged no sweep failure"
 
