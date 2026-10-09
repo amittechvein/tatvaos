@@ -600,7 +600,7 @@ jobs:
         run: bash tests/docs/run-docs-live.sh
 
       # As production runs it: switch-on refused until Sheets' own server build.
-      - name: "Sheets switch: refused before its server build"
+      - name: "Sheets switch: as production runs it, after the server build"
         env:
           Sheets__RefuseSwitchOnInDevelopment: 'true'
           DOCS_TEST: tests/sheets/sheets-switch-production.test.mjs
