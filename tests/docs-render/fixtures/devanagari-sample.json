@@ -1,0 +1,112 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "heading",
+      "attrs": {
+        "level": 1
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "देवनागरी नमूना — Devanagari sample"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "विद्यालय की वार्षिक फ़ीस ₹50,000 है।"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "कृपया प्रत्येक छात्र अपना परिचय-पत्र साथ लाए।"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "श्रद्धा क्षमा त्रिशूल ज्ञान द्वार स्वागत"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "धर्म कार्य पूर्ण वर्ष आशीर्वाद"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "किताब हिन्दी निकट सिद्धि"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "राष्ट्र उद्घाटन शुद्ध विट्ठल"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "महाराष्ट्र राज्य शिक्षण मंडळ, पुणे"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "शाळेची वेळ सकाळी ९ ते दुपारी २ आहे."
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "ऱ्या ॲप झाडे"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "महत्वपूर्ण सूचना",
+          "marks": [
+            {
+              "type": "bold"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -36,6 +36,13 @@ public static class AiCredits
         "mail.summary" => 2,
         "mail.triage" => 1,
         "connect.minutes" => 5,
+        // Docs AI, per action (Amit, 3 Oct 2026, taking Mr. Singh's 1 / 1 / 1 / 5).
+        // Write with AI is the one that produces new text at length.
+        "docs.summarize" => 1,
+        "docs.rewrite" => 1,       // Improve, Shorten, Expand, Formal, Simpler
+        "docs.translate" => 1,
+        "docs.write" => 5,
+        "docs" => 1,               // the single label used before 3 Oct 2026; kept so old rows price as charged
         "platform.probe" => 0,        // the operator's own health check
         _ => 1,
     };

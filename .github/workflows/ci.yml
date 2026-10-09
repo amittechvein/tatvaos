@@ -351,6 +351,34 @@ jobs:
       - name: "MFA: recovery codes are 80 bits, stored hashed, used once"
         run: bash tests/mfa/test-recovery-codes.sh
 
+      # Connect's tenantless paths, walked (decision 0007): every entry point
+      # that starts with no session and finds the organisation some other way.
+      # Mr. Singh, 1 Oct 2026 (PR 340 review): "add the Connect isolation
+      # tests to CI. All of them ... A test suite that never runs in CI is a
+      # suite that passes on the laptop until someone forgets to run it."
+      # Each starts, and stops, its own API on its own port (5087, 5103-5105).
+      - name: "Connect isolation: every read of a meeting is filtered"
+        run: bash tests/connect-isolation/test-meeting-filter-paths.sh
+
+      - name: "Connect isolation: the anonymous recording-share link"
+        run: bash tests/connect-isolation/test-recording-share-link.sh
+
+      - name: "Connect isolation: the ticketed download and the screen-share event"
+        run: bash tests/connect-isolation/test-ticket-and-screenshare.sh
+
+      # The real notes worker over two organisations, reading the minutes it
+      # mails from the SMTP sink. The sink is started only if nothing is
+      # listening yet: the 0009 step starts one too, and a second would fail
+      # to bind while the first kept answering. ~3 minutes (the worker waits a
+      # minute after start and ticks every minute).
+      - name: "Connect isolation: the minutes worker, two organisations"
+        run: |
+          if ! curl -s -o /dev/null http://127.0.0.1:5198/mail; then
+            node tests/support/smtp-sink.mjs > /tmp/smtp-sink-connect.out 2>&1 &
+          fi
+          for _ in $(seq 1 20); do curl -s -o /dev/null http://127.0.0.1:5198/mail && break; sleep 0.5; done
+          bash tests/connect-isolation/test-minutes-worker.sh
+
       - name: Install the web app's TypeScript (for the PiP check)
         run: pnpm install --frozen-lockfile
 
@@ -447,6 +475,27 @@ jobs:
       # running on the runner, so the script leaves it as it found it.
       - name: "Render container: no internet, no database, API only, non-root, read-only, limits"
         run: bash tests/docs-render/container-test.sh
+
+      # Decision 0011 condition 2 (Typst approved by Mr. Singh, 1 Oct 2026, with
+      # four conditions): the PDF gate, in the render container's own limits.
+      # Text = the server's text; document text never becomes Typst code (red
+      # first); a locked root; shaping equal to HarfBuzz's for every Indian
+      # script; inside the time and memory caps.
+      - name: "PDF gate: Typst, data never markup, shaping, limits"
+        env:
+          PDF_GATE_OUT: ${{ runner.temp }}/pdf-gate
+        run: bash tests/docs-render/pdf-gate.sh
+
+      # The sample PDFs, for the people who check a script by reading it
+      # (Amit, 1 Oct 2026: a script is switched on only after a reader checks).
+      - name: "PDF gate: keep the sample PDFs"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-gate-samples
+          path: ${{ runner.temp }}/pdf-gate/*.pdf
+          retention-days: 14
+          if-no-files-found: ignore
 
   mail-stack:
     name: Mail stack
@@ -548,7 +597,7 @@ jobs:
         run: bash tests/docs/run-docs-live.sh
 
       # As production runs it: switch-on refused until Sheets' own server build.
-      - name: "Sheets switch: refused before its server build"
+      - name: "Sheets switch: as production runs it, after the server build"
         env:
           Sheets__RefuseSwitchOnInDevelopment: 'true'
           DOCS_TEST: tests/sheets/sheets-switch-production.test.mjs

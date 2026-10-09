@@ -252,24 +252,10 @@ $$;
 REVOKE ALL ON FUNCTION connect.minutes_unreachable(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION connect.minutes_unreachable(uuid) TO tatvaos_app;
 
--- The chat for a meeting, read by the worker before a tenant is set.
-CREATE OR REPLACE FUNCTION connect.meeting_chat_lines(p_meeting uuid)
-RETURNS TABLE (display_name text, is_guest boolean, body text, sent_at timestamptz)
-LANGUAGE sql
-SECURITY DEFINER
-SET search_path = connect, pg_catalog
-AS $$
-    SELECT c.display_name, c.is_guest, c.body, c.sent_at
-      FROM connect.meeting_chat c
-     WHERE c.meeting_id = p_meeting
-     ORDER BY c.sent_at, c.id
-     -- A cap, because this ends up in an email. Beyond this the minutes link
-     -- to the meeting rather than carrying the whole log.
-     LIMIT 500;
-$$;
-
-REVOKE ALL ON FUNCTION connect.meeting_chat_lines(uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION connect.meeting_chat_lines(uuid) TO tatvaos_app;
+-- connect.meeting_chat_lines was REMOVED on 28 Sept 2026: nothing called it, and a definer
+-- nothing calls is only a way past every isolation layer (decision 0007's
+-- definer review). 20260928-e-connect-drop-unused-definers.sql drops it
+-- from databases that still have it. Do not bring it back without a caller.
 
 DO $$
 BEGIN
