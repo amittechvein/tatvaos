@@ -15,6 +15,7 @@ import * as Device from "./device";
 import { api, LoginAnswer, School } from "./api";
 import { forget as forgetBiometric } from "./biometric";
 import { clear as clearOffline } from "./offline";
+import { clear as clearAttendanceQueue } from "./attendanceQueue";
 
 export type Account = {
   id: string; // `${schoolCode}_${userId}`: also the secure-storage key suffix
@@ -146,6 +147,7 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
       await SecureStore.deleteItemAsync(tokenKey(target)).catch(() => {});
       await forgetBiometric(target);
       await clearOffline(target);
+      await clearAttendanceQueue(target);
       setTokens(({ [target]: _gone, ...rest }) => rest);
       const left = accounts.filter((a) => a.id !== target);
       await persist(left, target === activeId ? left[0]?.id ?? null : activeId);

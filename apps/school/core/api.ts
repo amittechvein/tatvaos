@@ -27,12 +27,15 @@ export class ApiError extends Error {
   code?: string;
   triesLeft?: number;
   retryAfter?: number;
-  constructor(message: string, status: number, extra: { code?: string; triesLeft?: number; retryAfter?: number } = {}) {
+  /** A refused attendance save (409 CHANGED): who saved the newer version, and when. */
+  changed?: { byId: number | null; by: string | null; at: string | null };
+  constructor(message: string, status: number, extra: { code?: string; triesLeft?: number; retryAfter?: number; changed?: ApiError["changed"] } = {}) {
     super(message);
     this.status = status;
     this.code = extra.code;
     this.triesLeft = extra.triesLeft;
     this.retryAfter = extra.retryAfter;
+    this.changed = extra.changed;
   }
   /** The token is missing, expired, ended or for another school: sign in again. */
   get signedOut() {
@@ -98,6 +101,7 @@ export async function call<T = any>(host: string, path: string, opts: Options = 
       code: json?.code,
       triesLeft: typeof json?.triesLeft === "number" ? json.triesLeft : undefined,
       retryAfter: typeof json?.retryAfter === "number" ? json.retryAfter : undefined,
+      changed: json?.code === "CHANGED" ? { byId: json.changedById ?? null, by: json.changedBy ?? null, at: json.changedAt ?? null } : undefined,
     });
   }
   return json as T;
@@ -129,6 +133,41 @@ export async function callForm<T = any>(host: string, path: string, token: strin
 // ---- Shapes, as the backend sends them (mobile-v1.md) ----
 
 export type School = { code: string; name: string; city: string | null; logoUrl: string | null; host: string };
+
+// Teachers: student attendance (Phase 2, FR-T02). Statuses are the website's: PRESENT, ABSENT, LATE;
+// approved leave is ABSENT with the leave filled in.
+export type AttendanceMark = "PRESENT" | "ABSENT" | "LATE";
+export type StaffSection = {
+  id: number;
+  className: string;
+  section: string;
+  students: number;
+  today: { present: number; absent: number; late: number; savedAt: string } | null;
+};
+export type RosterRow = {
+  student_profile_id: number;
+  first_name: string;
+  last_name: string | null;
+  admission_no: string | null;
+  roll_number: string | number | null;
+  status: AttendanceMark;
+  remark: string | null;
+  leave_application_id: number | null;
+  leave_type_name: string | null;
+};
+export type Roster = {
+  date: string;
+  day_status: { status: "WORKING" | "HOLIDAY" | "CLOSED" | "OUT_OF_ACADEMIC_YEAR" | string; title?: string; remark?: string };
+  session: { updated_at: string; marker_name: string | null } | null;
+  lock_status: { is_locked: boolean; can_edit: boolean; lock_reason: string };
+  roster: RosterRow[];
+};
+export type AttendanceSave = {
+  section_id: number;
+  attendance_date: string;
+  based_on: string | null;
+  records: { student_profile_id: number; status: AttendanceMark; remark?: string | null; leave_application_id?: number | null }[];
+};
 
 export type OtpLoginChoice = { id: number; name: string; role: "STUDENT" | "EMPLOYEE" | "ADMIN"; detail: string };
 export type OtpLoginAnswer = { choose: true; token: string; accounts: OtpLoginChoice[] };
@@ -222,6 +261,13 @@ export const api = {
       method: "POST",
       body: { token, userId, device: { platform: PLATFORM, appVersion: APP_VERSION, name: deviceName } },
     }),
+
+  staffSections: (host: string, token: string) =>
+    call<{ data: { date: string; sections: StaffSection[] } }>(host, "/api/mobile/v1/staff/attendance/sections", { token }).then((r) => r.data),
+  staffRoster: (host: string, token: string, sectionId: number, date: string) =>
+    call<{ data: Roster }>(host, "/api/mobile/v1/staff/attendance/roster", { token, query: { section_id: sectionId, date } }).then((r) => r.data),
+  saveAttendance: (host: string, token: string, body: AttendanceSave) =>
+    call(host, "/api/mobile/v1/staff/attendance", { method: "POST", token, body: { ...body, device_name: "TatvaOS School app" } }),
 
   bootstrap: (host: string, token: string) => call<{ data: Bootstrap }>(host, "/api/mobile/v1/bootstrap", { token }).then((r) => r.data),
   attendance: (host: string, token: string, month: string) =>

@@ -5,7 +5,7 @@
 import * as SecureStore from "expo-secure-store";
 
 /** The only screens that keep an offline copy. */
-export const OFFLINE_SCREENS = new Set(["bootstrap", "attendance", "fees", "timetable", "homework-pages", "notice-pages", "calendar", "leaves"]);
+export const OFFLINE_SCREENS = new Set(["bootstrap", "attendance", "fees", "timetable", "homework-pages", "notice-pages", "calendar", "leaves", "staff-sections", "staff-roster"]);
 const MAX_CHARS = 60_000;
 
 const safe = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120);

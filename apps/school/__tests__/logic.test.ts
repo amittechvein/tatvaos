@@ -183,3 +183,55 @@ describe("a tapped push opens the right child (B-04)", () => {
     [undefined, null],
   ])("%j → %s", (data, id) => expect(accountIdFor(data as never)).toBe(id));
 });
+
+describe("attendance saved offline, sent later (SRS section 8)", () => {
+  const Q = require("../core/attendanceQueue") as typeof import("../core/attendanceQueue");
+  const { ApiError: E } = require("../core/api") as typeof import("../core/api");
+  const item = (section: number, at = 1) => ({ save: { section_id: section, attendance_date: "2026-10-09", based_on: null, records: [] }, label: `S${section}`, queuedAt: at });
+
+  it("sends each waiting save; stops at the first lost connection and keeps the rest", async () => {
+    const calls: number[] = [];
+    const out = await Q.sendAll([item(1), item(2), item(3)], async (s) => {
+      calls.push(s.section_id);
+      if (s.section_id === 2) throw new E("No internet", 0);
+    }, 7);
+    expect(calls).toEqual([1, 2]);
+    expect(out.map((o) => o.kind)).toEqual(["sent", "kept", "kept"]);
+  });
+
+  it("keeps someone else's newer save and says who; my own earlier save counts as sent", async () => {
+    const out = await Q.sendAll([item(1), item(2)], async (s) => {
+      throw new E("changed", 409, { code: "CHANGED", changed: { byId: s.section_id === 1 ? 3 : 7, by: s.section_id === 1 ? "School Admin" : "Me", at: "2026-10-09T04:30:00Z" } });
+    }, 7);
+    expect(out[0]).toMatchObject({ kind: "theirs", by: "School Admin" });
+    expect(out[1].kind).toBe("sent");
+  });
+
+  it("drops a save the school refuses (a locked day) with its message", async () => {
+    const out = await Q.sendAll([item(1)], async () => { throw new E("This day is locked.", 403); }, 7);
+    expect(out[0]).toMatchObject({ kind: "refused", message: "This day is locked." });
+  });
+
+  it("one waiting save per section and day: a newer one replaces it; flush keeps only what is still waiting", async () => {
+    await Q.clear("acc");
+    await Q.enqueue("acc", item(1, 1));
+    await Q.enqueue("acc", item(1, 2));
+    await Q.enqueue("acc", item(2, 3));
+    expect((await Q.read("acc")).map((q) => q.queuedAt)).toEqual([2, 3]);
+    await Q.flush("acc", async (s) => { if (s.section_id === 2) throw new E("No internet", 0); }, 7);
+    expect((await Q.read("acc")).map((q) => q.save.section_id)).toEqual([2]);
+  });
+});
+
+describe("days and times for attendance", () => {
+  const { addDays, timeIndia } = require("../core/format") as typeof import("../core/format");
+  it("moves across months and years", () => {
+    expect(addDays("2026-10-01", -1)).toBe("2026-09-30");
+    expect(addDays("2026-12-31", 1)).toBe("2027-01-01");
+  });
+  it("shows a saved time in India time", () => {
+    expect(timeIndia("2026-10-09T03:35:00Z")).toBe("9:05 am");
+    expect(timeIndia("2026-10-09T08:00:00Z")).toBe("1:30 pm");
+    expect(timeIndia(null)).toBe("");
+  });
+});
