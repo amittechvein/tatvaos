@@ -128,6 +128,7 @@ public sealed class GoogleEndpoints
     public Uri Drive { get; init; } = new("https://www.googleapis.com/drive/v3/");
     public Uri Directory { get; init; } = new("https://admin.googleapis.com/admin/directory/v1/");
     public Uri People { get; init; } = new("https://people.googleapis.com/v1/");
+    public Uri Calendar { get; init; } = new("https://www.googleapis.com/calendar/v3/");
 }
 
 /// <summary>A Google API call that failed for good. Never carries a token.</summary>
