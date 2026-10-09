@@ -480,6 +480,16 @@ builder.Services.AddHostedService<RecoveryHoldWorker>();
 // organisation has switched sorting on; see the worker's header for its limits.
 builder.Services.AddHostedService<MailTriageWorker>();
 
+// Google Workspace migration (docs/GOOGLE_MIGRATION_DESIGN.md, phase 0): the
+// resumable job runner. OFF unless Migration:Runner is "on". Sources register
+// per (source, data type); only the Development-only synthetic one exists yet.
+// tests/migration/test-job-runner.sh kills it mid-run and watches it resume.
+builder.Services.AddScoped<TatvaOS.Api.Modules.Migration.MigrationJobRunner>();
+foreach (var dataType in new[] { "mail", "contacts", "calendar", "drive" })
+    builder.Services.AddSingleton<TatvaOS.Api.Modules.Migration.IMigrationSource>(sp =>
+        new TatvaOS.Api.Modules.Migration.SyntheticSource(dataType, sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddHostedService<MigrationJobWorker>();
+
 // iMIP: what Mail's ingest calls when a delivered message carries a calendar
 // reply (docs/MAIL_IMIP_SEAM.md §4). Scoped, because it runs inside the
 // ingest worker's own scope and reads its TenantContext and DbContext.
