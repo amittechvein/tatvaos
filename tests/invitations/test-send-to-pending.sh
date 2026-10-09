@@ -185,6 +185,10 @@ make() { # make LOCALPART NAME EXTRA_JSON -> id
     local r; r=$(post "/api/org/users" "{\"localPart\":\"$1\",\"displayName\":\"$2\",\"domainId\":\"$DOMAIN_ID\"$3}" "$OWNER")
     local id; id=$(PG "SELECT id FROM core.users WHERE email='$1@techvein.local'")
     [ -n "$id" ] || { fail "could not create $1: $(body "$r" | head -c 200)"; exit 1; }
+    # Decision 0009: a sign-in link goes only to a CONFIRMED recovery email.
+    # Everyone made here with one has it confirmed, as a person opening the
+    # confirmation link would; step 1b takes A's away to prove the refusal.
+    PG "UPDATE core.users SET recovery_email_verified_at=now() WHERE id='$id' AND recovery_email IS NOT NULL" >/dev/null
     MADE="${MADE:+$MADE,}'$id'"
     printf "%s" "$id"
 }
@@ -203,11 +207,7 @@ MADE="'$A','$B','$C','$D','$E','$F'"
 same "six people made" "$(PG "SELECT count(*) FROM core.users WHERE id IN ($MADE)")" "6"
 same "...all of them pending" "$(PG "SELECT count(*) FROM core.users WHERE id IN ($MADE) AND status='pending'")" "6"
 same "...and the owner among them IS an owner" "$(col "$F" role)" "org_owner"
-# Decision 0009: a sign-in link goes only to a CONFIRMED recovery email. The
-# people meant to be eligible have theirs confirmed here, as a person opening
-# the confirmation link would; step 1b takes A's away to prove the refusal.
-PG "UPDATE core.users SET recovery_email_verified_at=now() WHERE id IN ('$A','$C','$E','$F')" >/dev/null
-same "...four recovery emails confirmed" "$(PG "SELECT count(*) FROM core.users WHERE id IN ($MADE) AND recovery_email_verified_at IS NOT NULL")" "4"
+same "...the five with a recovery email have it confirmed (make)" "$(PG "SELECT count(*) FROM core.users WHERE id IN ($MADE) AND recovery_email_verified_at IS NOT NULL")" "5"
 PG "UPDATE core.users SET status='active' WHERE id='$E'" >/dev/null
 # B was invited when made; that mail is not this test's subject. Expire B's
 # link so the press has something to do for B, and arm C with one that works.
