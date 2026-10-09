@@ -191,6 +191,10 @@ CREATE POLICY tenant_isolation ON migration.items
 
 -- ---- migration.job_tenants() ----------------------------------------------
 --
+--  SUPERSEDED on every deploy by 20261009-z-migration-grants.sql, which
+--  re-creates it requiring an active Google grant (decision 0019 §1). Kept
+--  here so this file builds on its own; change the later one.
+--
 --  Which organisations have a job the runner could claim now: pending and due,
 --  or running with a lease that has expired (its runner died). Live
 --  organisations only - a suspended organisation's migration waits.

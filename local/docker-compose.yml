@@ -169,6 +169,10 @@ services:
       # easy to miss is whichever one you are not looking at.
       - ./dovecot/dovecot-sql-app.conf.ext:/etc/dovecot/dovecot-sql-app.conf.ext.tmpl:ro
       - vmail:/var/mail/vhosts
+      # The Google migration's master login (decision 0019 §2): master.passwd
+      # (Dovecot's, empty = off) and master.password (the API's). BOTH compose
+      # files - see the note above about the one you are not looking at.
+      - migration-master:/etc/dovecot/migration
     networks: [mailnet]
 
   # --------------------------------------------------------------------------
@@ -242,6 +246,7 @@ networks:
     driver: bridge
 
 volumes:
+  migration-master:
   dkimkeys:
   pgdata:
   roundcubedata:

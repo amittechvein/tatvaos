@@ -165,6 +165,10 @@ services:
       - ../../local/dovecot/dovecot-sql.conf.ext:/etc/dovecot/dovecot-sql.conf.ext.tmpl:ro
       - ../../local/dovecot/dovecot-sql-app.conf.ext:/etc/dovecot/dovecot-sql-app.conf.ext.tmpl:ro
       - vmail:/var/mail/vhosts
+      # The Google migration's master login (decision 0019 §2): master.passwd
+      # (Dovecot's, empty = off) and master.password (the API's). BOTH compose
+      # files - see the note above about the one you are not looking at.
+      - migration-master:/etc/dovecot/migration
       # The mail edge certificate — see the mailcerts volume note above.
       - mailcerts:/certs:ro
     networks: [mailnet]
@@ -214,7 +218,16 @@ services:
       #     sh -c 'chown 1000:5000 /r && chmod 2775 /r'
       # connect-recording-verify.sh checks this and says so if it is missing.
       - connectrec:/var/lib/connect/recordings
+      # The Google migration (decision 0019, proposed). READ-ONLY: the master
+      # password infra/scripts/migration-master.sh writes, for signing in to
+      # mailboxes as "person*migration". And TatvaOS's Google key - a FILE in
+      # /srv/tatvaos-secrets, never in .env (backup.sh copies .env verbatim).
+      # Either missing = that part of the migration stays off.
+      - migration-master:/run/migration:ro
+      - /srv/tatvaos-secrets/google:/run/google:ro
     environment:
+      Migration__Imap__MasterPasswordFile: /run/migration/master.password
+      Migration__Google__KeyFile: ${MIGRATION_GOOGLE_KEY_FILE:-}
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-tatvaos_mail};Username=tatvaos_app;Password=${APP_DB_PASSWORD:?APP_DB_PASSWORD must be set};Pooling=true"
       # Docs' file is built by the render service (below), on rendernet.
       Docs__RenderUrl: http://render:8080
@@ -736,6 +749,7 @@ networks:
     internal: true
 
 volumes:
+  migration-master:
   # TLS material for the mail edge (SMTP submission + IMAPS). Populated by
   # deploy.sh from caddydata — Caddy already earns and renews the
   # mail.tatvaos.com certificate for the webmail door, and the mail edge

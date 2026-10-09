@@ -33,13 +33,19 @@ public sealed class GoogleServiceAccount : IDisposable
     public string? KeyId { get; }
     /// <summary>Where tokens are requested. Google's, unless a test says otherwise.</summary>
     public string TokenUri { get; }
+    /// <summary>
+    /// The numeric client ID. NOT secret: it is what a customer's admin pastes
+    /// into the Admin console to grant domain-wide delegation (decision 0019 §1).
+    /// </summary>
+    public string? ClientId { get; }
 
-    private GoogleServiceAccount(RSA key, string clientEmail, string? keyId, string tokenUri)
+    private GoogleServiceAccount(RSA key, string clientEmail, string? keyId, string tokenUri, string? clientId)
     {
         _key = key;
         ClientEmail = clientEmail;
         KeyId = keyId;
         TokenUri = tokenUri;
+        ClientId = clientId;
     }
 
     /// <summary>
@@ -76,7 +82,7 @@ public sealed class GoogleServiceAccount : IDisposable
             throw new GoogleKeyFormatException("the key's private_key is not a readable RSA key");
         }
 
-        return new GoogleServiceAccount(rsa, email, Str("private_key_id"), Str("token_uri") ?? DefaultTokenUri);
+        return new GoogleServiceAccount(rsa, email, Str("private_key_id"), Str("token_uri") ?? DefaultTokenUri, Str("client_id"));
     }
 
     internal byte[] SignRs256(byte[] data) =>

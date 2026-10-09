@@ -101,7 +101,15 @@ var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<str
     ["Migration:Imap:Host"] = host, ["Migration:Imap:Port"] = port.ToString(),
     ["Migration:Mail:FolderRoot"] = root, ["Migration:Mail:PageSize"] = "4",
 }).Build();
-var source = new GmailMailSource(new GmailClient(api), new OneAccount(account), new OneLogin(Person, password),
+// MAIL_MASTER_FILE set: sign in the way production would (decision 0019 §2),
+// as "amit@techvein.local*migration" with the master password from that file.
+// tests/migration-mail/test-master-login.sh runs it so.
+var masterFile = Environment.GetEnvironmentVariable("MAIL_MASTER_FILE");
+var login = masterFile is { Length: > 0 }
+    ? new OneLogin($"{Person}*migration", File.ReadAllText(masterFile).Trim())
+    : new OneLogin(Person, password);
+Console.WriteLine(masterFile is { Length: > 0 } ? "  signing in as the migration MASTER user" : "  signing in as the person");
+var source = new GmailMailSource(new GmailClient(api), new OneAccount(account), login,
     new DovecotAppender(config), config);
 var job = new MigrationJobView(Guid.NewGuid(), Guid.NewGuid(), "google_workspace", "mail", "alice@customer.test",
     Guid.NewGuid(), null, null, 0);
@@ -259,7 +267,7 @@ sealed class OneAccount(GoogleServiceAccount a) : IGoogleCredentialProvider
 sealed class OneLogin(string user, string password) : IMigrationMailboxLogin
 {
     public Task<MailboxLogin> ForAsync(Guid tenantId, Guid targetUserId, CancellationToken ct) =>
-        Task.FromResult(new MailboxLogin(user, user, password));
+        Task.FromResult(new MailboxLogin(user.Split('*')[0], user, password));
 }
 
 // A fake Gmail: eight messages over two pages of four, raw, with labels.
