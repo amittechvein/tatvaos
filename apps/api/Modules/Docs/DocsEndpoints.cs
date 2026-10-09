@@ -90,8 +90,9 @@ public static class DocsEndpoints
         // route refuses the other kind. Both set RenderedSeq when they write,
         // so docs.browser_written_count (the switch-on guard) treats a
         // server-built spreadsheet exactly as a server-built document. Sheets
-        // still cannot be switched on until SheetsSwitch.ServerRenderLanded
-        // is set true, in its own pull request after deploy and production checks.
+        // could not be switched on until SheetsSwitch.ServerRenderLanded was
+        // set true, in its own pull request after deploy and production checks
+        // (done 8 Oct 2026, after round two's deploy).
         var s = app.MapGroup("/api/sheets")
             .RequireAuthorization("User")
             .WithTags("Sheets");
