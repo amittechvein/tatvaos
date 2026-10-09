@@ -142,6 +142,14 @@ jobs:
       - name: "Tenancy check: every tenant-owned entity has a query filter"
         run: dotnet run --project tests/tenant-filters
 
+      # The Google client (migration design 3.1) against a fake Google behind
+      # its own HttpClient: the signed JWT verifies against the public key,
+      # writable scopes are refused before anything is sent, throttling is
+      # retried and gives up, no token reaches an exception. No network, no
+      # database, no Google account.
+      - name: "Google check: tokens, scopes, retries, and no token in an error"
+        run: dotnet run --project tests/google-client
+
       # Every AI entry point asks AiGate before sending, and every AI feature
       # label has an organisation list (Mr. Singh, 30 Sept 2026, after a
       # customer used Mail AI before its privacy text existed). Source scan,
