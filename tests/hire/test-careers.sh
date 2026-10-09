@@ -39,8 +39,28 @@ SCRATCH="$ROOT/.tmp/careers-$$"
 mkdir -p "$SCRATCH"
 LOG="$SCRATCH/api.log"
 
+TDB_USED=""
 WSL_KEEPALIVE=""
-if [ -z "${TATVAOS_PSQL:-}" ]; then
+# House rule 13 (Mr. Singh, 29 Sept 2026): with no database given, this run
+# builds its OWN, applies every migration to it twice, and drops it at the
+# end - so another session's leftovers in the shared local database can make
+# it neither pass nor fail (converted 9 Oct 2026; it predated the rule). Set
+# TATVAOS_PGDATABASE to use a named database instead, as before; CI passes
+# TATVAOS_PSQL and is unchanged.
+if [ -z "${TATVAOS_PSQL:-}" ] && [ -z "${TATVAOS_PGDATABASE:-}" ]; then
+    # shellcheck source=../lib/throwaway-db.sh
+    source "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/throwaway-db.sh"
+    tdb_create hirecareers || exit 2
+    TDB_USED=1
+    DB="$TDB_NAME"
+    TATVAOS_PG_HOST="$TDB_HOST"
+    if [ "${TDB__MODE:-}" = wsl ]; then
+        TATVAOS_PSQL_APP="${TATVAOS_PSQL_APP:-wsl -e psql postgresql://tatvaos_app:dev_app_pw@localhost/$TDB_NAME -Atc}"
+    else
+        TATVAOS_PSQL_APP="${TATVAOS_PSQL_APP:-psql postgresql://tatvaos_app:dev_app_pw@localhost/$TDB_NAME -Atc}"
+    fi
+    printf '  database: %s (throwaway)\n' "$TDB_NAME"
+elif [ -z "${TATVAOS_PSQL:-}" ]; then
     if command -v wsl >/dev/null 2>&1; then
         wsl -e sleep 3600 >/dev/null 2>&1 &
         WSL_KEEPALIVE=$!
@@ -116,6 +136,8 @@ cleanup() {
         kill "$API_PID" >/dev/null 2>&1 || true; wait "$API_PID" 2>/dev/null || true
     fi
     [ -n "$WSL_KEEPALIVE" ] && kill "$WSL_KEEPALIVE" >/dev/null 2>&1
+    # After the API has stopped, so nothing is connected when it goes.
+    [ -n "$TDB_USED" ] && tdb_drop
     if [ "$FAILED" -eq 0 ]; then rm -rf "$SCRATCH"; else printf '  kept for reading: %s\n' "$SCRATCH"; fi
 }
 trap cleanup EXIT

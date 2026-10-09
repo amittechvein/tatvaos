@@ -288,6 +288,13 @@ In every case where the service survived, its thread count at rest was the same 
   - `container-test.sh` §8 proves it in the real container. 2 pictures of about 3 MB fit and are built (200, the calibration). 7 don't fit: 413 with the sentence, no job folder left in `/tmp`, two log lines at `stage=write`, and the next document save still 200.
   - **Owed by whoever wires PDF by email:** show the 413's `error` to the person as written. Don't fold it back into "The PDF could not be built".
   - **Not changed:** the limits (body limit vs `/tmp`, total-size cap). The measurements still decide those.
+  - **Corrected the same day** (branch `docs/pdf-no-room-own-bytes`), after measuring several PDFs at once (cases 2 and 3, PR 402):
+    - **The bug:** the first version chose `pictures_too_large` whenever the job *had* pictures. So when other jobs had filled `/tmp`, single-photo documents were told to remove pictures. That was wrong advice; trying again would have worked.
+    - **The fix:** the reason is now the job's **own** need against what `/tmp` holds at all (`statfs`). The need is 2 × the pictures, because case 0 showed the PDF is as big as its JPEGs and sits beside them. Over → `pictures_too_large`; otherwise → `no_room` (the generic 500).
+    - **Owed:** a "busy, try again" sentence for `no_room` (Mr. Singh), to replace the generic one.
+    - **Proof:**
+      - `apps/render/test/no-room.test.mjs` checks the rule at case 0's sizes.
+      - `container-test.sh` §8 now sends ten one-picture PDFs at once and requires that **none** gets the 413. Its calibration requires at least one `no_room` in the log, i.e. `/tmp` really did fill.
 
 Rulings: Mr. Singh. Anything needing more capacity (cost): Amit. It sits on the switch-on checklist beside the AI-lists line and the personal-table audit.
 

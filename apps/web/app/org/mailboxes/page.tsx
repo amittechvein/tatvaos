@@ -436,13 +436,23 @@ function AccessDialog({ box, people, onClose, onChanged, onError }: {
                 <span key={lvl} className="inline-flex items-center gap-1">
                   {lvl === 'send_as' && !p.levels.includes('read')
                     ? <Badge tone="warn">manager, cannot open it: add them as a member too</Badge>
-                    : <Badge tone="neutral">{LEVEL_LABEL[lvl]}</Badge>}
+                    : lvl === 'send_as'
+                      // Says what was handed over (Mr. Singh, 7 Oct 2026).
+                      ? <Badge tone="neutral">manager (reads + sends)</Badge>
+                      : <Badge tone="neutral">{LEVEL_LABEL[lvl]}</Badge>}
                   {/* Each level removable on its own: taking away someone's
-                      ability to answer should not also stop them reading. */}
+                      ability to answer should not also stop them reading.
+                      For a manager the × removes SENDING only - they stay a
+                      member - so its label says that, not "remove manager". */}
                   <button type="button"
                           className="rounded px-1 leading-none text-danger hover:bg-danger/10 disabled:opacity-50"
-                          disabled={busy} title={`Remove ${LEVEL_LABEL[lvl]}`}
-                          aria-label={`Remove ${LEVEL_LABEL[lvl]}`}
+                          disabled={busy}
+                          title={lvl === 'send_as' && p.levels.includes('read')
+                            ? 'Stop them sending as this mailbox (they can still read it)'
+                            : `Remove ${LEVEL_LABEL[lvl]}`}
+                          aria-label={lvl === 'send_as' && p.levels.includes('read')
+                            ? 'Stop them sending as this mailbox (they can still read it)'
+                            : `Remove ${LEVEL_LABEL[lvl]}`}
                           onClick={() => void run(() => authedFetch(
                             `/mail/mailboxes/${box.id}/permissions/${p.userId}/${lvl}`,
                             { method: 'DELETE' }))}>

@@ -11,6 +11,7 @@
 import { formatValue } from './engine/format';
 import { colName } from './engine/address';
 import type { SheetsModel } from './model';
+import { ruleStyleAt, withRuleStyle } from './rules';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const safeColour = (c: string | undefined) => (c && /^#[0-9a-f]{6}$/i.test(c) ? c : undefined);
@@ -29,6 +30,8 @@ export function printSheet(model: SheetsModel, sheetId: string, title: string, o
   const r = opts.range ?? { r1: 0, c1: 0, r2: Math.max(0, ext.lastRow), c2: Math.max(0, ext.lastCol) };
   const locale = model.locale();
   const merges = model.merges(sheetId);
+  const rules = model.colourRules(sheetId);
+  const hiddenByFilter = model.filterHiddenRows(sheetId);
   const skip = new Set<string>();
   const span = new Map<string, { rs: number; cs: number }>();
   for (const m of merges) {
@@ -41,12 +44,14 @@ export function printSheet(model: SheetsModel, sheetId: string, title: string, o
     rows.push(`<tr><th></th>${Array.from({ length: r.c2 - r.c1 + 1 }, (_, j) => `<th>${colName(r.c1 + j)}</th>`).join('')}</tr>`);
   }
   for (let i = r.r1; i <= r.r2; i += 1) {
+    if (hiddenByFilter.has(i)) continue; // what is on screen is what prints
     const cells: string[] = [];
     if (opts.headings) cells.push(`<th>${i + 1}</th>`);
     for (let j = r.c1; j <= r.c2; j += 1) {
       if (skip.has(`${i},${j}`)) continue;
       const v = model.value(sheetId, i, j);
-      const f = model.format(sheetId, i, j);
+      // Colour rules print as they show (rules.ts withRuleStyle, as the grid).
+      const f = withRuleStyle(model.format(sheetId, i, j), ruleStyleAt(rules, i, j, () => v, locale));
       const shown = formatValue(v, f?.nf, locale);
       const st: string[] = [];
       if (f?.b) st.push('font-weight:bold');

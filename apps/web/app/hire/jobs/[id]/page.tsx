@@ -144,6 +144,7 @@ function JobPage() {
       {job.status === 'closed' && (
         <Button onClick={() => void move('open')} disabled={acting}>Reopen</Button>
       )}
+      {job.status !== 'draft' && <Button href={`/hire/jobs/${job.id}/pipeline`}>Pipeline</Button>}
     </div>
   );
 

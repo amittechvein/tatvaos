@@ -29,6 +29,22 @@
 #      access; another organisation cannot touch the team
 #  13. deleting a department warns how many openings name it first, blanks
 #      their department, and writes job.department_cleared on each job
+#  14. candidates: the default pipeline, one profile per email ignoring case,
+#      contact required, careers_page never chosen by hand, another
+#      organisation gets 404
+#  15. applications: only to open jobs, once per person per job; moves; a
+#      rejection needs a reason (API and database); reopening keeps the
+#      reason in the history
+#  16. a hiring manager sees only candidates who applied to THEIR jobs, and
+#      only those applications; cannot add, edit, apply or erase; a closed
+#      job's pipeline is frozen
+#  17. erasure removes the candidate, applications and history, and no audit
+#      row written since step 14 names them or repeats the rejection reason
+#  18. two people opening the pipeline for the first time at the same moment
+#      both get the twelve stages, and the organisation has exactly twelve
+#      (TATVAOS_HIRE_RACE_ROUNDS, default 5 rounds of 10 requests at once)
+#  19. retention settings (30..180 days, admins only, per organisation) and
+#      the decision clock: set on reject/withdraw, cleared on reopen
 #
 # ── CALIBRATION, 24 September 2026 (house rule 6) ──────────────────────────
 #  * PUBLISH CHECK REMOVED FROM SAVE -> "blanking the description of an open
@@ -53,6 +69,25 @@
 #    not in it" STAYED GREEN, because publish still minted a fresh slug from
 #    the published title. So the draft checks are what carry "a draft title
 #    never reaches a URL", not the post-publish one.
+#  * HireAccess.Candidates() WIDENED for hiring managers -> exactly two red:
+#    the list shows both people, and the other candidate answers 200 with
+#    their email. "Counts only the application to their job" STAYED GREEN,
+#    because counts go through Applications(level), a separate scope — so a
+#    widened candidate list still would not show a person's other roles.
+#  * CANDIDATE NAME WRITTEN INTO THE AUDIT ROW -> exactly "no audit row since
+#    step 14 holds their name..." red. That check is what keeps erasure real.
+#  * STEP 18 WAS RED ON THE CODE AS FIRST WRITTEN (28 Sept 2026, 8341be2):
+#    nine of ten requests in one round answered 500, "40P01 deadlock
+#    detected". The method caught DbUpdateException expecting a duplicate
+#    key; EF batched the twelve inserts in random-Guid order, so two requests
+#    deadlocked instead. The table never held two sets — the unique index
+#    held — but the loser got an error page. It showed in ONE round of five,
+#    which is why there are rounds. After the fix: 5 rounds green, then 40
+#    rounds (400 requests) green, and pg_stat_database.deadlocks stayed at
+#    the nine the old code had caused.
+#  * First run of 14-17: EF inserted an application's history row BEFORE the
+#    application (no relationship declared) and the composite FK refused it,
+#    500. AppDbContext now declares it.
 #
 # Starts its own API, like tests/orgapi/test-org-api.sh, and takes the same
 # TATVAOS_PSQL / TATVAOS_PSQL_APP / TATVAOS_PG_HOST variables, plus
@@ -75,8 +110,28 @@ SCRATCH="$ROOT/.tmp/hire-$$"
 mkdir -p "$SCRATCH"
 LOG="$SCRATCH/api.log"
 
+TDB_USED=""
 WSL_KEEPALIVE=""
-if [ -z "${TATVAOS_PSQL:-}" ]; then
+# House rule 13 (Mr. Singh, 29 Sept 2026): with no database given, this run
+# builds its OWN, applies every migration to it twice, and drops it at the
+# end - so another session's leftovers in the shared local database can make
+# it neither pass nor fail (converted 9 Oct 2026; it predated the rule). Set
+# TATVAOS_PGDATABASE to use a named database instead, as before; CI passes
+# TATVAOS_PSQL and is unchanged.
+if [ -z "${TATVAOS_PSQL:-}" ] && [ -z "${TATVAOS_PGDATABASE:-}" ]; then
+    # shellcheck source=../lib/throwaway-db.sh
+    source "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/throwaway-db.sh"
+    tdb_create hirejobs || exit 2
+    TDB_USED=1
+    DB="$TDB_NAME"
+    TATVAOS_PG_HOST="$TDB_HOST"
+    if [ "${TDB__MODE:-}" = wsl ]; then
+        TATVAOS_PSQL_APP="${TATVAOS_PSQL_APP:-wsl -e psql postgresql://tatvaos_app:dev_app_pw@localhost/$TDB_NAME -Atc}"
+    else
+        TATVAOS_PSQL_APP="${TATVAOS_PSQL_APP:-psql postgresql://tatvaos_app:dev_app_pw@localhost/$TDB_NAME -Atc}"
+    fi
+    printf '  database: %s (throwaway)\n' "$TDB_NAME"
+elif [ -z "${TATVAOS_PSQL:-}" ]; then
     if command -v wsl >/dev/null 2>&1; then
         wsl -e sleep 3600 >/dev/null 2>&1 &
         WSL_KEEPALIVE=$!
@@ -150,6 +205,8 @@ cleanup() {
         kill "$API_PID" >/dev/null 2>&1 || true; wait "$API_PID" 2>/dev/null || true
     fi
     [ -n "$WSL_KEEPALIVE" ] && kill "$WSL_KEEPALIVE" >/dev/null 2>&1
+    # After the API has stopped, so nothing is connected when it goes.
+    [ -n "$TDB_USED" ] && tdb_drop
     if [ "$FAILED" -eq 0 ]; then rm -rf "$SCRATCH"; else printf '  kept for reading: %s\n' "$SCRATCH"; fi
 }
 trap cleanup EXIT
@@ -398,6 +455,209 @@ same "the JOB's history says why" \
     "$(PG "SELECT count(*) FROM core.audit_logs WHERE action='job.department_cleared' AND target_id='$JOB' AND product_code='hire' AND id > $AUDIT_FLOOR_13")" "1"
 has "and names the department it lost" \
     "$(PG "SELECT before_state::text FROM core.audit_logs WHERE action='job.department_cleared' AND target_id='$JOB' AND id > $AUDIT_FLOOR_13")" "Hire test dept $RUN"
+
+step "14. Candidates"
+AUDIT_FLOOR_14=$(PG "SELECT coalesce(max(id),0) FROM core.audit_logs")
+r=$(call "$TOKEN" GET /hire/pipeline)
+expect "the pipeline exists" 200 "$r"
+same "it is the roadmap's twelve stages" "$(jq_ "$(body "$r")" "len(d)")" "12"
+same "starting at Applied" "$(jq_ "$(body "$r")" "d[0]['name']")" "Applied"
+same "ending at Joined, marked final" "$(jq_ "$(body "$r")" "d[-1]['name']+'/'+str(d[-1]['isFinal'])")" "Joined/True"
+SCREENING=$(jq_ "$(body "$r")" "[s['id'] for s in d if s['key']=='screening'][0]")
+
+NAME_A="Asha Verma $RUN"
+r=$(call "$TOKEN" POST /hire/candidates "{\"fullName\":\"$NAME_A\",\"email\":\"Asha.$RUN@Example.test\",\"phone\":\"+91 98765 43210\",\"source\":\"referral\",\"skills\":[\"React\",\" react \",\"SQL\"],\"experienceMonths\":48}")
+expect "an admin adds a candidate" 201 "$r"
+CAND=$(jq_ "$(body "$r")" "d['id']")
+same "the email is stored in lower case" "$(jq_ "$(body "$r")" "d['email']")" "asha.$RUN@example.test"
+same "skills de-duplicated ignoring case" "$(jq_ "$(body "$r")" "','.join(d['skills'])")" "React,SQL"
+same "audited under product hire" "$(PG "SELECT count(*) FROM core.audit_logs WHERE action='candidate.created' AND target_id='$CAND' AND product_code='hire'")" "1"
+
+expect "no way to reach them" 400 "$(call "$TOKEN" POST /hire/candidates '{"fullName":"No Contact"}')" "email address or a phone"
+expect "an email that is not one" 400 "$(call "$TOKEN" POST /hire/candidates '{"fullName":"X","email":"not-an-email"}')" "does not look right"
+expect "careers_page chosen by hand" 400 "$(call "$TOKEN" POST /hire/candidates '{"fullName":"X","email":"x1@example.test","source":"careers_page"}')" "where this candidate came from"
+expect "a LinkedIn link over http" 400 "$(call "$TOKEN" POST /hire/candidates '{"fullName":"X","email":"x2@example.test","linkedinUrl":"http://linkedin.com/in/x"}')" "https://"
+r=$(call "$TOKEN" POST /hire/candidates "{\"fullName\":\"Asha again\",\"email\":\"ASHA.$RUN@example.test\"}")
+expect "the same email in other capitals" 409 "$r" "already exists"
+same "and the answer points at the existing profile" "$(jq_ "$(body "$r")" "d.get('existingId')")" "$CAND"
+
+expect "ABC School's admin cannot open Techvein's candidate" 404 "$(call "$OTHER" GET /hire/candidates/$CAND)"
+same "nor find them by search" "$(jq_ "$(body "$(call "$OTHER" GET "/hire/candidates?q=$RUN")")" "len(d)")" "0"
+expect "nor erase them" 404 "$(call "$OTHER" DELETE /hire/candidates/$CAND)"
+
+step "15. Applications and the pipeline"
+DRAFT_J=$(jq_ "$(body "$(call "$TOKEN" POST /hire/jobs "{\"title\":\"Unpublished for applying $RUN\"}")")" "d['id']")
+expect "a draft job takes no applications" 409 "$(call "$TOKEN" POST /hire/applications "{\"candidateId\":\"$CAND\",\"jobId\":\"$DRAFT_J\"}")" "still a draft"
+r=$(call "$TOKEN" POST /hire/applications "{\"candidateId\":\"$CAND\",\"jobId\":\"$JOB\"}")
+expect "the candidate applies to the open job" 201 "$r"
+APP=$(jq_ "$(body "$r")" "d['id']")
+same "starting at Applied" "$(jq_ "$(body "$r")" "d['stage']")" "Applied"
+expect "applying twice" 409 "$(call "$TOKEN" POST /hire/applications "{\"candidateId\":\"$CAND\",\"jobId\":\"$JOB\"}")" "already applied"
+expect "moved to Screening" 200 "$(call "$TOKEN" POST /hire/applications/$APP/move "{\"stageId\":\"$SCREENING\"}")"
+expect "a stage that is not in the pipeline" 400 "$(call "$TOKEN" POST /hire/applications/$APP/move "{\"stageId\":\"$JOB\"}")" "pipeline"
+r=$(call "$TOKEN" GET /hire/jobs/$JOB/applications)
+same "the job's board shows the application at Screening" \
+    "$(jq_ "$(body "$r")" "[a['stageId'] for a in d['applications'] if a['id']=='$APP'][0]")" "$SCREENING"
+same "with the candidate's name" "$(jq_ "$(body "$r")" "[a['candidate']['fullName'] for a in d['applications'] if a['id']=='$APP'][0]")" "$NAME_A"
+
+expect "rejecting with no reason" 400 "$(call "$TOKEN" POST /hire/applications/$APP/reject '{}')" "reason"
+expect "rejecting with a reason" 200 "$(call "$TOKEN" POST /hire/applications/$APP/reject '{"reason":"Needs more production React experience"}')"
+same "stored with the reason" "$(PG "SELECT outcome||'|'||rejection_reason FROM hire.applications WHERE id='$APP'")" "rejected|Needs more production React experience"
+out=$($TATVAOS_PSQL "UPDATE hire.applications SET rejection_reason = NULL WHERE id = '$APP'" 2>&1)
+printf '%s' "$out" | grep -q "ck_application_rejection_reason" && pass "the database refuses a rejection with no reason" \
+    || fail "a rejection lost its reason: $(brief "$out")"
+expect "a rejected application cannot move" 409 "$(call "$TOKEN" POST /hire/applications/$APP/move "{\"stageId\":\"$SCREENING\"}")" "reopen"
+expect "reopened" 200 "$(call "$TOKEN" POST /hire/applications/$APP/reopen)"
+same "active again, reason cleared from the application" "$(PG "SELECT outcome||'|'||coalesce(rejection_reason,'none') FROM hire.applications WHERE id='$APP'")" "active|none"
+r=$(call "$TOKEN" GET /hire/applications/$APP/history)
+same "the history keeps every step, in order" "$(jq_ "$(body "$r")" "','.join(e['kind'] for e in d)")" "created,moved,rejected,reopened"
+same "and still says why it was rejected" "$(jq_ "$(body "$r")" "[e['reason'] for e in d if e['kind']=='rejected'][0]")" "Needs more production React experience"
+same "and who did it" "$(jq_ "$(body "$r")" "d[1]['by']")" "$(PG "SELECT display_name FROM core.users WHERE id='$OWNER_ID'")"
+
+step "16. A hiring manager sees only candidates for their own jobs"
+expect "the employee is made a hiring manager" 200 "$(call "$TOKEN" PUT /hire/team/$EMPLOYEE_ID '{"role":"hiring_manager"}')"
+r=$(call "$TOKEN" POST /hire/jobs "{\"title\":\"HM owned $RUN\",\"description\":\"Theirs.\",\"locationId\":\"$LOC2\",\"hiringManagerId\":\"$EMPLOYEE_ID\"}")
+JOB2=$(jq_ "$(body "$r")" "d['id']")
+expect "their job is published" 200 "$(call "$TOKEN" POST /hire/jobs/$JOB2/status '{"status":"open"}')"
+NAME_B="Bharat Rao $RUN"
+CAND_B=$(jq_ "$(body "$(call "$TOKEN" POST /hire/candidates "{\"fullName\":\"$NAME_B\",\"phone\":\"+91 91234 56789\",\"source\":\"job_board\"}")")" "d['id']")
+APP_B2=$(jq_ "$(body "$(call "$TOKEN" POST /hire/applications "{\"candidateId\":\"$CAND_B\",\"jobId\":\"$JOB2\"}")")" "d['id']")
+APP_B1=$(jq_ "$(body "$(call "$TOKEN" POST /hire/applications "{\"candidateId\":\"$CAND_B\",\"jobId\":\"$JOB\"}")")" "d['id']")
+ok=1; for v in "$JOB2" "$CAND_B" "$APP_B2" "$APP_B1"; do printf '%s' "$v" | grep -qE '^[0-9a-f-]{36}$' || ok=0; done
+[ "$ok" = 1 ] && pass "fixtures: their job, a candidate applying to it and to another job" || fail "step 16 fixtures missing"
+
+r=$(call "$EMP" GET "/hire/candidates?q=$RUN")
+same "their candidate list holds only the person who applied to their job" "$(jq_ "$(body "$r")" "','.join(sorted(c['fullName'] for c in d))")" "$NAME_B"
+same "and counts only the application to their job" "$(jq_ "$(body "$r")" "d[0]['applications']")" "1"
+expect "the other candidate is 404 to them" 404 "$(call "$EMP" GET /hire/candidates/$CAND)"
+r=$(call "$EMP" GET /hire/candidates/$CAND_B)
+same "their candidate's page shows only their job's application" "$(jq_ "$(body "$r")" "','.join(a['id'] for a in d['applications'])")" "$APP_B2"
+same "and says they cannot edit" "$(jq_ "$(body "$r")" "str(d['canEdit'])")" "False"
+expect "they move their own job's application" 200 "$(call "$EMP" POST /hire/applications/$APP_B2/move "{\"stageId\":\"$SCREENING\"}")"
+expect "but not the same person's other application" 404 "$(call "$EMP" POST /hire/applications/$APP_B1/move "{\"stageId\":\"$SCREENING\"}")"
+expect "nor its history" 404 "$(call "$EMP" GET /hire/applications/$APP_B1/history)"
+expect "nor the other job's board" 404 "$(call "$EMP" GET /hire/jobs/$JOB/applications)"
+expect "they cannot add candidates" 403 "$(call "$EMP" POST /hire/candidates '{"fullName":"Sneaky","email":"sneaky@example.test"}')" "recruiter or an administrator"
+expect "nor edit one" 403 "$(call "$EMP" PUT /hire/candidates/$CAND_B "{\"fullName\":\"$NAME_B\",\"phone\":\"+91 91234 56789\"}")"
+expect "nor put anyone on a job" 403 "$(call "$EMP" POST /hire/applications "{\"candidateId\":\"$CAND_B\",\"jobId\":\"$JOB2\"}")"
+expect "nor erase anyone" 403 "$(call "$EMP" DELETE /hire/candidates/$CAND_B)" "only an administrator"
+expect "their job is closed as filled" 200 "$(call "$TOKEN" POST /hire/jobs/$JOB2/status '{"status":"closed","reason":"filled"}')"
+expect "and its pipeline is now kept as it was" 409 "$(call "$EMP" POST /hire/applications/$APP_B2/move "{\"stageId\":\"$SCREENING\"}")" "closed"
+expect "the hiring manager leaves the team" 200 "$(call "$TOKEN" DELETE /hire/team/$EMPLOYEE_ID)"
+
+step "17. Erasure"
+PERSONAL_FLOOR=$AUDIT_FLOOR_14
+expect "a recruiter-level check: the other organisation still cannot erase" 404 "$(call "$OTHER" DELETE /hire/candidates/$CAND)"
+r=$(call "$TOKEN" DELETE /hire/candidates/$CAND)
+expect "an admin erases the candidate" 200 "$r"
+same "reporting how many applications went with them" "$(jq_ "$(body "$r")" "d['applications']")" "1"
+same "the candidate, the application and its history are gone" \
+    "$(PG "SELECT (SELECT count(*) FROM hire.candidates WHERE id='$CAND') + (SELECT count(*) FROM hire.applications WHERE id='$APP') + (SELECT count(*) FROM hire.application_events WHERE application_id='$APP')")" "0"
+same "the erasure itself is audited" "$(PG "SELECT count(*) FROM core.audit_logs WHERE action='candidate.erased' AND target_id='$CAND'")" "1"
+# The point of keeping personal data out of the audit log: after erasure,
+# nothing anywhere in it still names the person or repeats the rejection.
+same "and no audit row since step 14 holds their name, email or rejection reason" \
+    "$(PG "SELECT count(*) FROM core.audit_logs WHERE id > $PERSONAL_FLOOR AND (coalesce(before_state::text,'')||coalesce(after_state::text,'')) ~* '(asha|verma|$RUN@example|production react)'")" "0"
+expect "and they are 404 now" 404 "$(call "$TOKEN" GET /hire/candidates/$CAND)"
+
+step "18. Two people open the pipeline for the first time at the same moment"
+# Mr. Singh's question on PR 267: the default stages are created on first use,
+# so can two first requests at once leave an organisation with two sets of
+# twelve? Two things prevent it, and they fail differently:
+#   - UNIQUE (tenant_id, key) makes the second set impossible;
+#   - PipelineAsync catches the loser's failed insert and re-reads, so the
+#     loser still gets an answer instead of a 500.
+# Five rounds of ten requests at once, against an organisation whose stages
+# are removed before each round. Every answer must be 200 with twelve stages,
+# and the table must hold exactly twelve.
+ROUNDS="${TATVAOS_HIRE_RACE_ROUNDS:-5}"; PAR=10; race_bad=0; race_answers=0
+same "fixture: the School has no applications holding its stages" \
+    "$(PG "SELECT count(*) FROM hire.applications WHERE tenant_id='$SCHOOL'")" "0"
+for round in $(seq 1 $ROUNDS); do
+    PG "DELETE FROM hire.pipeline_stages WHERE tenant_id='$SCHOOL'" >/dev/null
+    [ "$(PG "SELECT count(*) FROM hire.pipeline_stages WHERE tenant_id='$SCHOOL'")" = 0 ] \
+        || { fail "round $round: the School's stages were not cleared"; race_bad=1; break; }
+    pids=""
+    for n in $(seq 1 $PAR); do
+        ( call "$OTHER" GET /hire/pipeline > "$SCRATCH/race-$round-$n.txt" 2>/dev/null ) &
+        pids="$pids $!"
+    done
+    wait $pids
+    for n in $(seq 1 $PAR); do
+        r=$(cat "$SCRATCH/race-$round-$n.txt")
+        race_answers=$((race_answers + 1))
+        if [ "$(status "$r")" != 200 ] || [ "$(jq_ "$(body "$r")" "len(d)")" != 12 ]; then
+            race_bad=$((race_bad + 1))
+            printf '      round %s request %s: answered %s: %s\n' "$round" "$n" "$(status "$r")" "$(brief "$(body "$r")")"
+        fi
+    done
+    in_db=$(PG "SELECT count(*)||'/'||count(DISTINCT key) FROM hire.pipeline_stages WHERE tenant_id='$SCHOOL'")
+    [ "$in_db" = "12/12" ] || { race_bad=$((race_bad + 1)); printf '      round %s: the table holds %s (rows/distinct keys), wanted 12/12\n' "$round" "$in_db"; }
+done
+same "all $((ROUNDS * PAR)) answers were read" "$race_answers" "$((ROUNDS * PAR))"
+same "every one answered 200 with twelve stages, and each round left exactly twelve rows" "$race_bad" "0"
+step "19. Retention settings and the decision clock"
+r=$(call "$TOKEN" GET /hire/settings)
+expect "an admin reads the Hire settings" 200 "$r"
+same "the default is 180 days, between 30 and 180" "$(jq_ "$(body "$r")" "f\"{d['retentionDays']}/{d['minDays']}/{d['maxDays']}\"")" "180/30/180"
+expect "longer than 180 days" 400 "$(call "$TOKEN" PUT /hire/settings '{"retentionDays":181}')" "consent"
+expect "shorter than 30 days" 400 "$(call "$TOKEN" PUT /hire/settings '{"retentionDays":29}')" "between 30 and 180"
+# Shortening states what it will destroy and waits seven days, visibly and
+# cancellably (Mr. Singh, 24 Sept 2026).
+r=$(call "$TOKEN" GET "/hire/settings/impact?days=90")
+expect "the impact of 90 days is asked for first" 200 "$r"
+DELETES=$(jq_ "$(body "$r")" "d['deletes']")
+printf '%s' "$DELETES" | grep -qE '^[0-9]+$' && pass "it answers with a number ($DELETES) and a date" || fail "impact answered '$DELETES'"
+r=$(call "$TOKEN" PUT /hire/settings '{"retentionDays":90}')
+expect "shortening without confirming the number" 409 "$r" "confirm that number"
+same "is refused with the same number" "$(jq_ "$(body "$r")" "d['deletes']")" "$DELETES"
+expect "confirming a different number" 409 "$(call "$TOKEN" PUT /hire/settings "{\"retentionDays\":90,\"confirmDeletes\":$((DELETES + 1))}")" "confirm that number"
+r=$(call "$TOKEN" PUT /hire/settings "{\"retentionDays\":90,\"confirmDeletes\":$DELETES}")
+expect "confirming the number shown" 200 "$r"
+r=$(call "$TOKEN" GET /hire/settings)
+same "does NOT change the period yet" "$(jq_ "$(body "$r")" "d['retentionDays']")" "180"
+same "it waits, visibly, for seven days" \
+    "$(jq_ "$(body "$r")" "str(d['pending']['days'])+'/'+str(6 < (__import__('datetime').datetime.fromisoformat(d['pending']['effectiveAt'].replace('Z','+00:00')) - __import__('datetime').datetime.now(__import__('datetime').timezone.utc)).days + 1 <= 7)")" "90/True"
+same "and says who asked" "$(jq_ "$(body "$r")" "d['pending']['requestedBy']")" "$(PG "SELECT display_name FROM core.users WHERE id='$OWNER_ID'")"
+same "the scheduling is audited with the number" \
+    "$(PG "SELECT (after_state->>'pendingDays')||'/'||(after_state->>'deletes') FROM core.audit_logs WHERE action='hire_settings.retention_shortening_scheduled' ORDER BY id DESC LIMIT 1")" "90/$DELETES"
+expect "it can be cancelled" 200 "$(call "$TOKEN" DELETE /hire/settings/pending)"
+same "and then nothing is waiting" "$(jq_ "$(body "$(call "$TOKEN" GET /hire/settings)")" "str(d['pending'])")" "None"
+expect "cancelling twice" 404 "$(call "$TOKEN" DELETE /hire/settings/pending)"
+call "$TOKEN" PUT /hire/settings "{\"retentionDays\":60,\"confirmDeletes\":$(jq_ "$(body "$(call "$TOKEN" GET "/hire/settings/impact?days=60")")" "d['deletes']")}" >/dev/null
+same "a shortening scheduled again" "$(jq_ "$(body "$(call "$TOKEN" GET /hire/settings)")" "str(d['pending']['days'])")" "60"
+expect "lengthening (180) applies at once" 200 "$(call "$TOKEN" PUT /hire/settings '{"retentionDays":180}')"
+same "and cancels what was waiting" "$(jq_ "$(body "$(call "$TOKEN" GET /hire/settings)")" "str(d['pending'])")" "None"
+expect "ABC School's admin still sees their own default" 200 "$(call "$OTHER" GET /hire/settings)"
+same "untouched by Techvein's changes" "$(jq_ "$(body "$(call "$OTHER" GET /hire/settings)")" "f\"{d['retentionDays']}/{d['pending']}\"")" "180/None"
+
+# The retention clock for someone never put forward is a PERSON'S edit —
+# not viewing, not activity on their applications (Mr. Singh, 24 Sept).
+EDIT_BEFORE=$(PG "SELECT last_edited_at FROM hire.candidates WHERE id='$CAND_B'")
+call "$TOKEN" GET /hire/candidates/$CAND_B >/dev/null
+call "$TOKEN" GET "/hire/candidates?q=$RUN" >/dev/null
+call "$TOKEN" GET /hire/applications/$APP_B1/history >/dev/null
+same "viewing a candidate, the list and a history leaves the clock alone" \
+    "$(PG "SELECT last_edited_at FROM hire.candidates WHERE id='$CAND_B'")" "$EDIT_BEFORE"
+expect "a person edits the profile" 200 \
+    "$(call "$TOKEN" PUT /hire/candidates/$CAND_B "{\"fullName\":\"$NAME_B\",\"phone\":\"+91 91234 56789\",\"source\":\"job_board\",\"tags\":[\"clock\"]}")"
+same "and that restarts it" "$(PG "SELECT (last_edited_at > '$EDIT_BEFORE')::text FROM hire.candidates WHERE id='$CAND_B'")" "true"
+EDIT_AFTER=$(PG "SELECT last_edited_at FROM hire.candidates WHERE id='$CAND_B'")
+expect "a recruiter is made" 200 "$(call "$TOKEN" PUT /hire/team/$EMPLOYEE_ID '{"role":"recruiter"}')"
+expect "a recruiter cannot read the settings" 403 "$(call "$EMP" GET /hire/settings)"
+expect "nor change them" 403 "$(call "$EMP" PUT /hire/settings '{"retentionDays":30}')" "only an administrator"
+expect "the recruiter leaves the team" 200 "$(call "$TOKEN" DELETE /hire/team/$EMPLOYEE_ID)"
+expect "back to 180" 200 "$(call "$TOKEN" PUT /hire/settings '{"retentionDays":180}')"
+
+same "an active application has no decision date" "$(PG "SELECT coalesce(decided_at::text,'none') FROM hire.applications WHERE id='$APP_B1'")" "none"
+expect "rejecting it" 200 "$(call "$TOKEN" POST /hire/applications/$APP_B1/reject '{"reason":"Retention clock check"}')"
+same "starts the clock" "$(PG "SELECT (decided_at IS NOT NULL AND decided_at > now() - interval '5 minutes')::text FROM hire.applications WHERE id='$APP_B1'")" "true"
+expect "reopening it" 200 "$(call "$TOKEN" POST /hire/applications/$APP_B1/reopen)"
+same "stops the clock" "$(PG "SELECT coalesce(decided_at::text,'none') FROM hire.applications WHERE id='$APP_B1'")" "none"
+expect "withdrawing it" 200 "$(call "$TOKEN" POST /hire/applications/$APP_B1/withdraw '{}')"
+same "starts it again" "$(PG "SELECT (decided_at IS NOT NULL)::text FROM hire.applications WHERE id='$APP_B1'")" "true"
+same "rejecting, reopening and withdrawing an application left the candidate's own clock alone" \
+    "$(PG "SELECT last_edited_at FROM hire.candidates WHERE id='$CAND_B'")" "$EDIT_AFTER"
 
 printf '\n%s----------------------------------------%s\n' "$CYAN" "$RST"
 printf '  passed: %d   failed: %d\n\n' "$PASSED" "$FAILED"
