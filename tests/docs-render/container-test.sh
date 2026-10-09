@@ -278,6 +278,13 @@ echo "== 8. a PDF whose pictures do not fit in /tmp gets a refusal a person can 
 # is really 16 MB. Pictures are real PNGs of random pixels, stored (deflate
 # level 0) so each is ~3 MB on disk whatever compresses. 2 of them fit: that
 # is the calibration — pictures as such are not refused. 7 do not.
+#
+# Since 9 Oct 2026 every picture is SHRUNK first (render-pdf.mjs; Mr. Singh's
+# ruling): longest side 1,600 px, metadata stripped, then a 6 MB cap on the
+# total. Random pixels do not compress and these are 1,000 px, so each stays
+# ~3 MB as a (lossless) PNG: the 2-picture PDF is the FULL CAP case Mr. Singh
+# asked to see built in this container with /tmp really 16 MB, and the 7 are
+# refused at the cap — before the rest are written — not when /tmp fills.
 PDFMAKE='import * as Y from "yjs"; import { getSchema } from "@tiptap/core"; import { prosemirrorJSONToYDoc } from "@tiptap/y-tiptap"; import { documentExtensions } from "../web/components/docs/schema.ts"; import zlib from "node:zlib"; import { randomBytes } from "node:crypto"; const n = Number(process.argv[1]); const side = 1000; const chunk = (t, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); const c = Buffer.alloc(4); c.writeUInt32BE(zlib.crc32(td)); return Buffer.concat([l, td, c]); }; const png = () => { const ih = Buffer.alloc(13); ih.writeUInt32BE(side, 0); ih.writeUInt32BE(side, 4); ih[8] = 8; ih[9] = 2; const row = side * 3 + 1; const raw = Buffer.alloc(row * side); for (let y = 0; y < side; y++) randomBytes(side * 3).copy(raw, y * row + 1); return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ih), chunk("IDAT", zlib.deflateSync(raw, { level: 0 })), chunk("IEND", Buffer.alloc(0))]); }; const pictures = {}; const content = [{ type: "paragraph", content: [{ type: "text", text: "Newsletter" }] }]; for (let i = 1; i <= n; i++) { const src = "/api/docs/00000000-0000-4000-8000-000000000001/images/" + i; pictures[src] = png().toString("base64"); content.push({ type: "paragraph", content: [{ type: "image", attrs: { src, alt: null, title: null, width: "320", height: null } }] }); } const s = Y.encodeStateAsUpdate(prosemirrorJSONToYDoc(getSchema(documentExtensions()), { type: "doc", content }, "default")); process.stdout.write(JSON.stringify({ updates: [Buffer.from(s).toString("base64")], pictures }));'
 for n in 1 2 7; do
   DC run --rm --no-deps -T --entrypoint node render \
@@ -287,7 +294,9 @@ for n in 1 2 7; do
 done
 PDFPOST='const [url,f]=process.argv.slice(1);fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:require("fs").readFileSync(f)}).then(async r=>{const b=await r.json();console.log(r.status+" "+(b.pdf&&Buffer.from(b.pdf,"base64").subarray(0,4).toString()==="%PDF"?"pdf":(b.reason||b.error||"")))},e=>console.log("error "+e.message))'
 PDFSAYS='const [url,f]=process.argv.slice(1);fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:require("fs").readFileSync(f)}).then(async r=>{const b=await r.json();console.log(String(b.error))},e=>console.log("error "+e.message))'
-same "2 large pictures fit: the PDF is built (200) — the calibration" \
+same "/tmp in this container is really 16 MB (the size the cap was ruled against)" \
+  "$(DC exec -T render sh -c "df -k /tmp | awk 'NR==2{print \$2}'" | tr -d '\r ')" 16384
+same "2 large pictures (~6 MB after shrinking: the FULL 6 MB cap) fit: the PDF is built (200) — the calibration" \
   "$(DC exec -T apistub node -e "$PDFPOST" http://render:8080/render/pdf /tmp/pdf-2.json 2>&1 | tail -1)" "200 pdf"
 same "7 do not fit in the 16 MB /tmp: refused with its own reason (413)" \
   "$(DC exec -T apistub node -e "$PDFPOST" http://render:8080/render/pdf /tmp/pdf-7.json 2>&1 | tail -1)" "413 pictures_too_large"
@@ -302,8 +311,8 @@ same "no PDF job folder is left in /tmp (the room is given back)" \
 render_log="$(DC logs --no-color render 2>&1)"
 same "the log names the reason and where /tmp filled (twice: two refusals above)" \
   "$(grep -c -F -- "pdf FAILED pictures_too_large" <<<"$render_log")" 2
-same "…at the picture writes, not elsewhere" \
-  "$(grep -c -F -- "stage=write pictures=7" <<<"$render_log")" 2
+same "…at the 6 MB cap, before /tmp could fill" \
+  "$(grep -c -F -- "stage=cap pictures=7" <<<"$render_log")" 2
 same "a document save still works afterwards" \
   "$(DC exec -T apistub node -e "$POST" http://render:8080/render/doc /tmp/nested-lists.json 2>&1 | tail -1)" "200 html"
 # Ten ONE-picture PDFs at once (§10, cases 2 and 3, measured 7 Oct 2026): the
@@ -325,6 +334,32 @@ if [ "$nr" -ge 1 ]; then ok "…and /tmp really did fill from the others ($nr no
 else bad "…calibration: /tmp never filled (0 no_room in the log), so the check above proved nothing"; fi
 same "the service survived the ten (a document save still works)" \
   "$(DC exec -T apistub node -e "$POST" http://render:8080/render/doc /tmp/nested-lists.json 2>&1 | tail -1)" "200 html"
+
+echo "== 9. a photo's location never reaches the PDF (Mr. Singh's ruling, 9 Oct 2026)"
+# tests/docs-render/picture-privacy.mjs, run INSIDE this container (its real
+# vips-tools and Typst, read-only, /tmp 16 MB). A photo carrying location in
+# EXIF, XMP and IPTC, stored sideways with an orientation tag. RED FIRST: the
+# same photo straight into Typst (the old path) must SHOW the location and be
+# sideways, or the inspection could not see what it looks for.
+priv="$(DC run --rm --no-deps -T --entrypoint node render --no-warnings --input-type=module - \
+  < "$ROOT/tests/docs-render/picture-privacy.mjs" 2>&1)"
+echo "$priv" | sed 's/^/        /'
+pv() { sed -n "s/^$1=//p" <<<"$priv" | tail -1; }
+same "the source photo really carries GPS (EXIF)" "$(pv source_gps)" true
+same "…and XMP" "$(pv source_xmp)" true
+same "…and IPTC" "$(pv source_iptc)" true
+same "…and is stored sideways (orientation 6)" "$(pv source_orientation)" 6
+same "RED FIRST — old path (straight into Typst): GPS found in the PDF's picture" "$(pv old_gps)" true
+same "RED FIRST — …XMP and IPTC too" "$(pv old_xmp) $(pv old_iptc)" "true true"
+same "RED FIRST — …all three markers in the PDF" "$(pv old_markers)" 3
+same "RED FIRST — …and the picture sideways (400x200 pixels as stored)" "$(pv old_size)" 400x200
+same "new path: the picture in the PDF has NO GPS field of any kind" "$(pv new_gps)" false
+same "…no EXIF, no XMP, no IPTC" "$(pv new_exif) $(pv new_xmp) $(pv new_iptc)" "false false false"
+same "…and it is UPRIGHT: turned before the strip (200x400, no orientation tag)" "$(pv new_size) $(pv new_orientation)" "200x400 none"
+same "the whole PDF holds none of the three location markers" "$(pv new_markers)" 0
+same "the picture's own bytes hold no EXIF, XMP or IPTC block at all" "$(pv new_picture_block_headers)" 0
+same "RED FIRST — the old PDF names location fields (GPSLatitude, exif:GPS…)" "$( [ "$(pv old_location_fields)" -ge 1 ] && echo yes || echo no)" yes
+same "the new PDF names no location field anywhere (its own document XMP included)" "$(pv new_location_fields)" 0
 
 echo
 echo "  passed: $pass   failed: $fail"

@@ -27,7 +27,7 @@
 //  PDF. Who checked which, and when: docs/DOCS_PDF_DESIGN.md, section 9.
 // ============================================================================
 
-import { mkdtemp, writeFile, copyFile, readFile, rm, statfs } from 'node:fs/promises';
+import { mkdtemp, writeFile, copyFile, readFile, rm, stat, statfs } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -104,6 +104,48 @@ export const TYPST_NO_ROOM = /os error 28|no space left on device/i;
 export const unquoted = (stderr) => String(stderr).replace(/"[^"]*"/g, '"…"');
 export const typstSaysNoRoom = (stderr) => TYPST_NO_ROOM.test(unquoted(stderr));
 
+// ---------------------------------------------------------------------------
+//  PICTURES ARE SHRUNK AND STRIPPED BEFORE TYPST SEES THEM (Mr. Singh's
+//  ruling of 9 Oct 2026, docs/DOCS_PDF_DESIGN.md §10; his switch-on
+//  condition (d): the PDF route is switched on for nobody until this is in).
+//
+//  Why: Typst copies a picture into the PDF byte for byte (measured 7 Oct),
+//  so a phone photo carried WHERE IT WAS TAKEN into every emailed PDF, and
+//  a 4.4 MB photo made a 4.4 MB PDF (two of them overflowed /tmp).
+//
+//  What, per picture, by Alpine's vips-tools (vipsthumbnail), run like Typst:
+//    · turned upright by its orientation tag FIRST (vipsthumbnail rotates by
+//      default) — stripped without rotating, a portrait photo prints sideways;
+//    · longest side 1,600 px at most, never enlarged ("1600x1600>");
+//    · JPEG quality 82 (a PNG or GIF stays lossless, as PNG: logos and
+//      diagrams keep crisp edges and transparency; WebP becomes JPEG);
+//    · EVERY metadata block removed — EXIF, XMP and IPTC — with keep=none.
+//      Location does not live only in EXIF (XMP and IPTC carry it too), so
+//      the container test looks for location of any kind in the output.
+//  Then the job's pictures may total at most PICTURES_CAP_BYTES after
+//  shrinking, or the job is refused as pictures_too_large before Typst runs.
+//
+//  The original goes into the job folder only long enough to be shrunk, one
+//  at a time, so /tmp never holds more than one original.
+// ---------------------------------------------------------------------------
+export const PICTURE_MAX_SIDE = 1600;
+export const PICTURE_JPEG_QUALITY = 82;
+/** 6 MB of pictures after shrinking (ruled 9 Oct): a PDF of about 6 MB, under the stricter mail limits. */
+export const PICTURES_CAP_BYTES = 6 * 1024 * 1024;
+
+/** What each sniffed kind becomes: photos JPEG, lossless kinds PNG. */
+export const SHRUNK_KIND = { jpg: 'jpg', webp: 'jpg', png: 'png', gif: 'png' };
+
+/** vipsthumbnail's output argument: the file, then its save options. */
+export function shrinkTarget(path, kind) {
+  return kind === 'jpg'
+    ? `${path}[Q=${PICTURE_JPEG_QUALITY},keep=none]`
+    : `${path}[keep=none]`;
+}
+
+/** Over the cap? (The total of the SHRUNK pictures, in bytes.) */
+export const overPictureCap = (bytes) => bytes > PICTURES_CAP_BYTES;
+
 /** The reason for a full /tmp: the job's own need (2 x its pictures) against what /tmp holds at all. */
 export function noRoomReason(pictureBytes, capacityBytes) {
   return pictureBytes > 0 && pictureBytes * 2 > capacityBytes ? 'pictures_too_large' : 'no_room';
@@ -113,8 +155,9 @@ async function tmpCapacity() {
   try { const s = await statfs(tmpdir()); return s.blocks * s.bsize; } catch { return Infinity; }
 }
 
-async function noRoom(stage, files) {
-  const bytes = files.reduce((n, f) => n + f.bytes.length, 0);
+/** bytes: what the job's pictures take in /tmp at this stage — the originals while they are
+ *  written, the shrunk files once Typst runs (they are all that is left). */
+async function noRoom(stage, files, bytes = files.reduce((n, f) => n + f.bytes.length, 0)) {
   const capacity = await tmpCapacity();
   return new PdfFailed(noRoomReason(bytes, capacity), { stage, pictures: files.length, bytes, capacity });
 }
@@ -142,8 +185,10 @@ export function templateInput(json, pictures = new Map()) {
           if (!byAddress.has(src)) {
             const bytes = pictures.get(src);
             const kind = sniff(bytes);
-            byAddress.set(src, kind ? `pic-${files.length}.${kind}` : null);
-            if (kind) files.push({ name: `pic-${files.length}.${kind}`, bytes });
+            // The name is the SHRUNK file's (buildPdf): its kind after shrinking.
+            const name = kind ? `pic-${files.length}.${SHRUNK_KIND[kind]}` : null;
+            byAddress.set(src, name);
+            if (kind) files.push({ name, bytes, kind });
           }
           const name = byAddress.get(src);
           if (name) n.attrs._pic = name;
@@ -158,8 +203,31 @@ export function templateInput(json, pictures = new Map()) {
 const TEMPLATE = new URL('../pdf/main.typ', import.meta.url);
 
 /**
+ * Run a tool in the job folder as Typst is run: nothing inherited from the
+ * service's environment but PATH, HOME the job folder, killed at the job's
+ * deadline. Resolves with its exit code and (bounded) stderr; never throws.
+ */
+function runTool(bin, args, dir, deadline, extraEnv = {}) {
+  const left = deadline - Date.now();
+  if (left <= 0) return Promise.resolve({ code: null, stderr: '', killed: true });
+  return new Promise((resolve) => {
+    const child = spawn(bin, args, {
+      cwd: dir,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: dir, XDG_CACHE_HOME: join(dir, 'none'), ...extraEnv },
+    });
+    let err = '';
+    child.stderr.on('data', (c) => { if (err.length < 4000) err += c; });
+    let killed = false;
+    const timer = setTimeout(() => { killed = true; child.kill('SIGKILL'); }, left);
+    child.on('error', (e) => { clearTimeout(timer); resolve({ code: null, stderr: '', killed: false, missing: String(e.message).slice(0, 120) }); });
+    child.on('close', (c) => { clearTimeout(timer); resolve({ code: c, stderr: err, killed }); });
+  });
+}
+
+/**
  * @param {{json: object, text: string, pictures?: Map<string, Uint8Array>, deadline: number,
- *          typst?: string, fontDir?: string, checkedScripts?: Set<string>,
+ *          typst?: string, vips?: string, fontDir?: string, checkedScripts?: Set<string>,
  *          template?: URL, traceTo?: string, root?: string}} job
  *   deadline: Date.now() value past which the build is killed.
  *   template, traceTo, root: THE GATE ONLY (tests/docs-render/pdf-gate.mjs) — a
@@ -171,6 +239,7 @@ const TEMPLATE = new URL('../pdf/main.typ', import.meta.url);
  */
 export async function buildPdf(job) {
   const typst = job.typst ?? process.env.TYPST_BIN ?? 'typst';
+  const vips = job.vips ?? process.env.VIPSTHUMBNAIL_BIN ?? 'vipsthumbnail';
   const fontDir = job.fontDir ?? process.env.PDF_FONT_DIR ?? '/usr/share/fonts';
   const checked = job.checkedScripts ?? CHECKED_SCRIPTS;
 
@@ -190,10 +259,50 @@ export async function buildPdf(job) {
     try {
       await copyFile(job.template ?? TEMPLATE, join(dir, 'main.typ'));
       await writeFile(join(dir, 'doc.json'), JSON.stringify(data));
-      for (const f of files) await writeFile(join(dir, f.name), f.bytes);
     } catch (e) {
       if (isNoRoom(e)) throw await noRoom('write', files);
       throw e;
+    }
+
+    // Each picture: the original in, shrunk and stripped out, the original
+    // gone again before the next (see "PICTURES ARE SHRUNK" above).
+    let shrunkBytes = 0;
+    for (let i = 0; i < files.length; i += 1) {
+      const f = files[i];
+      const original = join(dir, `original-${i}.${f.kind}`);
+      const out = join(dir, f.name);
+      try {
+        await writeFile(original, f.bytes);
+      } catch (e) {
+        if (isNoRoom(e)) throw await noRoom('write', files);
+        throw e;
+      }
+      const run = await runTool(vips, [original, '--size', `${PICTURE_MAX_SIDE}x${PICTURE_MAX_SIDE}>`,
+        '-o', shrinkTarget(out, SHRUNK_KIND[f.kind])], dir, job.deadline, {
+        // One thread (the container has one CPU and 64 pids), and libvips'
+        // loaders marked untrusted refused outright: only the four kinds
+        // sniff() let through are ever opened here.
+        VIPS_CONCURRENCY: '1',
+        VIPS_BLOCK_UNTRUSTED: '1',
+      });
+      await rm(original, { force: true });
+      if (run.killed) throw new PdfFailed('timeout');
+      if (run.missing) throw new PdfFailed('vips_missing', { message: run.missing });
+      if (run.code !== 0) {
+        if (typstSaysNoRoom(run.stderr)) throw await noRoom('shrink', files);
+        // Never dropped silently: a PDF quietly missing a photo is the worse
+        // failure. A picture libvips cannot read fails the PDF, as a broken
+        // one always failed it in Typst; the log says which and why.
+        const line = run.stderr.split('\n').find((l) => l.trim() !== '') ?? `exit ${run.code}`;
+        throw new PdfFailed('shrink_failed', { picture: i, message: unquoted(line).slice(0, 160) });
+      }
+      shrunkBytes += (await stat(out)).size;
+      // Checked after EACH picture, so a document of many large pictures is
+      // refused as soon as it crosses the cap — before the rest are written
+      // and /tmp fills (tests/docs-render/container-test.sh §8).
+      if (overPictureCap(shrunkBytes)) {
+        throw new PdfFailed('pictures_too_large', { stage: 'cap', pictures: files.length, bytes: shrunkBytes, cap: PICTURES_CAP_BYTES });
+      }
     }
 
     const left = job.deadline - Date.now();
@@ -228,7 +337,7 @@ export async function buildPdf(job) {
     // Typst's message names the place in main.typ; a value it quotes could be
     // document text, so every quoted string is blanked before it is logged.
     if (code !== 0) {
-      if (typstSaysNoRoom(stderr)) throw await noRoom('typst', files);
+      if (typstSaysNoRoom(stderr)) throw await noRoom('typst', files, shrunkBytes);
       const line = stderr.split('\n').find((l) => /error/i.test(l)) ?? `exit ${code}`;
       throw new PdfFailed('typst_failed', { message: unquoted(line).slice(0, 160) });
     }
