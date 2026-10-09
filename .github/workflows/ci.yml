@@ -157,6 +157,10 @@ jobs:
       # database, no Google account.
       - name: "Google check: tokens, scopes, retries, and no token in an error"
         run: dotnet run --project tests/google-client
+      # Migration design section 8: the size estimate refuses with a number
+      # rather than fill the disk. Pure arithmetic plus a fake Google.
+      - name: "Migration check: the size estimate refuses what will not fit"
+        run: dotnet run --project tests/migration-fit
 
       # Every AI entry point asks AiGate before sending, and every AI feature
       # label has an organisation list (Mr. Singh, 30 Sept 2026, after a
