@@ -866,7 +866,7 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
           <HeaderButton title="TatvaOS AI" active={panel === 'ai'} onClick={() => setPanel(panel === 'ai' ? null : 'ai')}><I.sparkle /></HeaderButton>
           {canShare ? (
             <button type="button" onClick={() => setSharing(true)}
-              className="flex items-center gap-2 rounded-full bg-[#c2e7ff] px-5 py-2 text-sm font-medium text-[#001d35] hover:shadow">
+              className="flex items-center gap-2 rounded-full bg-brand-600 px-5 py-2 text-sm font-medium text-white hover:bg-brand-700">
               <I.share className="h-4 w-4" /> Share
             </button>
           ) : (
@@ -907,10 +907,10 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
         </div>
       )}
       {preview && (
-        <div className="mx-3 mb-1 flex flex-wrap items-center gap-3 rounded-lg bg-[#e8f0fe] px-4 py-2 text-sm text-[#174ea6]">
+        <div className="mx-3 mb-1 flex flex-wrap items-center gap-3 rounded-lg bg-brand-50 px-4 py-2 text-sm text-brand-700 dark:bg-brand-600/25 dark:text-white">
           <span className="flex-1">Viewing {preview.v.name ? `“${preview.v.name}”` : 'the version'} from {formatDateTime(preview.v.createdAt)} (read only)</span>
           {canEdit && <button type="button" onClick={() => void restore()} className="rounded-full bg-brand-600 px-4 py-1 text-xs font-semibold text-white">Restore this version</button>}
-          <button type="button" onClick={() => setPreview(null)} className="rounded-full border border-[#174ea6]/40 px-4 py-1 text-xs font-semibold">Back to current</button>
+          <button type="button" onClick={() => setPreview(null)} className="rounded-full border border-brand-600/40 px-4 py-1 text-xs font-semibold">Back to current</button>
         </div>
       )}
 
@@ -1121,7 +1121,7 @@ function range(a: number, b: number): number[] {
 function HeaderButton({ title, active, onClick, children }: { title: string; active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button type="button" title={title} aria-label={title} aria-pressed={active} onClick={onClick}
-      className={`flex h-9 w-9 items-center justify-center rounded-full ${active ? 'bg-[#d3e3fd] text-[#0b57d0]' : 'text-ink hover:bg-canvas'}`}>
+      className={`flex h-9 w-9 items-center justify-center rounded-full ${active ? 'bg-brand-100 text-brand-700 dark:bg-brand-600/35 dark:text-white' : 'text-ink hover:bg-ink/[0.06]'}`}>
       {children}
     </button>
   );
