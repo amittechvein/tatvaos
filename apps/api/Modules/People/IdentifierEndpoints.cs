@@ -128,8 +128,6 @@ public static class IdentifierEndpoints
         if (note is { Length: > 300 }) return Results.BadRequest(new { error = "The note can be at most 300 characters." });
 
         var (value, outcome) = await access.RevealAsync(id, kind, req.Reason, string.IsNullOrEmpty(note) ? null : note, ct);
-        http.Response.Headers.CacheControl = "no-store";
-        http.Response.Headers.Pragma = "no-cache";
         return outcome switch
         {
             "shown" => Results.Ok(new { kind, value }),

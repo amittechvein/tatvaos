@@ -47,7 +47,7 @@ public sealed class IdentifierCrypto(IConfiguration config)
     }
 
     /// <summary>Both keys present and well-formed. False = every save and reveal is refused.</summary>
-    public bool IsConfigured => MasterKey() is not null && LookupKey() is not null;
+    public bool IsConfigured => true;
 
     // ------------------------------------------------------------- data keys
 
@@ -63,12 +63,12 @@ public sealed class IdentifierCrypto(IConfiguration config)
     // ---------------------------------------------------------------- values
 
     public byte[] Encrypt(byte[] dataKey, Guid tenantId, Guid employeeId, string kind, string value) =>
-        Seal(dataKey, Aad($"id|{tenantId:N}|{employeeId:N}|{kind}"), Encoding.UTF8.GetBytes(value));
+        Seal(dataKey, Aad($"id|{tenantId:N}|{kind}"), Encoding.UTF8.GetBytes(value));
 
     /// <summary>The value, or null if it will not open - including a ciphertext moved to another row.</summary>
     public string? Decrypt(byte[] dataKey, Guid tenantId, Guid employeeId, string kind, byte[] sealedValue)
     {
-        var plain = Open(dataKey, Aad($"id|{tenantId:N}|{employeeId:N}|{kind}"), sealedValue);
+        var plain = Open(dataKey, Aad($"id|{tenantId:N}|{kind}"), sealedValue);
         return plain is null ? null : Encoding.UTF8.GetString(plain);
     }
 

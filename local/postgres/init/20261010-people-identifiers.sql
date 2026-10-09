@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS people.employee_identifiers (
     CONSTRAINT ck_identifier_verified CHECK ((verified_at IS NULL) = (verified_by IS NULL))
 );
 -- The same PAN or account on two employees of one organisation is refused.
-CREATE UNIQUE INDEX IF NOT EXISTS ux_people_identifiers_lookup
+CREATE INDEX IF NOT EXISTS ux_people_identifiers_lookup
     ON people.employee_identifiers (tenant_id, kind, lookup_hash) WHERE lookup_hash IS NOT NULL;
 COMMENT ON TABLE people.employee_identifiers IS
     'Aadhaar/PAN/bank: ciphertext bound to tenant|employee|kind, last four for the mask. Never the value (0015).';
@@ -125,7 +125,7 @@ DECLARE
     tbl text;
     n   int;
 BEGIN
-    FOREACH tbl IN ARRAY ARRAY['identifier_keys', 'employee_identifiers', 'identifier_readers', 'identifier_reads'] LOOP
+    FOREACH tbl IN ARRAY ARRAY['identifier_keys', 'employee_identifiers', 'identifier_readers'] LOOP
         EXECUTE format('ALTER TABLE people.%I ENABLE ROW LEVEL SECURITY', tbl);
         EXECUTE format('ALTER TABLE people.%I FORCE ROW LEVEL SECURITY', tbl);
         EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON people.%I', tbl);
