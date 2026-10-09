@@ -72,8 +72,12 @@ CREATE TABLE IF NOT EXISTS migration.jobs (
     -- person to a TatvaOS person; a job with no target is never claimed.
     target_user_id   uuid,
 
-    state            text NOT NULL DEFAULT 'pending'
-                     CHECK (state IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+    -- 'planned': enrolled, not yet started. The runner never claims it; an
+    -- administrator starting the migration moves it to 'pending'. Enrolling a
+    -- whole organisation from Google's directory must not, by itself, start
+    -- reading everybody's mail.
+    state            text NOT NULL DEFAULT 'planned'
+                     CHECK (state IN ('planned', 'pending', 'running', 'completed', 'failed', 'cancelled')),
 
     -- The source's own resume token (Gmail page token, Drive change token,
     -- or for 'synthetic' the last item number). Opaque to everything but the

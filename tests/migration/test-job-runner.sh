@@ -109,15 +109,19 @@ step "1. Isolation, before anything runs"
 # API started later does not race this step.
 # WITH ... SELECT, not a bare RETURNING: psql -Atc prints the INSERT's status
 # line after the id, and tail -n1 would take that.
-TV_JOB=$(PG "WITH x AS (INSERT INTO migration.jobs (tenant_id, source, data_type, source_user, target_user_id, items_total, next_attempt_at)
-             VALUES ('$TECHVEIN', 'synthetic', 'mail', 'hr@techvein.example', '$HR_ID', $N_TV, now() + interval '1 day') RETURNING id) SELECT id FROM x")
-SC_JOB=$(PG "WITH x AS (INSERT INTO migration.jobs (tenant_id, source, data_type, source_user, target_user_id, items_total, next_attempt_at)
-             VALUES ('$SCHOOL', 'synthetic', 'mail', 'principal@abcschool.example', '$PR_ID', $N_SC, now() + interval '1 day') RETURNING id) SELECT id FROM x")
-NO_TARGET=$(PG "WITH x AS (INSERT INTO migration.jobs (tenant_id, source, data_type, source_user, items_total)
-             VALUES ('$TECHVEIN', 'synthetic', 'contacts', 'nobody@techvein.example', 10) RETURNING id) SELECT id FROM x")
+TV_JOB=$(PG "WITH x AS (INSERT INTO migration.jobs (tenant_id, source, data_type, source_user, target_user_id, items_total, state, next_attempt_at)
+             VALUES ('$TECHVEIN', 'synthetic', 'mail', 'hr@techvein.example', '$HR_ID', $N_TV, 'pending', now() + interval '1 day') RETURNING id) SELECT id FROM x")
+SC_JOB=$(PG "WITH x AS (INSERT INTO migration.jobs (tenant_id, source, data_type, source_user, target_user_id, items_total, state, next_attempt_at)
+             VALUES ('$SCHOOL', 'synthetic', 'mail', 'principal@abcschool.example', '$PR_ID', $N_SC, 'pending', now() + interval '1 day') RETURNING id) SELECT id FROM x")
+NO_TARGET=$(PG "WITH x AS (INSERT INTO migration.jobs (tenant_id, source, data_type, source_user, items_total, state)
+             VALUES ('$TECHVEIN', 'synthetic', 'contacts', 'nobody@techvein.example', 10, 'pending') RETURNING id) SELECT id FROM x")
+# Enrolled but not started: has a target person, and must never be claimed.
+PLANNED=$(PG "WITH x AS (INSERT INTO migration.jobs (tenant_id, source, data_type, source_user, target_user_id, items_total)
+             VALUES ('$TECHVEIN', 'synthetic', 'calendar', 'hr@techvein.example', '$HR_ID', 10) RETURNING id) SELECT id FROM x")
 uuid='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-for j in "$TV_JOB" "$SC_JOB" "$NO_TARGET"; do printf '%s' "$j" | grep -Eq "$uuid" || { fail "could not plant the jobs: [$TV_JOB] [$SC_JOB] [$NO_TARGET]"; exit 1; }; done
-pass "planted: a Techvein job, a School job, and a Techvein job with no target person"
+for j in "$TV_JOB" "$SC_JOB" "$NO_TARGET" "$PLANNED"; do printf '%s' "$j" | grep -Eq "$uuid" || { fail "could not plant the jobs: [$TV_JOB] [$SC_JOB] [$NO_TARGET]"; exit 1; }; done
+pass "planted: a Techvein job, a School job, a Techvein job with no target person, and a planned one"
+same "a job enrolled without a state is 'planned', not 'pending'" "$(PG "SELECT state FROM migration.jobs WHERE id='$PLANNED'")" "planned"
 
 same "Techvein sees its own job (the check below can fail)" "$(APP "$TECHVEIN" "SELECT count(*) FROM migration.jobs WHERE id='$TV_JOB'")" "1"
 same "School does not see Techvein's job" "$(APP "$SCHOOL" "SELECT count(*) FROM migration.jobs WHERE id='$TV_JOB'")" "0"
@@ -202,6 +206,8 @@ same "every item is in its own job's organisation" \
     "$(PG "SELECT count(*) FROM migration.items i JOIN migration.jobs j ON j.id = i.job_id WHERE i.tenant_id <> j.tenant_id")" "0"
 same "the job with no target person was never claimed" \
     "$(PG "SELECT state || ' ' || (started_at IS NULL) FROM migration.jobs WHERE id='$NO_TARGET'")" "pending true"
+same "the PLANNED job was never claimed, though it has a target person" \
+    "$(PG "SELECT state || ' ' || (started_at IS NULL) FROM migration.jobs WHERE id='$PLANNED'")" "planned true"
 if grep -q "Migration sweep failed" "$SCRATCH"/api-*.log; then fail "a sweep failed: $(grep -m1 "sweep failed" "$SCRATCH"/api-*.log | head -c 300)"
 else pass "neither run logged a sweep failure"; fi
 
