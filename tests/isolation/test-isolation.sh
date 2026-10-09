@@ -969,6 +969,68 @@ run_as tatvaos_app "DELETE FROM people.employee_id_settings WHERE false" >/dev/n
 
 run_as postgres "DELETE FROM people.employee_id_settings WHERE prefix IN ('ISOT-','ISOS-');" >/dev/null 2>&1
 
+hdr "People's employee records, HR lists and reporting history are isolated (0018)"
+
+# As postgres, with app.user_id set: the history trigger refuses a reporting
+# change that names no one, by design (setting reports_to grants access).
+run_as postgres "SELECT set_config('app.user_id', 'd1111111-1111-1111-1111-111111111111', false);
+    INSERT INTO people.employees (id, tenant_id, employee_code, full_name, joined_on) VALUES
+        ('0e000000-0000-0000-0000-0000000000a1','$TECHVEIN','ISO-T1','iso-emp-t-boss','2025-01-01'),
+        ('0e000000-0000-0000-0000-0000000000a2','$SCHOOL','ISO-S1','iso-emp-s-boss','2025-01-01')
+    ON CONFLICT DO NOTHING;
+    INSERT INTO people.employees (id, tenant_id, employee_code, full_name, joined_on, reports_to) VALUES
+        ('0e000000-0000-0000-0000-0000000000b1','$TECHVEIN','ISO-T2','iso-emp-t','2025-01-01','0e000000-0000-0000-0000-0000000000a1'),
+        ('0e000000-0000-0000-0000-0000000000b2','$SCHOOL','ISO-S2','iso-emp-s','2025-01-01','0e000000-0000-0000-0000-0000000000a2')
+    ON CONFLICT DO NOTHING;
+    INSERT INTO people.hr_members (tenant_id, user_id) VALUES
+        ('$SCHOOL','d2222222-2222-2222-2222-222222222222') ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+# Each "cannot see ABC School's rows" below is only a check if there ARE rows
+# to not see (testing-false-greens).
+fx=$(scalar_as postgres "SELECT (SELECT count(*) FROM people.employees WHERE tenant_id='$SCHOOL' AND full_name LIKE 'iso-emp-s%')
+                             ||'/'||(SELECT count(*) FROM people.reporting_changes WHERE tenant_id='$SCHOOL')
+                             ||'/'||(SELECT count(*) FROM people.hr_members WHERE tenant_id='$SCHOOL')")
+case "$fx" in 2/[1-9]*/[1-9]*) pass "fixture: ABC School has employees, history and People HR ($fx)" ;;
+              *) fail "fixture incomplete for ABC School ($fx) - the leak checks below would prove nothing" ;; esac
+
+own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM people.employees WHERE full_name LIKE 'iso-emp-t%'")
+[ "${own:-0}" -eq 2 ] && pass "Techvein sees its own employee records" \
+                      || fail "Techvein cannot see its own employees (got '${own}') - fixture or RLS too strict"
+own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM people.reporting_changes WHERE employee_id = '0e000000-0000-0000-0000-0000000000b1'")
+[ "${own:-0}" -eq 1 ] && pass "Techvein sees its own reporting history" \
+                      || fail "Techvein cannot see its own reporting history (got '${own}') - fixture incomplete"
+for tbl in people.employees people.reporting_changes people.hr_members; do
+    leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM $tbl WHERE tenant_id = '$SCHOOL'")
+    [ "${leak:-1}" -eq 0 ] && pass "$tbl: Techvein cannot see ABC School's rows" \
+                           || fail "LEAK: $tbl shows $leak ABC School row(s) to Techvein"
+    n=$(no_context "SELECT count(*) FROM $tbl")
+    [ "${n:-1}" -eq 0 ] && pass "$tbl: no tenant context returns zero rows" \
+                        || fail "DANGEROUS: $tbl shows ${n} row(s) with no tenant set"
+done
+forge_out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    INSERT INTO people.employees (tenant_id, employee_code, full_name, joined_on) VALUES ('$SCHOOL','ISO-F','iso-forged','2025-01-01');" 2>&1)
+if grep -qi 'row-level security' <<< "$forge_out"; then
+    pass "cross-tenant employee INSERT blocked by WITH CHECK"
+else
+    fail "LEAK: Techvein wrote an employee record into ABC School"
+fi
+# Bypassing RLS entirely, only the composite foreign key can refuse this: a
+# Techvein employee reporting to ABC School's - which would grant access.
+out=$(run_as postgres "SELECT set_config('app.user_id', 'd1111111-1111-1111-1111-111111111111', false);
+    UPDATE people.employees SET reports_to = '0e000000-0000-0000-0000-0000000000a2'
+     WHERE id = '0e000000-0000-0000-0000-0000000000b1';" 2>&1)
+grep -qi 'foreign key' <<< "$out" \
+    && pass "a Techvein employee cannot report to ABC School's, even bypassing RLS" \
+    || fail "LEAK: a Techvein employee was allowed to report to ABC School's manager"
+for stmt in "DELETE FROM people.employees WHERE false" \
+            "UPDATE people.reporting_changes SET changed_by = changed_by WHERE false" \
+            "DELETE FROM people.reporting_changes WHERE false"; do
+    run_as tatvaos_app "$stmt" >/dev/null 2>&1 && fail "app can still run: $stmt" || pass "app refused: $stmt"
+done
+
+run_as postgres "DELETE FROM people.employees WHERE full_name LIKE 'iso-emp-%' AND reports_to IS NOT NULL;
+    DELETE FROM people.employees WHERE full_name LIKE 'iso-emp-%';
+    DELETE FROM people.hr_members WHERE tenant_id = '$SCHOOL' AND user_id = 'd2222222-2222-2222-2222-222222222222';" >/dev/null 2>&1
+
 # ---------------------------------------------------------------------------
 printf '\n%s%s%s\n' "$CYAN" "----------------------------------------" "$RST"
 printf '  passed: %s%d%s   failed: %s%d%s\n' \
