@@ -1021,6 +1021,45 @@ do
     fi
 done
 
+hdr "People's employee-ID schemes are isolated (20261008)"
+
+run_as postgres "
+    INSERT INTO people.employee_id_settings (tenant_id, prefix, digits, next_number) VALUES
+        ('$TECHVEIN','ISOT-',4,1), ('$SCHOOL','ISOS-',3,1)
+    ON CONFLICT (tenant_id) DO UPDATE SET prefix = EXCLUDED.prefix;" >/dev/null 2>&1
+
+own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM people.employee_id_settings WHERE prefix = 'ISOT-'")
+[ "${own:-0}" -eq 1 ] && pass "Techvein sees its own employee-ID scheme" \
+                      || fail "Techvein cannot see its own scheme (got '${own}') - fixture or RLS too strict"
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM people.employee_id_settings WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's scheme" \
+                       || fail "LEAK: ABC School's employee-ID scheme visible to Techvein"
+n=$(no_context "SELECT count(*) FROM people.employee_id_settings")
+[ "${n:-1}" -eq 0 ] && pass "no tenant context returns zero schemes" \
+                    || fail "DANGEROUS: ${n} employee-ID scheme(s) visible with no tenant set"
+upd=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    UPDATE people.employee_id_settings SET prefix = 'HIJACK' WHERE tenant_id = '$SCHOOL';" 2>&1 | tail -n1)
+still=$(scalar_as postgres "SELECT prefix FROM people.employee_id_settings WHERE tenant_id = '$SCHOOL'")
+[ "$still" = "ISOS-" ] && pass "Techvein's UPDATE of ABC School's scheme touched nothing ($upd)" \
+                       || fail "LEAK: Techvein rewrote ABC School's scheme to '$still'"
+# ABC School's row is removed first, so a refusal can only be row-level
+# security - not the primary key, which would refuse a second row anyway
+# and make this pass for the wrong reason.
+run_as postgres "DELETE FROM people.employee_id_settings WHERE tenant_id = '$SCHOOL';" >/dev/null 2>&1
+forge_out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    INSERT INTO people.employee_id_settings (tenant_id, prefix) VALUES ('$SCHOOL', 'FORGED');" 2>&1)
+forged=$(scalar_as postgres "SELECT count(*) FROM people.employee_id_settings WHERE tenant_id = '$SCHOOL'")
+if grep -qi 'row-level security' <<< "$forge_out" && [ "${forged:-1}" -eq 0 ]; then
+    pass "cross-tenant scheme INSERT blocked by WITH CHECK"
+else
+    fail "LEAK: Techvein wrote an employee-ID scheme for ABC School (rows: ${forged:-?})"
+fi
+run_as tatvaos_app "DELETE FROM people.employee_id_settings WHERE false" >/dev/null 2>&1 \
+    && fail "the app can DELETE a scheme (it should only go with its organisation)" \
+    || pass "the app has no DELETE on schemes"
+
+run_as postgres "DELETE FROM people.employee_id_settings WHERE prefix IN ('ISOT-','ISOS-');" >/dev/null 2>&1
+
 # ---------------------------------------------------------------------------
 printf '\n%s%s%s\n' "$CYAN" "----------------------------------------" "$RST"
 printf '  passed: %s%d%s   failed: %s%d%s\n' \

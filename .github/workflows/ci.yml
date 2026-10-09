@@ -329,6 +329,14 @@ jobs:
       - name: "Hire: the public careers page shows only what it may"
         run: bash tests/hire/test-careers.sh
 
+      # People Phase 0: the employee-ID scheme (20261008). Admins only, one
+      # per organisation, refusals by the API and the database, and the digit
+      # count a minimum, never a cut (red with a bare lpad(): TV-1000 for
+      # number 10000). Starts its own API on :5109. Proposed 8 Oct 2026 for
+      # Mr. Singh's approval with the PR that adds it.
+      - name: "People: the employee-ID scheme"
+        run: bash tests/people/test-employee-ids.sh
+
       # The development-only operator sign-in, against the BUILT API in six
       # configurations: refuses to boot as Production/Staging with the switch
       # on; not mapped with it off (CI's own Development included); a real
