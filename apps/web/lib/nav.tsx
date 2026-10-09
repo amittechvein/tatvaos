@@ -243,6 +243,8 @@ export function organisationNav(): NavSection[] {
           ],
         },
         { href: '/org/storage', label: 'Storage', icon: <Icon d={PATHS.database} /> },
+        // Moving the organisation in from Google Workspace (decision 0019).
+        { href: '/org/migration', label: 'Move from Google', icon: <Icon d={PATHS.inbox} /> },
         // Org-wide policy over what leaves by link. One switch today (Space's
         // public links); Connect's recording-retention choice lands here next,
         // which is why it is a page and not a checkbox on the Storage screen.
