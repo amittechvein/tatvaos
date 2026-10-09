@@ -10,7 +10,8 @@
 #      +91 form, re-runs with 0 changes, and LEAVES a colliding pair alone
 #      with a WARNING naming the count
 #   3. after it, the rewritten person signs in by the bare spelling; the
-#      colliding pair still fails closed (no code for either)
+#      colliding pair fails closed whichever spelling is typed (a lookup
+#      matches EVERY spelling of a number, so two live rows = two matches)
 #   4. an administrator typing "98765 43210" as a recovery phone stores
 #      +919876543210; an 8-digit landline is stored as before (not refused)
 #
@@ -139,8 +140,13 @@ step "3. After the rewrite: the bare spelling signs hr in; the pair fails closed
 same "hr typed bare" "$(otp_signs_in hr@techvein.local "9999900002")" "yes"
 same "principal typed with 0" "$(otp_signs_in principal@abcschool.local "0 99999 00003")" "yes"
 PG "UPDATE core.users SET login_otp_sent_at = NULL WHERE email IN ($MADE)" >/dev/null
-r=$(post /api/auth/otp/request '{"phone":"9999900077"}')
-same "the pair's number: 200 but no code for anyone" "$(status "$r")/$(body "$r" | j "d.get('devCode') or 'none'")" "200/none"
+# Both spellings: the first run (25/26) found the +91 one reached pair B
+# alone, so A was silently unreachable by phone; now both are two matches.
+for typed in "9999900077" "+919999900077"; do
+    PG "UPDATE core.users SET login_otp_sent_at = NULL WHERE email IN ($MADE)" >/dev/null
+    r=$(post /api/auth/otp/request "{\"phone\":\"$typed\"}")
+    same "the pair's number typed [$typed]: 200 but no code for anyone" "$(status "$r")/$(body "$r" | j "d.get('devCode') or 'none'")" "200/none"
+done
 
 step "4. An administrator's typed recovery phone is stored canonical"
 code=$(otp_signs_in amit@techvein.local "+919999900001" >/dev/null; PG "SELECT 1")  # ensure clock cleared

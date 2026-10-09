@@ -55,6 +55,27 @@ public static class PhoneNumber
     /// </summary>
     public static string? Stored(string? raw) => Canonical(raw) ?? Normalise(raw);
 
+    /// <summary>
+    /// Every raw spelling Stored() maps to this value - what a LOOKUP matches
+    /// the stored column against, so a row not yet rewritten (the colliding
+    /// pair the migration leaves alone, or a database the migration never
+    /// reached) is still found. Two live rows on one number are then two
+    /// matches, and the callers fail closed on that, which is the point: the
+    /// first run of the suite (25/26) showed that matching only the canonical
+    /// spelling reached one half of a colliding pair and silently locked the
+    /// other half out of phone sign-in for good. Empty for null.
+    /// </summary>
+    public static string[] Spellings(string? stored)
+    {
+        if (string.IsNullOrEmpty(stored)) return [];
+        if (stored.Length == 13 && stored.StartsWith("+91") && stored[3] is >= '6' and <= '9')
+        {
+            var d = stored[3..];
+            return [stored, d, "0" + d, "91" + d];
+        }
+        return [stored];
+    }
+
     /// <summary>Everything but the last four digits. Enough to recognise your
     /// own number, useless for guessing anyone else's.</summary>
     public static string? Mask(string? phone) =>
