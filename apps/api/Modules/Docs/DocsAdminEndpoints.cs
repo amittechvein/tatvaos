@@ -101,9 +101,7 @@ public static class DocsAdminEndpoints
         // plain count here would read 0 and pass (20260930-b-...sql).
         if (req.Enabled)
         {
-            var browserWritten = await db.Database
-                .SqlQuery<long>($"SELECT docs.browser_written_count({id}) AS \"Value\"")
-                .SingleAsync(ct);
+            var browserWritten = await BrowserWrittenFiles.CountAsync(db, id, ct);
             if (browserWritten > 0)
             {
                 loggers.CreateLogger("TatvaOS.Docs.Switch").LogWarning(
@@ -157,4 +155,26 @@ public static class DocsAdminEndpoints
 
     private static Guid Actor(HttpContext http) =>
         TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
+}
+
+/// <summary>
+/// How many of an organisation's files — documents AND spreadsheets — a
+/// browser wrote before the server built them (rendered_seq NULL with
+/// checkpoint_at set). Both switches refuse switch-on while it is above 0:
+/// Docs since 30 Sept, Sheets since 9 Oct 2026. Until then the Sheets switch
+/// had no guard of its own; the design's stand-in was the operator running
+/// this same count by hand before each switch-on (it was run, and read 0, for
+/// Techvein on 8 Oct). Mr. Singh, 9 Oct: a switch should refuse switch-on
+/// itself rather than rely on someone remembering to count.
+///
+/// A SECURITY DEFINER function, not a LINQ count: the operator cannot see
+/// anybody's documents through RLS, so a plain count reads 0 and passes
+/// (20260930-b-docs-rendered-by-server.sql; calibrated in both live tests).
+/// </summary>
+public static class BrowserWrittenFiles
+{
+    public static Task<long> CountAsync(AppDbContext db, Guid tenantId, CancellationToken ct) =>
+        db.Database
+            .SqlQuery<long>($"SELECT docs.browser_written_count({tenantId}) AS \"Value\"")
+            .SingleAsync(ct);
 }
