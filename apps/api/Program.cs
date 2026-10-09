@@ -117,6 +117,9 @@ builder.Services.AddScoped<StorageAllocator>();
 builder.Services.AddScoped<AuditWriter>();
 // What the signed-in person may do in Hire (admin / recruiter / hiring manager).
 builder.Services.AddScoped<TatvaOS.Api.Modules.Hire.HireAccess>();
+// What the signed-in person may see in People: HR everyone, anyone else
+// themselves and their reports (decision 0018; manager from reports_to).
+builder.Services.AddScoped<TatvaOS.Api.Modules.People.PeopleAccess>();
 // Personal accounts (/join): the one "is this the personal house?" answer,
 // and the keyed phone fingerprint (Personal:PhoneHashKey; unset = /join closed).
 builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalHouse>();
@@ -923,6 +926,8 @@ app.MapDepartmentEndpoints();
 app.MapOrgStructureEndpoints();
 // Employee-ID scheme: Phase 0 of People (8 Oct 2026). API only, no page yet.
 TatvaOS.Api.Modules.People.EmployeeIdEndpoints.MapEmployeeIdEndpoints(app);
+// Employee records and People HR (decision 0018, stage one). API only.
+TatvaOS.Api.Modules.People.EmployeeEndpoints.MapEmployeeEndpoints(app);
 // TatvaOS Hire R1: job openings (24 Sept 2026).
 TatvaOS.Api.Modules.Hire.JobOpeningEndpoints.MapJobOpeningEndpoints(app);
 TatvaOS.Api.Modules.Hire.HireTeamEndpoints.MapHireTeamEndpoints(app);

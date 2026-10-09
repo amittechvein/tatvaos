@@ -411,6 +411,29 @@ export function hireNav({ showTeam, showCareers = false, showSettings = false }:
 }
 
 // ============================================================================
+//  People — employee records (decision 0018). Like Hire, not in the launcher
+//  until Amit launches it (the product row is is_available=false); reached at
+//  /people directly. HR sees everyone; anyone else themselves and their team.
+// ============================================================================
+export function peopleNav({ isHr, showHrList }: { isHr: boolean; showHrList: boolean }): NavSection[] {
+  return [
+    {
+      heading: 'People',
+      items: [
+        { href: '/people', label: isHr ? 'Employees' : 'My team', icon: <Icon d={PATHS.users} colour="#00b8d9" /> },
+        ...(isHr
+          ? [{ href: '/people/new', label: 'Add employee', icon: <Icon d={PATHS.compose} colour="#6C3CE9" /> }]
+          : []),
+        // Administrators name People HR; HR may see who else is.
+        ...(showHrList
+          ? [{ href: '/people/hr', label: 'People HR', icon: <Icon d={PATHS.key} colour="#5c5c72" /> }]
+          : []),
+      ],
+    },
+  ];
+}
+
+// ============================================================================
 //  Space — file storage.
 // ============================================================================
 // ============================================================================

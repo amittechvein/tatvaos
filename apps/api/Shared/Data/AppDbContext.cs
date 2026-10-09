@@ -450,6 +450,20 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.People.EmployeeIdSettings>().HasKey(s => s.TenantId);
         b.Entity<TatvaOS.Api.Modules.People.EmployeeIdSettings>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // 20261009 (decision 0018): employees, People HR, reporting history.
+        // NO DbSet for any of them - PeopleAccess is the only route
+        // (tests/people/check-people-gate.sh). reporting_changes is written by
+        // the database's trigger only; EF reads it.
+        b.Entity<TatvaOS.Api.Modules.People.Employee>().ToTable("employees", "people");
+        b.Entity<TatvaOS.Api.Modules.People.Employee>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.People.PeopleHrMember>().ToTable("hr_members", "people");
+        b.Entity<TatvaOS.Api.Modules.People.PeopleHrMember>().HasKey(m => new { m.TenantId, m.UserId });
+        b.Entity<TatvaOS.Api.Modules.People.PeopleHrMember>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.People.ReportingChange>().ToTable("reporting_changes", "people");
+        b.Entity<TatvaOS.Api.Modules.People.ReportingChange>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiSend>().ToTable("api_sends", "mail");
         // 20261001-mail-sender-gate-bounce: the outbound gate's record of each
         // send's mailbox. No DbSet; append-only for the app.

@@ -87,6 +87,16 @@ public static class EmployeeIdEndpoints
         if (next is < 1 or > MaxNumber)
             return Results.BadRequest(new { error = $"The next number must be between 1 and {MaxNumber:N0}." });
 
+        // Never hand out a number already issued under this prefix (0018 §1):
+        // the unique index would refuse the employee later, at the worst time.
+        if (mode == "auto"
+            && await PeopleAccess.OrganisationWide.HighestIssuedAsync(db, prefix, ct) is long highest
+            && next <= highest)
+            return Results.BadRequest(new
+            {
+                error = $"{prefix}{highest} has already been given. The next number must be above {highest:N0}.",
+            });
+
         var row = await db.Set<EmployeeIdSettings>().FirstOrDefaultAsync(ct);
         var before = row is null ? null : new { row.Mode, row.Prefix, row.Digits, row.NextNumber };
         if (row is null)
