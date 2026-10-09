@@ -191,7 +191,16 @@ async Task<Dictionary<string, Dictionary<string, (MessageFlags Flags, DateTimeOf
         await f.OpenAsync(FolderAccess.ReadOnly);
         var msgs = new Dictionary<string, (MessageFlags, DateTimeOffset?)>();
         foreach (var s in await f.FetchAsync(0, -1, MessageSummaryItems.Envelope | MessageSummaryItems.Flags | MessageSummaryItems.InternalDate))
-            msgs[(s.Envelope?.MessageId ?? "(none)").Split('@')[0]] = (s.Flags ?? MessageFlags.None, s.InternalDate);
+        {
+            // A duplicate gets its own key ("m1#2"), never overwrites: keyed
+            // by Message-ID alone, two copies counted as one and the "no
+            // folder gained a message" check stayed green while every message
+            // was appended twice (found by calibrating this test).
+            var stem = (s.Envelope?.MessageId ?? "(none)").Split('@')[0];
+            var key = stem;
+            for (var n = 2; msgs.ContainsKey(key); n++) key = $"{stem}#{n}";
+            msgs[key] = (s.Flags ?? MessageFlags.None, s.InternalDate);
+        }
         if (rel.Length > 0) result[rel] = msgs;
         foreach (var sub in await f.GetSubfoldersAsync(false))
             await Walk(sub, rel.Length == 0 ? sub.Name : $"{rel}{ns.DirectorySeparator}{sub.Name}");
