@@ -119,14 +119,11 @@ export const RAIL_PRODUCTS: RailProduct[] = [
   // entries were bought under that code — but the product's NAME is Space.
   { code: 'drive', label: 'Space', href: '/space/personal', icon: <Icon d={PATHS.drive} />,
     live: true, colour: '#28c76f', match: ['/space'] },
-  // Docs has NO tile yet, on purpose. It ships switched off and is turned on
-  // per organisation by the platform operator (docs.tenant_settings), and this
-  // list is the same for everyone — a tile here would lead every customer to
-  // a "not switched on" page. The tile comes back, blue (#1a73e8, not
-  // Calendar's #4285f4), in the commit that turns Docs on for everyone.
-  // Sheets, likewise: no tile. It has its own per-organisation switch
-  // (SheetsSwitch), off by default; the tile (green, #188038) comes back in
-  // the commit that turns Sheets on for everyone.
+  // Docs and Sheets are NOT in this list, on purpose: it is the same for
+  // everyone, and each is switched on per organisation by the platform
+  // operator (docs.tenant_settings, docs.sheets_tenant_settings). A tile here
+  // would lead every other customer to a "not switched on" page. They live in
+  // SWITCHED_PRODUCTS below, which the launcher shows per organisation.
   // Being built. It stays in the grid because it is genuinely next and the
   // tile sets the expectation; products nobody has STARTED were removed —
   // a wall of greyed tiles reads as a suite that does not exist.
@@ -151,6 +148,22 @@ export const RAIL_PRODUCTS: RailProduct[] = [
   // which is why it sits apart at the end rather than among the products.
   { code: 'platform', label: 'Platform admin', href: '/admin',
     icon: <Icon d={PATHS.gear} />, live: true, colour: '#5c5c72', match: ['/admin'] },
+];
+
+/**
+ * Products switched on per ORGANISATION, so not in RAIL_PRODUCTS. The app
+ * launcher asks /docs/status and /sheets/status for the signed-in person's
+ * organisation and shows each tile only where it is on (Amit, 9 Oct 2026:
+ * "add docs sheets here"). If that check fails, the tile stays hidden: a
+ * tile that leads to "not switched on" is worse than no tile. Colours as
+ * reserved when they were left out: Docs blue (#1a73e8, not Calendar's
+ * #4285f4), Sheets green (#188038, not Space's #28c76f).
+ */
+export const SWITCHED_PRODUCTS: RailProduct[] = [
+  { code: 'docs', label: 'Docs', href: '/docs', icon: <Icon d={PATHS.doc} />,
+    live: true, colour: '#1a73e8', match: ['/docs'] },
+  { code: 'sheets', label: 'Sheets', href: '/sheets', icon: <Icon d={PATHS.sheet} />,
+    live: true, colour: '#188038', match: ['/sheets'] },
 ];
 
 /** Techvein running the platform. */
