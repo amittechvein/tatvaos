@@ -27,6 +27,8 @@ export interface PaintSource {
   locale: Locale;
   /** Cells with an open comment thread get the orange corner Sheets draws. */
   hasComment?: (r: number, c: number) => boolean;
+  /** Dropdown cells (dropdowns.ts): 'ok', or 'bad' for a value not on the list (a red corner). */
+  dropdown?: (r: number, c: number) => 'ok' | 'bad' | null;
   /** Cells whose formula is saved as text in downloads (safety.ts) get a grey corner. */
   textInDownloads?: (r: number, c: number) => boolean;
 }
@@ -224,6 +226,36 @@ function drawRegion(
         ctx.lineTo(box.x + box.w - 1, box.y);
         ctx.lineTo(box.x + box.w - 1, box.y + 7);
         ctx.fill();
+      }
+    }
+  }
+
+  // Dropdowns: a small arrow at the right of the cell; a value that is not
+  // one of the choices (pasted, filled, typed into a loose dropdown) gets a
+  // red corner at the top left — the other corners are taken (comments top
+  // right, text-in-downloads bottom left).
+  if (src.dropdown) {
+    for (let r = r1; r <= r2; r += 1) {
+      for (let c = c1; c <= c2; c += 1) {
+        const state = src.dropdown(r, c);
+        if (!state) continue;
+        const m = covered.get(`${r},${c}`);
+        if (m && (m.r1 !== r || m.c1 !== c)) continue;
+        const box = m ? cellRect(g, st, m.r1, m.c1, m.r2, m.c2) : cellRect(g, st, r, c, r, c);
+        if (box.w < 24) continue;
+        const ax = box.x + box.w - 11; const ay = box.y + box.h / 2 - 2;
+        ctx.fillStyle = T.headerText;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay); ctx.lineTo(ax + 7, ay); ctx.lineTo(ax + 3.5, ay + 4);
+        ctx.fill();
+        if (state === 'bad') {
+          ctx.fillStyle = '#d93025';
+          ctx.beginPath();
+          ctx.moveTo(box.x + 1, box.y + 1);
+          ctx.lineTo(box.x + 8, box.y + 1);
+          ctx.lineTo(box.x + 1, box.y + 8);
+          ctx.fill();
+        }
       }
     }
   }

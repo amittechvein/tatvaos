@@ -11,6 +11,7 @@
 import type { Rect } from './engine/address';
 import type { Scalar } from './engine/types';
 import type { ColourRule } from './rules';
+import type { Dropdown } from './dropdowns';
 
 export type BorderStyle = 'thin' | 'medium' | 'thick' | 'dashed' | 'dotted' | 'double';
 export interface BorderSide { style: BorderStyle; color: string }
@@ -59,6 +60,8 @@ export interface SheetData {
   hidden?: boolean;
   /** Colour rules (conditional formatting), first match wins. Absent = none. See rules.ts. */
   rules?: (Rect & ColourRule)[];
+  /** Dropdowns (data validation lists), oldest first; the last wins where two cover a cell. See dropdowns.ts. */
+  dropdowns?: (Rect & Dropdown)[];
 }
 
 export interface WorkbookData {
