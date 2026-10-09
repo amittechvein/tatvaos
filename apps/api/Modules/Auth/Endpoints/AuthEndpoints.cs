@@ -442,7 +442,8 @@ public static class AuthEndpoints
         Shared.Notify.ISmsSender sms, Shared.Settings.SettingsReader settings,
         HttpContext http, CancellationToken ct)
     {
-        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        var phone = Shared.PhoneNumber.Stored(req.Phone);
+        var spellings = Shared.PhoneNumber.Spellings(phone);
         if (phone is null)
             return Results.BadRequest(new
             {
@@ -452,7 +453,7 @@ public static class AuthEndpoints
         // Cross-tenant on purpose, like the email login — the tenant cannot be
         // known until the user is found. Exactly one live match may proceed.
         var matches = await db.Users.IgnoreQueryFilters()
-            .Where(u => u.Phone == phone && u.Status != "deleted" && u.Status != "suspended")
+            .Where(u => spellings.Contains(u.Phone) && u.Status != "deleted" && u.Status != "suspended")
             .Take(2)
             .ToListAsync(ct);
 
@@ -504,14 +505,15 @@ public static class AuthEndpoints
         TenantContext tenant, HttpContext http, IServiceScopeFactory scopeFactory,
         IConfiguration config, TotpService totp, CancellationToken ct)
     {
-        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        var phone = Shared.PhoneNumber.Stored(req.Phone);
+        var spellings = Shared.PhoneNumber.Spellings(phone);
         var code = req.Code?.Trim() ?? "";
 
         if (phone is null || code.Length != 6)
             return Results.Json(new { error = GenericFailure }, statusCode: 401);
 
         var matches = await db.Users.IgnoreQueryFilters()
-            .Where(u => u.Phone == phone && u.Status != "deleted" && u.Status != "suspended")
+            .Where(u => spellings.Contains(u.Phone) && u.Status != "deleted" && u.Status != "suspended")
             .Take(2)
             .ToListAsync(ct);
 
@@ -1724,7 +1726,8 @@ public static class AuthEndpoints
         Shared.Notify.ISmsSender sms, Shared.Settings.SettingsReader settings,
         IPasswordHasher hasher, CancellationToken ct)
     {
-        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        var phone = Shared.PhoneNumber.Stored(req.Phone);
+        var spellings = Shared.PhoneNumber.Spellings(phone);
         if (phone is null)
             return Results.BadRequest(new
             {
@@ -1745,7 +1748,7 @@ public static class AuthEndpoints
         // per number; a second claim would silently break both for the first.
         // Cross-tenant on purpose, like the login lookup.
         var taken = await db.Users.IgnoreQueryFilters()
-            .AnyAsync(u => u.Id != user.Id && u.Phone == phone
+            .AnyAsync(u => u.Id != user.Id && spellings.Contains(u.Phone)
                            && u.Status != "deleted" && u.Status != "suspended", ct);
         if (taken)
             return Results.BadRequest(new { error = "That number is already linked to another account." });
@@ -1810,8 +1813,9 @@ public static class AuthEndpoints
 
         // The number may have been claimed between request and verify.
         var pending = user.PendingPhone;
+        var pendingSpellings = Shared.PhoneNumber.Spellings(pending);
         var taken = await db.Users.IgnoreQueryFilters()
-            .AnyAsync(u => u.Id != user.Id && u.Phone == pending
+            .AnyAsync(u => u.Id != user.Id && pendingSpellings.Contains(u.Phone)
                            && u.Status != "deleted" && u.Status != "suspended", ct);
         user.PendingPhone = null;
         user.PendingPhoneOtpHash = null;
@@ -2352,7 +2356,8 @@ public static class AuthEndpoints
         Shared.Notify.ISmsSender sms, Shared.Settings.SettingsReader settings,
         CancellationToken ct)
     {
-        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        var phone = Shared.PhoneNumber.Stored(req.Phone);
+        var spellings = Shared.PhoneNumber.Spellings(phone);
         if (phone is null)
             return Results.BadRequest(new
             {
@@ -2363,7 +2368,7 @@ public static class AuthEndpoints
         // like the login OTP, since a code that reset "whichever matched first"
         // would hand one person another person's account.
         var matches = await db.Users.IgnoreQueryFilters()
-            .Where(u => u.Phone == phone && u.Status != "deleted" && u.Status != "suspended")
+            .Where(u => spellings.Contains(u.Phone) && u.Status != "deleted" && u.Status != "suspended")
             .Take(2)
             .ToListAsync(ct);
 
@@ -2406,7 +2411,8 @@ public static class AuthEndpoints
         ResetPasswordOtpRequest req, AppDbContext db, IPasswordHasher hasher,
         TenantContext tenant, AuditWriter audit, CancellationToken ct)
     {
-        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        var phone = Shared.PhoneNumber.Stored(req.Phone);
+        var spellings = Shared.PhoneNumber.Spellings(phone);
         var code = req.Code?.Trim() ?? "";
 
         if (string.IsNullOrEmpty(req.NewPassword))
@@ -2417,7 +2423,7 @@ public static class AuthEndpoints
             return Results.Json(new { error = "That code is invalid or has expired." }, statusCode: 400);
 
         var matches = await db.Users.IgnoreQueryFilters()
-            .Where(u => u.Phone == phone && u.Status != "deleted" && u.Status != "suspended")
+            .Where(u => spellings.Contains(u.Phone) && u.Status != "deleted" && u.Status != "suspended")
             .Take(2)
             .ToListAsync(ct);
 

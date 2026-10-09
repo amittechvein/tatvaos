@@ -425,10 +425,64 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Hire.HireTeamMember>().HasKey(m => new { m.TenantId, m.UserId });
         b.Entity<TatvaOS.Api.Modules.Hire.HireTeamMember>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // 20260924-d: candidates, applications, pipeline, history. Mapped with
+        // NO DbSet property, like job openings — HireAccess is the only route
+        // (tests/hire/check-job-gate.sh).
+        b.Entity<TatvaOS.Api.Modules.Hire.HirePipelineStage>().ToTable("pipeline_stages", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HirePipelineStage>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireCandidate>().ToTable("candidates", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireCandidate>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireApplication>().ToTable("applications", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireApplication>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireSetting>().ToTable("settings", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireSetting>().HasKey(s => s.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireSetting>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireApplicationEvent>().ToTable("application_events", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireApplicationEvent>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // Declared so EF inserts an application BEFORE its first history row
+        // when both are saved together. Without it EF ordered the event first
+        // and the composite FK refused it (23503) — found on the first run of
+        // the candidates test; same lesson as department_id and DkimKeys.
+        b.Entity<TatvaOS.Api.Modules.Hire.HireApplicationEvent>()
+            .HasOne<TatvaOS.Api.Modules.Hire.HireApplication>().WithMany()
+            .HasForeignKey(e => new { e.TenantId, e.ApplicationId })
+            .HasPrincipalKey(a => new { a.TenantId, a.Id })
+            .OnDelete(DeleteBehavior.Cascade);
         // 20260924-f: careers sites. No DbSet, like every Hire record.
         b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>().ToTable("careers_sites", "hire");
         b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>().HasKey(s => s.TenantId);
         b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // 20261008: People's employee-ID scheme, one row per organisation.
+        b.Entity<TatvaOS.Api.Modules.People.EmployeeIdSettings>().ToTable("employee_id_settings", "people");
+        b.Entity<TatvaOS.Api.Modules.People.EmployeeIdSettings>().HasKey(s => s.TenantId);
+        b.Entity<TatvaOS.Api.Modules.People.EmployeeIdSettings>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // 20261009 (decision 0018): employees, People HR, reporting history.
+        // NO DbSet for any of them - PeopleAccess is the only route
+        // (tests/people/check-people-gate.sh). reporting_changes is written by
+        // the database's trigger only; EF reads it.
+        b.Entity<TatvaOS.Api.Modules.People.Employee>().ToTable("employees", "people");
+        b.Entity<TatvaOS.Api.Modules.People.Employee>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.People.PeopleHrMember>().ToTable("hr_members", "people");
+        b.Entity<TatvaOS.Api.Modules.People.PeopleHrMember>().HasKey(m => new { m.TenantId, m.UserId });
+        b.Entity<TatvaOS.Api.Modules.People.PeopleHrMember>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.People.DirectorySettings>().ToTable("directory_settings", "people");
+        b.Entity<TatvaOS.Api.Modules.People.DirectorySettings>().HasKey(s => s.TenantId);
+        b.Entity<TatvaOS.Api.Modules.People.DirectorySettings>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.People.CorrectionRequest>().ToTable("correction_requests", "people");
+        b.Entity<TatvaOS.Api.Modules.People.CorrectionRequest>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.People.ReportingChange>().ToTable("reporting_changes", "people");
+        b.Entity<TatvaOS.Api.Modules.People.ReportingChange>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiSend>().ToTable("api_sends", "mail");
         // 20261001-mail-sender-gate-bounce: the outbound gate's record of each
