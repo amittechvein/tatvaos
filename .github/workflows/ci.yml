@@ -116,11 +116,12 @@ jobs:
       - name: "Auth check: every token type is checked for its own type"
         run: dotnet run --project tests/token-types
 
-      # Hire: HireAccess is the only route to hire.job_openings. A handler
-      # that read the table directly would show a hiring manager every job in
-      # the organisation with nothing looking wrong. Source scan, no database.
-      # Mr. Singh, 24 Sept 2026 (PR 264): "make the gate structural".
-      - name: "Hire check: the job-openings gate has no way around it"
+      # Hire: HireAccess is the only route to Hire's records — job openings,
+      # candidates, applications, their history and the pipeline. A handler
+      # that read a table directly would show a hiring manager every job or
+      # candidate in the organisation with nothing looking wrong. Source scan,
+      # no database. Mr. Singh, 24 Sept 2026 (PR 264): "make the gate structural".
+      - name: "Hire check: the Hire access gate has no way around it"
         run: bash tests/hire/check-job-gate.sh
 
       # People: PeopleAccess is the only route to employee records (0018 §4).
@@ -319,11 +320,13 @@ jobs:
       - name: "Organisation API: people, meetings and the calendar"
         run: bash tests/orgapi/test-org-api.sh
 
-      # TatvaOS Hire: job openings and the hiring team. Mostly refusals —
-      # another organisation's office or person, a confidential draft title
-      # reaching a public address, a hiring manager seeing someone else's job.
+      # TatvaOS Hire: job openings, the hiring team, candidates and
+      # applications. Mostly refusals — another organisation's office or
+      # person, a confidential draft title reaching a public address, a hiring
+      # manager seeing someone else's job or candidate, a rejection with no
+      # reason, personal data surviving an erasure in the audit log.
       # Approved by Mr. Singh, 24 Sept 2026 (PR 262 review).
-      - name: "Hire: job openings and the hiring team"
+      - name: "Hire: job openings, the hiring team, candidates and applications"
         run: bash tests/hire/test-job-openings.sh
 
       # The public careers page (decision 0010 §1): the first unauthenticated
@@ -401,6 +404,12 @@ jobs:
           fi
           for _ in $(seq 1 20); do curl -s -o /dev/null http://127.0.0.1:5198/mail && break; sleep 0.5; done
           bash tests/connect-isolation/test-minutes-worker.sh
+      # Automatic deletion of candidates past their retention period (Amit,
+      # 24 Sept 2026: six months after the decision, shorter per organisation,
+      # longer only with consent). A sweep that stops working keeps people's
+      # data longer than promised with nothing looking wrong, so it runs here.
+      - name: "Hire: candidates past their retention period are deleted, and only they"
+        run: bash tests/hire/test-retention.sh
 
       - name: Install the web app's TypeScript (for the PiP check)
         run: pnpm install --frozen-lockfile
@@ -620,7 +629,7 @@ jobs:
         run: bash tests/docs/run-docs-live.sh
 
       # As production runs it: switch-on refused until Sheets' own server build.
-      - name: "Sheets switch: refused before its server build"
+      - name: "Sheets switch: as production runs it, after the server build"
         env:
           Sheets__RefuseSwitchOnInDevelopment: 'true'
           DOCS_TEST: tests/sheets/sheets-switch-production.test.mjs

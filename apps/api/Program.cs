@@ -503,6 +503,8 @@ builder.Services.AddScoped<TatvaOS.Api.Modules.Calendar.ICalendarImipSink,
 // finished telling us about is asked about directly, so a lost webhook costs
 // a delay rather than a recording that never appears.
 builder.Services.AddHostedService<ConnectNotesWorker>();
+// Hire: deletes candidates past their retention period (Amit, 24 Sept 2026).
+builder.Services.AddHostedService<TatvaOS.Api.Workers.HireRetentionWorker>();
 // Personal accounts (build plan §4.5, §5): a personal host's meeting ends at
 // their plan's time; the AI trial's day-12 reminder and end note.
 builder.Services.AddHostedService<PersonalMeetingLimitWorker>();
@@ -929,6 +931,8 @@ TatvaOS.Api.Modules.People.EmployeeEndpoints.MapEmployeeEndpoints(app);
 // TatvaOS Hire R1: job openings (24 Sept 2026).
 TatvaOS.Api.Modules.Hire.JobOpeningEndpoints.MapJobOpeningEndpoints(app);
 TatvaOS.Api.Modules.Hire.HireTeamEndpoints.MapHireTeamEndpoints(app);
+// Candidates, applications and the pipeline (24 Sept 2026).
+TatvaOS.Api.Modules.Hire.CandidateEndpoints.MapCandidateEndpoints(app);
 // The public careers page and its admin setup (decision 0010, switched off).
 TatvaOS.Api.Modules.Hire.CareersEndpoints.MapCareersEndpoints(app);
 app.MapStorageEndpoints();
@@ -955,6 +959,9 @@ app.MapOrgAiUsageEndpoints();
 // Offering Mail AI to one organisation, and resetting its own Mail AI with it.
 app.MapOrgMailAiOfferEndpoints();
 app.MapOrganisationDetailEndpoints();
+// Deleting an organisation for good: suspended first, name typed, never one
+// that was invoiced. The rules are in 20260929-organisation-deletions.sql.
+app.MapOrganisationDeletionEndpoints();
 app.MapPlanFeatureEndpoints();
 TatvaOS.Api.Modules.Billing.BillingEndpoints.MapBillingEndpoints(app);
 TatvaOS.Api.Modules.Billing.PaymentEndpoints.MapPaymentEndpoints(app);
