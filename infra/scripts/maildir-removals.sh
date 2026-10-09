@@ -309,6 +309,13 @@ SQL
         exit 0
     fi
 
+    # Set to 1 only where THIS run has seen the folder gone with 0 files in it.
+    # The held addresses are counted as empty on that evidence and no other
+    # (Mr. Singh on #437): a statement that ran merely because the mode ran
+    # could declare a partly-removed domain's addresses empty, and an operator
+    # could then release an address whose mail is still on disk.
+    VERIFIED_EMPTY=0
+    if [ -z "$RESOLVED" ] && ! in_store test -e "$TARGET"; then VERIFIED_EMPTY=1; fi
     if [ -n "$RESOLVED" ]; then
         # The mail server removes the messages, one address at a time.
         for l in "${LOCALS[@]}"; do
@@ -329,6 +336,9 @@ SQL
             say "NOT DONE domain [$D]: [$RESOLVED] is still there after removal; the domain stays held"; exit 3
         fi
         say "removed [$RESOLVED]"
+        # Reached only past both "NOT DONE" exits above; asserted here again
+        # rather than inferred from having got this far.
+        if ! in_store test -e "$RESOLVED" && [ "$n" = "0" ]; then VERIFIED_EMPTY=1; fi
     fi
 
     sql -v d="$D" <<'SQL' >/dev/null
@@ -339,6 +349,33 @@ UPDATE core.organisation_deletions
    SET mail_dirs_purged_at = now(), mail_dirs_purged_by = 'maildir-removals.sh'
  WHERE mail_dirs_purged_at IS NULL AND mail_dirs_pending <@ mail_dirs_removed;
 SQL
+
+    # Every held address on this domain has 0 message files left: record it,
+    # as the count-only pass would - but ONLY on this run's own evidence
+    # (VERIFIED_EMPTY) and only once the deletion record lists the domain as
+    # removed. Otherwise they stay uncounted, which is the safe state: an
+    # operator cannot release an uncounted address. (trineetra.com, 9 Oct
+    # 2026: removed, but its two addresses were never counted, because this
+    # mode exits before the count-only pass and that pass's cron was not
+    # installed on the server.)
+    if [ "$VERIFIED_EMPTY" = 1 ]; then
+        c=$(sql -v d="$D" <<'SQL' | tr -d '\r[:space:]'
+WITH counted AS (
+UPDATE core.retired_addresses r
+   SET files_left = 0, files_checked_at = now()
+ WHERE r.released_at IS NULL
+   AND lower(split_part(r.address::text, '@', 2)) = lower(:'d')
+   AND EXISTS (SELECT 1 FROM core.organisation_deletions o WHERE :'d' = ANY (o.mail_dirs_removed))
+   AND NOT EXISTS (SELECT 1 FROM mail.mailboxes m WHERE m.address = r.address)
+   AND NOT EXISTS (SELECT 1 FROM mail.aliases  a WHERE a.address = r.address)
+RETURNING 1)
+SELECT count(*) FROM counted;
+SQL
+)
+        say "counted ${c:-?} held address(es) on [$D]: 0 message files each, so an operator may release them"
+    else
+        say "held addresses on [$D] NOT counted: this run did not see the domain's folder gone and empty"
+    fi
     held=$(sql -v d="$D" <<'SQL' | tr -d '\r'
 SELECT core.domain_mail_held(:'d');
 SQL

@@ -54,7 +54,7 @@ public static class SignupEndpoints
         SettingsReader settings, CancellationToken ct)
     {
         var email = req.AdminEmail?.Trim().ToLowerInvariant() ?? "";
-        var phone = TatvaOS.Api.Shared.PhoneNumber.Normalise(req.AdminPhone);
+        var phone = TatvaOS.Api.Shared.PhoneNumber.Stored(req.AdminPhone);
 
         if (string.IsNullOrWhiteSpace(req.OrgName) || req.OrgName.Trim().Length < 2)
             return Results.BadRequest(new { error = "An organisation name is required." });

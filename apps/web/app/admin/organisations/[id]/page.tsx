@@ -15,6 +15,7 @@ import {
 } from '@/lib/adminData';
 import { PlanTab } from './PlanTab';
 import { BillingTab } from './BillingTab';
+import { DeleteTab } from './DeleteTab';
 
 // ============================================================================
 //  One organisation, as the operator sees it (Amit, 26 Sept 2026): which
@@ -34,6 +35,7 @@ const TABS = [
   { key: 'shared', label: 'Shared mailboxes' },
   { key: 'plan', label: 'Plan & features' },
   { key: 'billing', label: 'Billing' },
+  { key: 'delete', label: 'Delete' },
 ] as const;
 type TabKey = (typeof TABS)[number]['key'];
 
@@ -107,6 +109,7 @@ export default function OrganisationDetail() {
           {tab === 'shared' && <Shared data={data} />}
           {tab === 'plan' && <PlanTab orgId={id} />}
           {tab === 'billing' && <BillingTab orgId={id} />}
+          {tab === 'delete' && <DeleteTab orgId={id} />}
 
           <p className="mt-6 text-[12px] text-ink-muted">
             This page shows addresses, names, sizes and dates, never mail content. Opening it,

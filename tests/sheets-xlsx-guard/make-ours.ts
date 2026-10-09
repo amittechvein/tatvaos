@@ -43,6 +43,22 @@ rows.forEach(([n, a, b, c], i) => {
 put(marks, 'A7', 'Class total'); put(marks, 'E7', '=SUM(E2:E5)');
 put(marks, 'A8', 'Best in Maths'); put(marks, 'B8', '=INDEX(A2:A5,MATCH(MAX(B2:B5),B2:B5,0))');
 put(marks, 'A9', 'Passed'); put(marks, 'B9', '=COUNTIF(G2:G5,"Pass")');
+// Colour rules (9 Oct 2026): the writer's <conditionalFormatting> must be
+// permitted by the guard, which reads rule formulas too. The last rule's text
+// holds every character the guard refuses OUTSIDE quotes (" [ ] |): written
+// as a quoted string, it is text, and the file must still be permitted.
+marks.rules = [
+  { r1: 1, c1: 6, r2: 4, c2: 6, kind: 'eq', a: 'Fail', style: { bg: '#f4c7c3', color: '#a50e0e', b: true } },
+  { r1: 1, c1: 4, r2: 4, c2: 4, kind: 'lt', a: '180', style: { bg: '#fce8b2' } },
+  { r1: 1, c1: 1, r2: 4, c2: 3, kind: 'between', a: '90', b: '100', style: { color: '#274e13' } },
+  { r1: 0, c1: 0, r2: 9, c2: 0, kind: 'contains', a: 'say "hi" [x] | y', style: { bg: '#cfe2f3' } },
+];
+// Dropdowns (9 Oct 2026): the writer's <dataValidations> must be permitted
+// too; the second list holds " [ ] | inside its quoted string.
+marks.dropdowns = [
+  { r1: 1, c1: 6, r2: 4, c2: 6, items: ['Pass', 'Fail'], strict: true },
+  { r1: 1, c1: 7, r2: 4, c2: 7, items: ['say "hi"', '[x]', 'a | b'], strict: false },
+];
 
 const special = emptySheet('Special');
 put(special, 'A1', 'Fee'); put(special, 'B1', '125000', '[>=10000000]##\\,##\\,##\\,##0;[>=100000]##\\,##\\,##0;##,##0');
