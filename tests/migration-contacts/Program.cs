@@ -98,8 +98,16 @@ async Task<List<(string Id, string Outcome, string? Reason)>> RunAll()
         var page = await source.FetchAsync(j, CancellationToken.None);
         foreach (var item in page.Items)
         {
-            var r = await source.WriteAsync(j, item, CancellationToken.None);
-            results.Add((item.SourceId, r.Outcome, r.Reason));
+            // An exception fails the PAGE in the runner (retried, then the
+            // job fails). Recorded here as the item's outcome so a broken
+            // write goes red at the assertions below, not as a crash before
+            // them (house rule 6: a red must arrive at the assertion).
+            try
+            {
+                var r = await source.WriteAsync(j, item, CancellationToken.None);
+                results.Add((item.SourceId, r.Outcome, r.Reason));
+            }
+            catch (Exception ex) { results.Add((item.SourceId, $"threw {ex.GetType().Name}", ex.InnerException?.Message)); }
         }
         if (page.IsLast) return results;
         j = j with { Cursor = page.NextCursor };
