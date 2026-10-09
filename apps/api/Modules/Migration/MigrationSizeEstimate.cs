@@ -16,10 +16,21 @@ namespace TatvaOS.Api.Modules.Migration;
 public sealed class MigrationSizeEstimator(GoogleWorkspaceClient google)
 {
     public async Task<MigrationSizeReport> MeasureAsync(
-        GoogleServiceAccount account, string admin, CancellationToken ct)
-    {
-        var users = await google.ListUsersAsync(account, admin, ct);
+        GoogleServiceAccount account, string admin, CancellationToken ct) =>
+        await MeasureAsync(account, await google.ListUsersAsync(account, admin, ct), ct);
 
+    /// <summary>
+    /// Only the people named - no directory listing, so no admin and nobody
+    /// else's data touched. For a trial on one test mailbox, and for checking
+    /// a person before starting their migration.
+    /// </summary>
+    public Task<MigrationSizeReport> MeasurePeopleAsync(
+        GoogleServiceAccount account, IEnumerable<string> people, CancellationToken ct) =>
+        MeasureAsync(account, people.Select(p => new GoogleDirectoryUser(p.Trim(), false, false)).ToList(), ct);
+
+    private async Task<MigrationSizeReport> MeasureAsync(
+        GoogleServiceAccount account, IReadOnlyList<GoogleDirectoryUser> users, CancellationToken ct)
+    {
         var measured = new List<PersonSize>();
         var notMigrated = new List<PersonNote>();
         var unmeasured = new List<PersonNote>();
