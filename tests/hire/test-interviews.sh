@@ -152,9 +152,18 @@ expect "the hiring manager cannot schedule, even on their own job" 403 \
 expect "nor list who could sit on a panel" 403 "$(call "$STAFF" GET /hire/applications/$A1/interviews/panel-options)"
 
 step "2. A panel is only people who can already see the application"
-same "for job 1 the options are the owner and its hiring manager" \
-    "$(jq_ "$(body "$(call "$OWNER" GET /hire/applications/$A1/interviews/panel-options)")" "','.join(sorted(p['id'] for p in d))")" \
-    "$(printf '%s\n%s\n' "$OWNER_ID" "$STAFF_ID" | sort | paste -sd, -)"
+# The RULE, not a fixed list: CI's shared database holds other suites'
+# administrators and recruiters, who are legitimately eligible (the first CI
+# run of this test expected exactly two people and found three, 9 Oct).
+OPTS=$(jq_ "$(body "$(call "$OWNER" GET /hire/applications/$A1/interviews/panel-options)")" "' '.join(p['id'] for p in d)")
+has "job 1's options include the owner" "$OPTS" "$OWNER_ID"
+has "and its hiring manager" "$OPTS" "$STAFF_ID"
+in_list=$(printf "'%s'," $OPTS | sed 's/,$//')
+same "and every option is an administrator, a recruiter, or this job's hiring manager" \
+    "$(PG "SELECT count(*) FROM core.users u WHERE u.id IN ($in_list)
+             AND NOT (u.role IN ('super_admin','org_owner','org_admin')
+                      OR EXISTS (SELECT 1 FROM hire.team_members m WHERE m.user_id = u.id AND m.role = 'recruiter')
+                      OR u.id = (SELECT hiring_manager_id FROM hire.job_openings WHERE id = '$J1'))")" "0"
 same "for job 2 the staff member is NOT an option (another job's hiring manager)" \
     "$(jq_ "$(body "$(call "$OWNER" GET /hire/applications/$A2/interviews/panel-options)")" "str('$STAFF_ID' in [p['id'] for p in d])")" "False"
 expect "putting another job's hiring manager on job 2's panel" 400 \
