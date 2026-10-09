@@ -1,12 +1,9 @@
 'use client';
 
-import { useState } from 'react';
-import { useAuth } from '@/lib/auth';
-import { AccountMenu } from './AccountMenu';
+import { AccountButton } from './AccountButton';
 import { AppLauncher } from './AppLauncher';
 import { RAIL_WIDTH, RAIL_WIDTH_ICONS, TOPBAR_HEIGHT } from './Sidebar';
 import { useTheme as useAppearance } from '@/lib/theme';
-import { useSelfPhoto } from '@/components/ui/UserPhoto';
 import { useMailSearch } from '@/components/mail/MailSearchContext';
 import { SearchBox } from '@/components/mail/SearchBox';
 
@@ -41,18 +38,13 @@ function MailSearchSlot() {
 }
 
 export function Topbar({ scope, pinned, onToggle }: {
-  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect' | 'hire' | 'docs' | 'sheets';
+  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect' | 'hire' | 'people' | 'docs' | 'sheets';
   /** Desktop only: whether the rail is pinned at full width. Sets this bar's left edge. */
   pinned: boolean;
   onToggle: () => void;
 }) {
-  const { user } = useAuth();
   const { mode, setMode } = useAppearance();
-  const [anchor, setAnchor] = useState<null | HTMLElement>(null);
-  const selfPhoto = useSelfPhoto();
   const { hosted: searchHosted } = useMailSearch();
-
-  const initial = (user?.displayName ?? '?').charAt(0).toUpperCase();
 
   return (
     <>
@@ -105,22 +97,9 @@ export function Topbar({ scope, pinned, onToggle }: {
           <i className={`${mode === 'dark' ? 'ri-sun-line' : 'ri-moon-line'} text-[20px]`} />
         </button>
 
-        {/* Profile */}
-        <button type="button" aria-label="Account" className={HEADER_LINK}
-                onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}>
-          {selfPhoto ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={selfPhoto} alt="" width={34} height={34}
-                 className="h-[34px] w-[34px] rounded-full object-cover" />
-          ) : (
-            <span className="grid h-[34px] w-[34px] place-items-center rounded-full bg-brand-500 text-sm font-bold text-white">
-              {initial}
-            </span>
-          )}
-        </button>
+        {/* Profile — shared with the Docs and Sheets editor headers */}
+        <AccountButton />
       </header>
-
-      <AccountMenu anchorEl={anchor} onClose={() => setAnchor(null)} />
     </>
   );
 }

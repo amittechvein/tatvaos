@@ -117,6 +117,9 @@ builder.Services.AddScoped<StorageAllocator>();
 builder.Services.AddScoped<AuditWriter>();
 // What the signed-in person may do in Hire (admin / recruiter / hiring manager).
 builder.Services.AddScoped<TatvaOS.Api.Modules.Hire.HireAccess>();
+// What the signed-in person may see in People: HR everyone, anyone else
+// themselves and their reports (decision 0018; manager from reports_to).
+builder.Services.AddScoped<TatvaOS.Api.Modules.People.PeopleAccess>();
 // Personal accounts (/join): the one "is this the personal house?" answer,
 // and the keyed phone fingerprint (Personal:PhoneHashKey; unset = /join closed).
 builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalHouse>();
@@ -480,6 +483,16 @@ builder.Services.AddHostedService<RecoveryHoldWorker>();
 // organisation has switched sorting on; see the worker's header for its limits.
 builder.Services.AddHostedService<MailTriageWorker>();
 
+// Google Workspace migration (docs/GOOGLE_MIGRATION_DESIGN.md, phase 0): the
+// resumable job runner. OFF unless Migration:Runner is "on". Sources register
+// per (source, data type); only the Development-only synthetic one exists yet.
+// tests/migration/test-job-runner.sh kills it mid-run and watches it resume.
+builder.Services.AddScoped<TatvaOS.Api.Modules.Migration.MigrationJobRunner>();
+foreach (var dataType in new[] { "mail", "contacts", "calendar", "drive" })
+    builder.Services.AddSingleton<TatvaOS.Api.Modules.Migration.IMigrationSource>(sp =>
+        new TatvaOS.Api.Modules.Migration.SyntheticSource(dataType, sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddHostedService<MigrationJobWorker>();
+
 // iMIP: what Mail's ingest calls when a delivered message carries a calendar
 // reply (docs/MAIL_IMIP_SEAM.md §4). Scoped, because it runs inside the
 // ingest worker's own scope and reads its TenantContext and DbContext.
@@ -500,6 +513,8 @@ builder.Services.AddScoped<TatvaOS.Api.Modules.Calendar.ICalendarImipSink,
 // finished telling us about is asked about directly, so a lost webhook costs
 // a delay rather than a recording that never appears.
 builder.Services.AddHostedService<ConnectNotesWorker>();
+// Hire: deletes candidates past their retention period (Amit, 24 Sept 2026).
+builder.Services.AddHostedService<TatvaOS.Api.Workers.HireRetentionWorker>();
 // Personal accounts (build plan §4.5, §5): a personal host's meeting ends at
 // their plan's time; the AI trial's day-12 reminder and end note.
 builder.Services.AddHostedService<PersonalMeetingLimitWorker>();
@@ -919,9 +934,15 @@ app.MapSettingsEndpoints();
 app.MapDepartmentEndpoints();
 // Locations and designations: Phase 0 of Hire & People (24 Sept 2026).
 app.MapOrgStructureEndpoints();
+// Employee-ID scheme: Phase 0 of People (8 Oct 2026). API only, no page yet.
+TatvaOS.Api.Modules.People.EmployeeIdEndpoints.MapEmployeeIdEndpoints(app);
+// Employee records and People HR (decision 0018, stage one). API only.
+TatvaOS.Api.Modules.People.EmployeeEndpoints.MapEmployeeEndpoints(app);
 // TatvaOS Hire R1: job openings (24 Sept 2026).
 TatvaOS.Api.Modules.Hire.JobOpeningEndpoints.MapJobOpeningEndpoints(app);
 TatvaOS.Api.Modules.Hire.HireTeamEndpoints.MapHireTeamEndpoints(app);
+// Candidates, applications and the pipeline (24 Sept 2026).
+TatvaOS.Api.Modules.Hire.CandidateEndpoints.MapCandidateEndpoints(app);
 // The public careers page and its admin setup (decision 0010, switched off).
 TatvaOS.Api.Modules.Hire.CareersEndpoints.MapCareersEndpoints(app);
 app.MapStorageEndpoints();
@@ -948,6 +969,9 @@ app.MapOrgAiUsageEndpoints();
 // Offering Mail AI to one organisation, and resetting its own Mail AI with it.
 app.MapOrgMailAiOfferEndpoints();
 app.MapOrganisationDetailEndpoints();
+// Deleting an organisation for good: suspended first, name typed, never one
+// that was invoiced. The rules are in 20260929-organisation-deletions.sql.
+app.MapOrganisationDeletionEndpoints();
 app.MapPlanFeatureEndpoints();
 TatvaOS.Api.Modules.Billing.BillingEndpoints.MapBillingEndpoints(app);
 TatvaOS.Api.Modules.Billing.PaymentEndpoints.MapPaymentEndpoints(app);

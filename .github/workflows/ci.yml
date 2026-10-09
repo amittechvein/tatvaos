@@ -116,12 +116,20 @@ jobs:
       - name: "Auth check: every token type is checked for its own type"
         run: dotnet run --project tests/token-types
 
-      # Hire: HireAccess is the only route to hire.job_openings. A handler
-      # that read the table directly would show a hiring manager every job in
-      # the organisation with nothing looking wrong. Source scan, no database.
-      # Mr. Singh, 24 Sept 2026 (PR 264): "make the gate structural".
-      - name: "Hire check: the job-openings gate has no way around it"
+      # Hire: HireAccess is the only route to Hire's records — job openings,
+      # candidates, applications, their history and the pipeline. A handler
+      # that read a table directly would show a hiring manager every job or
+      # candidate in the organisation with nothing looking wrong. Source scan,
+      # no database. Mr. Singh, 24 Sept 2026 (PR 264): "make the gate structural".
+      - name: "Hire check: the Hire access gate has no way around it"
         run: bash tests/hire/check-job-gate.sh
+
+      # People: PeopleAccess is the only route to employee records (0018 §4).
+      # A handler reading people.employees directly would show a manager -
+      # or anyone - every record in the organisation. Source scan, no database.
+      # Proposed 9 Oct 2026 for Mr. Singh's approval with the PR that adds it.
+      - name: "People check: the employee-records gate has no way around it"
+        run: bash tests/people/check-people-gate.sh
 
       # The development-only operator sign-in (PR 281). Approved into CI by
       # Mr. Singh, 25 Sept 2026. Both need no database. gates/ compiles
@@ -141,6 +149,18 @@ jobs:
       # gaps are listed by name in the test and can only shrink.
       - name: "Tenancy check: every tenant-owned entity has a query filter"
         run: dotnet run --project tests/tenant-filters
+
+      # The Google client (migration design 3.1) against a fake Google behind
+      # its own HttpClient: the signed JWT verifies against the public key,
+      # writable scopes are refused before anything is sent, throttling is
+      # retried and gives up, no token reaches an exception. No network, no
+      # database, no Google account.
+      - name: "Google check: tokens, scopes, retries, and no token in an error"
+        run: dotnet run --project tests/google-client
+      # Migration design section 8: the size estimate refuses with a number
+      # rather than fill the disk. Pure arithmetic plus a fake Google.
+      - name: "Migration check: the size estimate refuses what will not fit"
+        run: dotnet run --project tests/migration-fit
 
       # Every AI entry point asks AiGate before sending, and every AI feature
       # label has an organisation list (Mr. Singh, 30 Sept 2026, after a
@@ -312,11 +332,13 @@ jobs:
       - name: "Organisation API: people, meetings and the calendar"
         run: bash tests/orgapi/test-org-api.sh
 
-      # TatvaOS Hire: job openings and the hiring team. Mostly refusals —
-      # another organisation's office or person, a confidential draft title
-      # reaching a public address, a hiring manager seeing someone else's job.
+      # TatvaOS Hire: job openings, the hiring team, candidates and
+      # applications. Mostly refusals — another organisation's office or
+      # person, a confidential draft title reaching a public address, a hiring
+      # manager seeing someone else's job or candidate, a rejection with no
+      # reason, personal data surviving an erasure in the audit log.
       # Approved by Mr. Singh, 24 Sept 2026 (PR 262 review).
-      - name: "Hire: job openings and the hiring team"
+      - name: "Hire: job openings, the hiring team, candidates and applications"
         run: bash tests/hire/test-job-openings.sh
 
       # The public careers page (decision 0010 §1): the first unauthenticated
@@ -325,6 +347,22 @@ jobs:
       # closed. Restores the platform switch on exit.
       - name: "Hire: the public careers page shows only what it may"
         run: bash tests/hire/test-careers.sh
+
+      # People Phase 0: the employee-ID scheme (20261008). Admins only, one
+      # per organisation, refusals by the API and the database, and the digit
+      # count a minimum, never a cut (red with a bare lpad(): TV-1000 for
+      # number 10000). Starts its own API on :5109. Proposed 8 Oct 2026 for
+      # Mr. Singh's approval with the PR that adds it.
+      - name: "People: the employee-ID scheme"
+        run: bash tests/people/test-employee-ids.sh
+
+      # People: employee records and who reports to whom (decision 0018).
+      # Manager by data not role, no loops (and the held-transaction race that
+      # proves the lock: red without it), the access audit of reports_to,
+      # exit rules, codes never shared under a burst. Starts its own API on
+      # :5111. Proposed 9 Oct 2026 for Mr. Singh's approval.
+      - name: "People: employee records and reporting lines"
+        run: bash tests/people/test-employees.sh
 
       # The development-only operator sign-in, against the BUILT API in six
       # configurations: refuses to boot as Production/Staging with the switch
@@ -350,6 +388,14 @@ jobs:
       # Red on c7cb110 at 50 bits. Approved into CI by Mr. Singh on 29 Sept 2026, for when Actions returns.
       - name: "MFA: recovery codes are 80 bits, stored hashed, used once"
         run: bash tests/mfa/test-recovery-codes.sh
+
+      # Decision 0014: the production memory alert, driven across every line
+      # and back against fake /proc readings and a fake docker that records
+      # mail. No network, no Docker, no database. Calibrated 8 Oct 2026: three
+      # deliberate breaks (warning line raised, deploy restarts counted, the
+      # fail-loud trap removed) each failed their own checks.
+      - name: "Memory alert: thresholds, container kills, fails loudly (0014)"
+        run: bash tests/memory-alert/test.sh
 
       # Connect's tenantless paths, walked (decision 0007): every entry point
       # that starts with no session and finds the organisation some other way.
@@ -378,6 +424,12 @@ jobs:
           fi
           for _ in $(seq 1 20); do curl -s -o /dev/null http://127.0.0.1:5198/mail && break; sleep 0.5; done
           bash tests/connect-isolation/test-minutes-worker.sh
+      # Automatic deletion of candidates past their retention period (Amit,
+      # 24 Sept 2026: six months after the decision, shorter per organisation,
+      # longer only with consent). A sweep that stops working keeps people's
+      # data longer than promised with nothing looking wrong, so it runs here.
+      - name: "Hire: candidates past their retention period are deleted, and only they"
+        run: bash tests/hire/test-retention.sh
 
       - name: Install the web app's TypeScript (for the PiP check)
         run: pnpm install --frozen-lockfile
@@ -597,7 +649,7 @@ jobs:
         run: bash tests/docs/run-docs-live.sh
 
       # As production runs it: switch-on refused until Sheets' own server build.
-      - name: "Sheets switch: refused before its server build"
+      - name: "Sheets switch: as production runs it, after the server build"
         env:
           Sheets__RefuseSwitchOnInDevelopment: 'true'
           DOCS_TEST: tests/sheets/sheets-switch-production.test.mjs
