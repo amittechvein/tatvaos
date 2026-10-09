@@ -7,6 +7,8 @@ Format: **symptom → diagnosis → fix → confirm**.
 ## Needed before taking paying customers
 
 - [x] [Postfix/Dovecot config errors](01-mail-edge-config-errors.md)
+- [x] [Billing: encrypted secrets, the rollback floor, refunds](billing-secrets-and-rollback.md)
+- [x] [A CI job stuck "in progress": force-cancel at three times its usual run](ci-stuck-job.md)
 - [ ] Mail queue backing up
 - [ ] Delivery latency above SLA
 - [ ] Blocklist entry appeared — delisting procedure
@@ -18,4 +20,5 @@ Format: **symptom → diagnosis → fix → confirm**.
 - [ ] Tenant reports missing mail
 - [ ] Suspected compromised tenant account
 - [ ] Abuse report received at `abuse@`
+- [x] [Capacity and disk — measured numbers, and when to spend money](capacity.md)
 - [ ] Disk full on the mail edge

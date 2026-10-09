@@ -135,6 +135,19 @@ Then **use the thing you changed.** A green build proves the code compiles. It
 does not prove the feature works, and four features shipped this week were
 confirmed only by a build until somebody finally opened a meeting.
 
+### If the deploy carries an AI change
+
+Its deploy note states two things (Mr. Singh, 30 Sept and 1 Oct 2026):
+
+1. **Who is on each AI list** at that moment: `ai.mail.organisations`,
+   `ai.connect.organisations`, `ai.docs.organisations`,
+   `ai.sheets.organisations` (the deploy prints them, PR 365).
+2. **That the OpenAI sharing settings were checked off**, and when: the three
+   Sharing options Disabled and retention as recorded in
+   `docs/runbooks/backup-and-restore.md`, "Provider settings". This is read
+   in Amit's browser; it cannot be read from the server. If it was not
+   checked, the note says so - it does not say "checked".
+
 ### If something is broken
 
 1. `docker logs --tail 40 tatvaos-api-1` — the API's own startup and worker
@@ -150,6 +163,83 @@ same endpoint, so it will wave through a build whose every query fails.
 Fixing forward is usually not slower than rolling back — both need a full
 deploy cycle — and a rollback takes out every other lane's work too. Roll back
 when the cause is unclear; fix forward when it is one known line.
+
+---
+
+## Changing the server's settings file (`infra/docker/.env`)
+
+That one file holds every production secret: database passwords, signing
+keys, mail and SMS credentials. **A copy of it is the same secret, in a
+second place.**
+
+**The rule (Mr. Singh, 28 Sept 2026 — the same rule #254 applied to the
+pre-deploy database copies):**
+
+1. **A copy of `.env` is created with `umask 077`, or not at all.** Never a
+   bare `cp`.
+2. **The name carries the reason and the UTC time**, so nobody has to guess
+   what it was for or how old it is. The file's own date cannot be trusted:
+   `cp -p` carries the *original's* date onto the copy.
+3. **Copies older than seven days are removed** — by a person, saying which
+   ones, never by a deploy.
+4. **`.env` itself is `600`, owner `deploy`.** Nothing else reads it: compose
+   substitutes its values when it renders the services, and no container
+   mounts the file.
+
+```bash
+cd /srv/tatvaos-production/infra/docker
+( umask 077; cp .env ".env.before-<reason>-$(date -u +%Y%m%dT%H%M%SZ)" )
+# ... make the change ...
+stat -c '%a %n' .env .env.*          # every line must start 600
+ls .env.before-* .env.*backup* 2>/dev/null   # anything older than 7 days goes
+```
+
+**Why this rule exists.** On 28 Sept 2026 `.env` was found at mode **664**
+— readable by every account on the server — with three copies beside it the
+same way, one of them 52 days old. Nobody chose that: the `deploy` account's
+default umask is `002`, so *every* file it creates is born group-writable and
+world-readable unless the command says otherwise. Only `root` and `deploy` can
+log in, so nothing is known to have read them; but one compromised service
+account on that machine would have been handed everything. They were set to
+`600` that day (Amit's go), with no restart and no service affected.
+
+**What this does not cover.** Anything else the `deploy` account writes is
+still born `664`. `/home/deploy` is `750` and `/srv/backups/tatvaos` is
+`700`, so their contents are protected by the folder; **the checkout under
+`/srv/tatvaos-production` is not** (`755`). A secret written anywhere inside
+the checkout needs the same `umask 077`.
+
+---
+
+## Files on the server that git does not know about
+
+The production checkout (`/srv/tatvaos-production`) holds files that are in no
+commit. A deploy leaves them alone, because `git` never touches an untracked
+file. **That is the only thing protecting them**: nothing in the repository
+knows they exist, so a person tidying the checkout, or a `git clean`, would
+remove them without warning. **Never run `git clean` on the server.**
+
+Listed 4 Oct 2026 (Mr. Singh, on PR 394), from `git status --porcelain
+--untracked-files=all` on the checkout:
+
+| File | What it is | If it is removed |
+|---|---|---|
+| `infra/docker/caddy/conf.d/bug.caddy` | **The bug tracker's door**, `bug.tatvaos.com`. Caddy loads every file in `conf.d`, this one included; the bug tracker has its own container and deploy script, outside this repository | `bug.tatvaos.com` stops answering at the next Caddy reload or deploy. It looks like clutter in a folder of tracked doors. **It is not** |
+| `.environment` | The word `production`. `deploy.sh` reads it and refuses to run when it disagrees with the environment named (`docs/setup/08-cloud-environments.md`) | `deploy.sh` loses its wrong-environment check |
+| `infra/docker/.env` | Every production secret (the section above). Ignored by git on purpose | Production does not start |
+| `infra/docker/.env.before-<reason>-<time>` | Dated copies taken before each change to `.env` (the section above) | Nothing breaks. They are removed by a person after seven days, saying which ones |
+| `backups/pre-deploy-*.sql.gz.enc` | Encrypted database copies, one per deploy, kept `BACKUP_KEEP_DAYS` (`docs/runbooks/backup-and-restore.md`) | The rollback copies for recent deploys are lost |
+| `.disk-alert-state` | `infra/scripts/disk-alert.sh`'s memory of what it last reported | The next run reports again; harmless |
+
+**Before tidying anything on the server**, list the untracked files and check
+each name against this table. A file that is **not** in the table is a
+question for its owner, never rubbish, and once answered it belongs in the
+table:
+
+```bash
+cd /srv/tatvaos-production
+git status --porcelain --untracked-files=all | grep '^??'
+```
 
 ---
 

@@ -78,13 +78,19 @@ public sealed class OpenAiGateway : IAiGateway
     private readonly string _baseUrl;
     private readonly string? _apiKey;
 
-    /// <summary>Per-scope cache of the tenant's consent — one query per
-    /// request, not one per AI call within it.</summary>
-    private bool? _tenantAllowed;
+    /// <summary>Per-scope cache of the consent — one query per request, not
+    /// one per AI call within it. KEYED by tenant AND person (26 Sept 2026):
+    /// a background worker can move one scope between organisations, or, in
+    /// the personal house, between people; a single cached bool would carry
+    /// the first answer to the next. ConnectNotesWorker runs one meeting per
+    /// scope today (BatchSize = 1), which is the only reason that was safe.</summary>
+    private (Guid Tenant, Guid? User, bool Allowed)? _tenantAllowed;
 
     public string Model { get; }
 
     public string? DataLocation { get; }
+
+    public string? Vendor { get; }
 
     /// <summary>
     /// Hosts whose country is public knowledge. The disclosure on the consent
@@ -93,9 +99,18 @@ public sealed class OpenAiGateway : IAiGateway
     /// keeps the old location string fails closed here, at startup, instead
     /// of on a school's consent screen.
     /// </summary>
-    private static readonly (string Host, string Country)[] KnownHosts =
+    ///
+    /// The VENDOR is guarded the same way (Mr. Singh, 30 Sept 2026: name
+    /// OpenAI in the admin page's own sentences, "with the vendor guarded like
+    /// the location"). A known host names its own vendor, so Ai:Vendor may be
+    /// left unset for it - production's .env has no such line, and requiring
+    /// one would have turned AI off on the deploy that introduced it - but a
+    /// value that contradicts the host is refused. An unknown host must state
+    /// its vendor, exactly as it must state its location.
+    /// </summary>
+    private static readonly (string Host, string Country, string Vendor)[] KnownHosts =
     [
-        ("api.openai.com", "United States"),
+        ("api.openai.com", "United States", "OpenAI"),
     ];
 
     public OpenAiGateway(
@@ -125,15 +140,39 @@ public sealed class OpenAiGateway : IAiGateway
             _apiKey = null;
         }
 
+        var vendor = config["Ai:Vendor"]?.Trim();
+        if (string.IsNullOrWhiteSpace(vendor)) vendor = null;
+
         var host = Uri.TryCreate(_baseUrl, UriKind.Absolute, out var u) ? u.Host : "";
-        foreach (var (knownHost, country) in KnownHosts)
+        var known = false;
+        foreach (var (knownHost, country, knownVendor) in KnownHosts)
         {
             if (!string.Equals(host, knownHost, StringComparison.OrdinalIgnoreCase)) continue;
-            if (location is not null && location.Contains(country, StringComparison.OrdinalIgnoreCase)) continue;
+            known = true;
+            if (location is null || !location.Contains(country, StringComparison.OrdinalIgnoreCase))
+            {
+                _log.LogError(
+                    "Ai:BaseUrl points at {Host}, which is in {Country}, but Ai:DataLocation says "
+                    + "'{Location}'. Refused: the consent screen would name the wrong place.",
+                    host, country, location ?? "(unset)");
+                _apiKey = null;
+            }
+            if (vendor is not null && !string.Equals(vendor, knownVendor, StringComparison.OrdinalIgnoreCase))
+            {
+                _log.LogError(
+                    "Ai:BaseUrl points at {Host}, which is {KnownVendor}, but Ai:Vendor says '{Vendor}'. "
+                    + "Refused: the consent screen would name the wrong company.",
+                    host, knownVendor, vendor);
+                _apiKey = null;
+            }
+            vendor ??= knownVendor;
+        }
+        if (!known && vendor is null && !string.IsNullOrWhiteSpace(_apiKey))
+        {
             _log.LogError(
-                "Ai:BaseUrl points at {Host}, which is in {Country}, but Ai:DataLocation says "
-                + "'{Location}'. Refused: the consent screen would name the wrong place.",
-                host, country, location ?? "(unset)");
+                "Ai:BaseUrl points at {Host}, which this gateway does not know, and Ai:Vendor is not set. "
+                + "Refused: AI features are unavailable until the company the data goes to is stated.",
+                host);
             _apiKey = null;
         }
 
@@ -150,6 +189,7 @@ public sealed class OpenAiGateway : IAiGateway
         }
 
         DataLocation = _apiKey is not null ? location : null;
+        Vendor = _apiKey is not null ? vendor : null;
     }
 
     public bool IsConfigured => _apiKey is not null && Model.Length > 0;
@@ -172,7 +212,8 @@ public sealed class OpenAiGateway : IAiGateway
     public async Task<bool> EnabledForTenantAsync(CancellationToken ct)
     {
         if (!IsConfigured) return false;
-        if (_tenantAllowed is bool cached) return cached;
+        if (_tenantAllowed is { } cached && cached.Tenant == _tenant.TenantId && cached.User == _tenant.UserId)
+            return cached.Allowed;
 
         if (_tenant.TenantId == Guid.Empty)
         {
@@ -180,24 +221,35 @@ public sealed class OpenAiGateway : IAiGateway
             // route with no tenant at all. Refused, loudly — this is the
             // fail-closed branch doing its one job.
             _log.LogWarning("AI call with no tenant scope — refused fail-closed.");
-            _tenantAllowed = false;
             return false;
         }
 
         try
         {
-            var allowed = await _db.Tenants.AsNoTracking()
+            var org = await _db.Tenants.AsNoTracking()
                 .Where(t => t.Id == _tenant.TenantId)
-                .Select(t => t.AllowAi)
+                .Select(t => new { t.AllowAi, t.Kind })
                 .FirstOrDefaultAsync(ct);
-            _tenantAllowed = allowed;
+
+            // THE PERSONAL HOUSE (build plan D3): there is no organisation to
+            // consent — its allow_ai can never be on (tenants_house_no_org_ai).
+            // Consent is the PERSON's own switch, confirmed by them. No person
+            // in scope (a background job that did not say on whose behalf)
+            // means no. What their plan allows is MeteredAiGateway's question.
+            bool allowed;
+            if (org?.Kind == TatvaOS.Api.Modules.Personal.PersonalHouse.KindPersonalHouse)
+                allowed = _tenant.UserId is Guid person && await _db.PersonalAi.AsNoTracking()
+                    .AnyAsync(a => a.UserId == person && a.Enabled && a.ConfirmedAt != null, ct);
+            else
+                allowed = org?.AllowAi ?? false;
+
+            _tenantAllowed = (_tenant.TenantId, _tenant.UserId, allowed);
             return allowed;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Could not read AI consent for tenant {Tenant} — refused fail-closed.",
                 _tenant.TenantId);
-            _tenantAllowed = false;
             return false;
         }
     }

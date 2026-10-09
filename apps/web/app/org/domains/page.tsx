@@ -46,6 +46,8 @@ interface DomainRow {
   isActive: boolean;
   isPlatform: boolean;
   ownershipVerified: boolean;
+  superseded?: boolean;
+  supersededNotice?: string | null;
   lastCheckedAt: string | null;
   lastCheckResult: string | null;
 }
@@ -136,6 +138,13 @@ export default function DomainsPage() {
   const [checking, setChecking] = useState(false);
   const [summary, setSummary] = useState<string | null>(null);
 
+  // Removing a domain. Amit, 24 Sept 2026: "there is no remove button" —
+  // the API has had DELETE /org/domains/{id} since domains shipped, with its
+  // own guards, and this screen never called it. The page even TOLD people
+  // the TatvaOS address "cannot be removed", which implies the others can.
+  const [removing, setRemoving] = useState<DomainRow | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -205,6 +214,27 @@ export default function DomainsPage() {
     }
   }
 
+  async function removeDomain(d: DomainRow) {
+    setBusy(true);
+    setRemoveError(null);
+    try {
+      const res = await authedFetch(`/org/domains/${d.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        // The server refuses while mailboxes still use it, and says how many.
+        // Showing ITS words rather than a generic failure is the difference
+        // between "try again" and "move those three mailboxes first".
+        const body = await res.json().catch(() => ({}));
+        setRemoveError(body.error ?? 'The domain could not be removed.');
+        return;
+      }
+      setRemoving(null);
+      if (openId === d.id) setOpenId(null);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const open = domains.find((d) => d.id === openId);
   const ownershipPassed = checks.find((c) => c.id === 'ownership')?.passed;
 
@@ -231,6 +261,8 @@ export default function DomainsPage() {
 
                     {d.isPlatform ? (
                       <BrandPill>TatvaOS address</BrandPill>
+                    ) : d.superseded ? (
+                      <Badge tone="warn">Claim closed</Badge>
                     ) : d.ownershipVerified ? (
                       <Badge tone="ok">Verified</Badge>
                     ) : (
@@ -239,7 +271,9 @@ export default function DomainsPage() {
                   </div>
 
                   <p className="text-[0.8125rem] text-ink-muted mb-0 mt-1">
-                    {d.isPlatform
+                    {d.superseded
+                      ? d.supersededNotice
+                      : d.isPlatform
                       ? 'Issued by us and working immediately. Cannot be removed — it is how you sign in if your own domain’s DNS ever breaks.'
                       : d.ownershipVerified
                         ? d.lastCheckResult ?? 'Ownership proven.'
@@ -248,9 +282,19 @@ export default function DomainsPage() {
                 </div>
 
                 {!d.isPlatform && (
-                  <Button variant="secondary" onClick={() => openDomain(d.id)}>
-                    {d.ownershipVerified ? 'DNS records' : 'Set up'}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {/* Superseded (#277): another organisation proved this domain, so
+                        there is nothing to set up here - but it can still be removed. */}
+                    {!d.superseded && (
+                      <Button variant="secondary" onClick={() => openDomain(d.id)}>
+                        {d.ownershipVerified ? 'DNS records' : 'Set up'}
+                      </Button>
+                    )}
+                    <Button variant="ghost"
+                            onClick={() => { setRemoveError(null); setRemoving(d); }}>
+                      Remove
+                    </Button>
+                  </div>
                 )}
             </div>
           ))}
@@ -266,6 +310,35 @@ export default function DomainsPage() {
         wherever it does today until <strong>you</strong> move the MX record — and
         that step is reversible.
       </Alert>
+
+      {/* ---------------------------------------------------------------- */}
+      {removing && (
+        <Modal
+          title={`Remove ${removing.fqdn}?`}
+          onClose={() => setRemoving(null)}
+          busy={busy}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setRemoving(null)}>Cancel</Button>
+              <Button variant="danger" onClick={() => removeDomain(removing)} disabled={busy}>
+                {busy ? 'Removing…' : 'Remove domain'}
+              </Button>
+            </>
+          }
+        >
+          {removeError && <Alert tone="danger">{removeError}</Alert>}
+          <p className="text-[0.8125rem] text-ink-muted">
+            Mail will no longer be accepted for <strong>{removing.fqdn}</strong>, and
+            TatvaOS stops signing mail sent from it. Anything already delivered stays
+            where it is.
+          </p>
+          <p className="text-[0.8125rem] text-ink-muted mb-0">
+            If mailboxes still use this domain, the removal is refused and says how
+            many — move or remove them first. You can add the domain again later,
+            but you will have to prove ownership again.
+          </p>
+        </Modal>
+      )}
 
       {/* ---------------------------------------------------------------- */}
       {adding && (

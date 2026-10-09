@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ═══════════════════════════════════════════════════════════════════════
+     THE WORKBOOK GUARD, AGAINST WORKBOOKS WE DID NOT MAKE.
+
+     Mr. Singh, 1 Oct 2026 (PR 342): XlsxGuard's cases were the ones its
+     author thought of. corpus/ holds workbooks made by other people for
+     testing exactly this - macros, Excel 4 macro sheets, embedded objects,
+     links to other files, encrypted containers - and plain ones.
+
+     Same choices as tests/docs-html: the production file is LINKED, no
+     test framework (`dotnet run`, read the last line), not in any
+     solution, never published, not in CI (a workflow change goes to
+     Mr. Singh).
+    ═══════════════════════════════════════════════════════════════════════
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Tests.SheetsXlsxGuard</RootNamespace>
+    <AssemblyName>sheets-xlsx-guard-test</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The production file itself. Not a copy. -->
+    <Compile Include="../../apps/api/Modules/Docs/XlsxGuard.cs" Link="XlsxGuard.cs" />
+    <None Include="corpus/*.sample;corpus/manifest.tsv" CopyToOutputDirectory="Always" />
+  </ItemGroup>
+
+</Project>

@@ -70,6 +70,14 @@ const PATHS = {
   history:   'M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5M12 7v5l3.5 2',
   notes:     'M6 3h9l4 4v14H6zM15 3v4h4M9 12h6M9 16h6M9 8h3',
   record:    'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z',
+  // Docs: a page with ruled lines and a folded corner — the product mark.
+  // `notes` is Connect's minutes and stays theirs; this is its own string
+  // so restyling either cannot restyle the other.
+  doc:       'M14 3H6v18h12V7l-4-4zM14 3v4h4M9 11h6M9 14h6M9 17h4',
+  star:      'M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3z',
+  clock:     'M12 21a9 9 0 100-18 9 9 0 000 18zM12 7v5l3 2',
+  // Sheets: a page with a grid — its own string, so Docs' mark can change alone.
+  sheet:     'M14 3H6v18h12V7l-4-4zM14 3v4h4M8.5 11h7v7h-7zM8.5 14.5h7M12 11v7',
 };
 
 // ============================================================================
@@ -111,6 +119,11 @@ export const RAIL_PRODUCTS: RailProduct[] = [
   // entries were bought under that code — but the product's NAME is Space.
   { code: 'drive', label: 'Space', href: '/space/personal', icon: <Icon d={PATHS.drive} />,
     live: true, colour: '#28c76f', match: ['/space'] },
+  // Docs and Sheets are NOT in this list, on purpose: it is the same for
+  // everyone, and each is switched on per organisation by the platform
+  // operator (docs.tenant_settings, docs.sheets_tenant_settings). A tile here
+  // would lead every other customer to a "not switched on" page. They live in
+  // SWITCHED_PRODUCTS below, which the launcher shows per organisation.
   // Being built. It stays in the grid because it is genuinely next and the
   // tile sets the expectation; products nobody has STARTED were removed —
   // a wall of greyed tiles reads as a suite that does not exist.
@@ -137,6 +150,22 @@ export const RAIL_PRODUCTS: RailProduct[] = [
     icon: <Icon d={PATHS.gear} />, live: true, colour: '#5c5c72', match: ['/admin'] },
 ];
 
+/**
+ * Products switched on per ORGANISATION, so not in RAIL_PRODUCTS. The app
+ * launcher asks /docs/status and /sheets/status for the signed-in person's
+ * organisation and shows each tile only where it is on (Amit, 9 Oct 2026:
+ * "add docs sheets here"). If that check fails, the tile stays hidden: a
+ * tile that leads to "not switched on" is worse than no tile. Colours as
+ * reserved when they were left out: Docs blue (#1a73e8, not Calendar's
+ * #4285f4), Sheets green (#188038, not Space's #28c76f).
+ */
+export const SWITCHED_PRODUCTS: RailProduct[] = [
+  { code: 'docs', label: 'Docs', href: '/docs', icon: <Icon d={PATHS.doc} />,
+    live: true, colour: '#1a73e8', match: ['/docs'] },
+  { code: 'sheets', label: 'Sheets', href: '/sheets', icon: <Icon d={PATHS.sheet} />,
+    live: true, colour: '#188038', match: ['/sheets'] },
+];
+
 /** Techvein running the platform. */
 export function platformNav(): NavSection[] {
   return [
@@ -158,6 +187,19 @@ export function platformNav(): NavSection[] {
         // domain verification defensible.
         { href: '/admin/drafts', label: 'Signups in progress', icon: <Icon d={PATHS.inbox} /> },
         { href: '/admin/plans', label: 'Plans', icon: <Icon d={PATHS.card} /> },
+        // Personal accounts (build plan §9): the list and its actions, and
+        // the names nobody may sign up for.
+        {
+          href: '/admin/personal',
+          label: 'Personal accounts',
+          icon: <Icon d={PATHS.users} />,
+          children: [
+            { href: '/admin/personal', label: 'All personal accounts' },
+            { href: '/admin/reserved-names', label: 'Reserved names' },
+            // Every retired address, organisation and personal; the only place one is released.
+            { href: '/admin/retired-addresses', label: 'Retired addresses' },
+          ],
+        },
         { href: '/admin/storage', label: 'Storage', icon: <Icon d={PATHS.database} /> },
         { href: '/admin/settings', label: 'Settings', icon: <Icon d={PATHS.gear} /> },
       ],
@@ -342,13 +384,14 @@ export function connectNav(): NavSection[] {
 //  customer's app grid before Amit has decided to launch it. Admins reach it
 //  at /hire directly until then. Add the tile in the commit that launches it.
 // ============================================================================
-export function hireNav({ showTeam, showCareers = false }: { showTeam: boolean; showCareers?: boolean }): NavSection[] {
+export function hireNav({ showTeam, showCareers = false, showSettings = false }: { showTeam: boolean; showCareers?: boolean; showSettings?: boolean }): NavSection[] {
   return [
     {
       heading: 'Hire',
       items: [
         { href: '/hire/jobs', label: 'Job openings', icon: <Icon d={PATHS.notes} colour="#7367f0" /> },
         { href: '/hire/jobs/new', label: 'New job opening', icon: <Icon d={PATHS.compose} colour="#6C3CE9" /> },
+        { href: '/hire/candidates', label: 'Candidates', icon: <Icon d={PATHS.users} colour="#28c76f" /> },
         // Administrators change the team; recruiters may see who is on it.
         // Hiring managers see neither — it is not their question.
         ...(showTeam
@@ -358,6 +401,10 @@ export function hireNav({ showTeam, showCareers = false }: { showTeam: boolean; 
         ...(showCareers
           ? [{ href: '/hire/careers', label: 'Careers page', icon: <Icon d={PATHS.globe} colour="#28c76f" /> }]
           : []),
+        // Administrators only: it decides when candidates' data is deleted.
+        ...(showSettings
+          ? [{ href: '/hire/settings', label: 'Settings', icon: <Icon d={PATHS.gear} colour="#5c5c72" /> }]
+          : []),
       ],
     },
   ];
@@ -366,6 +413,43 @@ export function hireNav({ showTeam, showCareers = false }: { showTeam: boolean; 
 // ============================================================================
 //  Space — file storage.
 // ============================================================================
+// ============================================================================
+//  Docs — the home page's views. Real paths, for the same reason as Family's:
+//  the rail decides what is active by pathname alone.
+// ============================================================================
+export function docsNav(): NavSection[] {
+  return [
+    {
+      heading: 'Docs',
+      items: [
+        { href: '/docs', label: 'Recent', icon: <Icon d={PATHS.clock} colour="#1a73e8" /> },
+        { href: '/docs/owned', label: 'Owned by me', icon: <Icon d={PATHS.doc} colour="#0fbcf9" /> },
+        { href: '/docs/shared', label: 'Shared with me', icon: <Icon d={PATHS.sent} colour="#6C3CE9" /> },
+        { href: '/docs/starred', label: 'Starred', icon: <Icon d={PATHS.star} colour="#f5a623" /> },
+        { href: '/docs/trash', label: 'Trash', icon: <Icon d={PATHS.trash} colour="#98a2b8" /> },
+      ],
+    },
+  ];
+}
+
+// ============================================================================
+//  Sheets — the home page's views, as Docs'.
+// ============================================================================
+export function sheetsNav(): NavSection[] {
+  return [
+    {
+      heading: 'Sheets',
+      items: [
+        { href: '/sheets', label: 'Recent', icon: <Icon d={PATHS.clock} colour="#188038" /> },
+        { href: '/sheets/owned', label: 'Owned by me', icon: <Icon d={PATHS.sheet} colour="#0fbcf9" /> },
+        { href: '/sheets/shared', label: 'Shared with me', icon: <Icon d={PATHS.sent} colour="#6C3CE9" /> },
+        { href: '/sheets/starred', label: 'Starred', icon: <Icon d={PATHS.star} colour="#f5a623" /> },
+        { href: '/sheets/trash', label: 'Trash', icon: <Icon d={PATHS.trash} colour="#98a2b8" /> },
+      ],
+    },
+  ];
+}
+
 export function spaceNav(): NavSection[] {
   return [
     {

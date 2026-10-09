@@ -72,11 +72,12 @@ public static class ConnectWebhookEndpoints
         HttpContext http, AppDbContext db, TenantContext tenant,
         LiveKitTokenService tokens, LiveKitEgressClient egress,
         ConnectRecordingOptions recOptions, LiveKitRoomClient rooms,
+        TatvaOS.Api.Shared.Plans.EffectiveSettings plans,
         ILogger<LiveKitTokenService> log, CancellationToken ct)
     {
         try
         {
-            return await HandleAsync(http, db, tenant, tokens, egress, recOptions, rooms, log, ct);
+            return await HandleAsync(http, db, tenant, tokens, egress, recOptions, rooms, plans, log, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -92,6 +93,7 @@ public static class ConnectWebhookEndpoints
         HttpContext http, AppDbContext db, TenantContext tenant,
         LiveKitTokenService tokens, LiveKitEgressClient egress,
         ConnectRecordingOptions recOptions, LiveKitRoomClient rooms,
+        TatvaOS.Api.Shared.Plans.EffectiveSettings plans,
         ILogger<LiveKitTokenService> log, CancellationToken ct)
     {
         if (!tokens.IsConfigured) return Results.StatusCode(503);
@@ -367,7 +369,7 @@ public static class ConnectWebhookEndpoints
         if (saved && kind == "room_started"
             && meeting is { AutoRecord: true, MediaIsReadable: true })
         {
-            await TryAutoRecordAsync(db, egress, recOptions, meeting, meetingTenantId, log, ct);
+            await TryAutoRecordAsync(db, egress, recOptions, meeting, meetingTenantId, plans, log, ct);
         }
         else if (saved && kind == "room_started" && meeting is { AutoRecord: true })
         {
@@ -423,23 +425,64 @@ public static class ConnectWebhookEndpoints
         string eventName, JsonElement root, AppDbContext db, TenantContext tenant,
         LiveKitRoomClient rooms, ILogger log, CancellationToken ct)
     {
+        // EVERY RETURN BELOW ANSWERS 200, and every one that does nothing SAYS
+        // WHY in the log. A 200 that did nothing and said nothing is the shape
+        // that hid the calendar reminders for six weeks (incident of 27 Sept
+        // 2026); Mr. Singh, 1 Oct: "confirm that a 200 with nothing done leaves
+        // a log line naming the reason". Levels follow how normal the reason
+        // is: camera/mic churn is Debug (constant, by design); a multiple-
+        // sharer meeting is Information; the rest should not happen.
+
         // Source, not type — see ConnectWire.TrackText.
         var source = ConnectWire.TrackText(root, "source");
         if (!string.Equals(source, "SCREEN_SHARE", StringComparison.OrdinalIgnoreCase))
+        {
+            log.LogDebug("Track event {Event} ignored: source {Source} is not a screen share",
+                eventName, source ?? "(none)");
             return Results.Ok();
+        }
 
-        if (!ConnectWire.TryMeetingId(root, out var meetingId)) return Results.Ok();
-        if (await EnterMeetingTenantAsync(db, tenant, meetingId, ct) is null) return Results.Ok();
-        // The same load-bearing line as the room-event path: scope on the C#
-        // object means nothing to RLS until it is pushed into the session.
+        if (!ConnectWire.TryMeetingId(root, out var meetingId))
+        {
+            log.LogWarning("Screen-share {Event} ignored: the room is not a meeting room (no m-<id> name)",
+                eventName);
+            return Results.Ok();
+        }
+        if (await EnterMeetingTenantAsync(db, tenant, meetingId, ct) is null)
+        {
+            log.LogWarning("Screen-share {Event} for meeting {MeetingId} ignored: no such meeting "
+                + "(deleted while the room was still open, or not this server's)", eventName, meetingId);
+            return Results.Ok();
+        }
+        // A safety net, not load-bearing on this path today: EF closes the
+        // connection after the lookup above and the next query opens a new one,
+        // which the interceptor stamps with the tenant (measured 28 Sept by
+        // removing it: tests/connect-isolation/test-ticket-and-screenshare.sh
+        // stayed green). Kept so a future change that holds the connection
+        // open - a transaction, say - cannot silently read with no tenant.
         await db.SyncTenantAsync(ct);
 
         var meeting = await db.ConnectMeetings.AsNoTracking()
             .FirstOrDefaultAsync(m => m.Id == meetingId, ct);
 
-        // Multiple mode needs nothing: every grant already follows the policy.
-        if (meeting is null || meeting.ShareMode != ConnectShare.ModeSingle)
+        if (meeting is null)
+        {
+            // The definer function just said this meeting exists and whose it
+            // is, and a read under that organisation found nothing. That is
+            // the tenant scope failing, not a missing meeting.
+            log.LogError("Screen-share {Event} for meeting {MeetingId} NOT ACTED ON: the meeting exists "
+                + "but could not be read under its own organisation. Single-sharer mode is not being "
+                + "enforced. Check the tenant scope on this path.", eventName, meetingId);
             return Results.Ok();
+        }
+
+        // Multiple mode needs nothing: every grant already follows the policy.
+        if (meeting.ShareMode != ConnectShare.ModeSingle)
+        {
+            log.LogInformation("Screen-share {Event} in meeting {MeetingId}: share mode is {Mode}, "
+                + "nothing to enforce", eventName, meetingId, meeting.ShareMode);
+            return Results.Ok();
+        }
 
         var who = ConnectWire.ParticipantText(root, "identity");
         await ConnectShareEnforcement.ApplyAsync(db, rooms, meeting,
@@ -465,7 +508,7 @@ public static class ConnectWebhookEndpoints
     /// </summary>
     private static async Task TryAutoRecordAsync(
         AppDbContext db, LiveKitEgressClient egress, ConnectRecordingOptions recOptions,
-        ConnectMeeting meeting, Guid tenantId,
+        ConnectMeeting meeting, Guid tenantId, TatvaOS.Api.Shared.Plans.EffectiveSettings plans,
         ILogger<LiveKitTokenService> log, CancellationToken ct)
     {
         try
@@ -476,9 +519,13 @@ public static class ConnectWebhookEndpoints
                 return;
             }
 
-            var allowed = await db.Database
-                .SqlQuery<bool>($"""SELECT connect.recording_allowed({tenantId}) AS "Value" """)
-                .FirstOrDefaultAsync(ct);
+            // A personal host's plan decides, as for the Record button (§4.5).
+            var hostPlan = await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.HostPlanAsync(db, plans, meeting, ct);
+            var allowed = hostPlan is not null
+                ? TatvaOS.Api.Modules.Personal.PersonalMeetingRules.RecordingRefusal(hostPlan) is null
+                : await db.Database
+                    .SqlQuery<bool>($"""SELECT connect.recording_allowed({tenantId}) AS "Value" """)
+                    .FirstOrDefaultAsync(ct);
             if (!allowed)
             {
                 log.LogInformation(

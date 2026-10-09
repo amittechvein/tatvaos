@@ -1,0 +1,219 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "#read(\"/etc/passwd\")"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "#include \"doc.json\""
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "#import \"@preview/cetz:0.3.4\": *"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "#eval(\"read(\\\"/etc/passwd\\\")\")"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "#image(\"/etc/passwd\")"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "#{ panic(\"injected\") }"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "#set page(paper: \"a0\")"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "$ x^2 $ = heading *bold* _emph_ `raw` <label> @ref ]] [["
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "evil link",
+          "marks": [
+            {
+              "type": "link",
+              "attrs": {
+                "href": "javascript:alert(1)"
+              }
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": " styled",
+          "marks": [
+            {
+              "type": "textStyle",
+              "attrs": {
+                "fontFamily": "\"); #read(\"/etc/passwd\"); (\"",
+                "color": "#read(\"/etc/passwd\")",
+                "fontSize": "#read(\"x\")"
+              }
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": " highlighted",
+          "marks": [
+            {
+              "type": "highlight",
+              "attrs": {
+                "color": "#read(\"/etc/passwd\")"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "image",
+          "attrs": {
+            "src": "/etc/passwd",
+            "alt": "a path as a picture"
+          }
+        },
+        {
+          "type": "image",
+          "attrs": {
+            "src": "../doc.json",
+            "alt": "the data file as a picture"
+          }
+        },
+        {
+          "type": "image",
+          "attrs": {
+            "src": "/api/docs/x/images/y",
+            "alt": "planted _pic",
+            "_pic": "doc.json"
+          }
+        },
+        {
+          "type": "image",
+          "attrs": {
+            "src": "https://tatvaos.com/brand/logo.png",
+            "alt": "from the web"
+          }
+        }
+      ]
+    },
+    {
+      "type": "codeBlock",
+      "attrs": {
+        "language": "#read(\"/etc/passwd\")"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "#read(\"/etc/passwd\")"
+        }
+      ]
+    },
+    {
+      "type": "orderedList",
+      "attrs": {
+        "start": "#read(\"/etc/passwd\")"
+      },
+      "content": [
+        {
+          "type": "listItem",
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "#include \"main.typ\""
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "content": [
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": "#read(\"/etc/passwd\")",
+                "rowspan": "#read",
+                "colwidth": [
+                  "#read(\"/etc/passwd\")"
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "#read(\"doc.json\")"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -17,8 +17,12 @@
 // ============================================================================
 
 import Link from 'next/link';
-import { useState } from 'react';
-import { RAIL_PRODUCTS } from '@/lib/nav';
+import { useEffect, useState } from 'react';
+import { RAIL_PRODUCTS, SWITCHED_PRODUCTS } from '@/lib/nav';
+import { useAuth } from '@/lib/auth';
+import { docsApi } from '@/lib/docs';
+import { sheetsApi } from '@/lib/sheets/api';
+import { usePersonal } from '@/lib/personal';
 import { AnchoredPopover } from '@/components/ui/AnchoredPopover';
 import { HEADER_LINK } from './Topbar';
 
@@ -36,8 +40,41 @@ export function AppLauncher() {
   // The consoles sit under a divider at the bottom, apart from the products —
   // "administer the platform" is a different kind of destination from "read
   // your mail", and mixing them makes the grid harder to scan.
-  const products = RAIL_PRODUCTS.filter((p) => p.code !== 'platform' && p.code !== 'core');
-  const consoles = RAIL_PRODUCTS.filter((p) => p.code === 'platform' || p.code === 'core');
+  // A personal account has no organisation to administer (build plan §4.1):
+  // no console tiles at all — Core or Platform. The server refuses those routes anyway
+  // (PersonalGuard); this only stops the launcher offering them.
+  const { authedFetch, user } = useAuth();
+  const personal = usePersonal(authedFetch, user?.id);
+
+  // Docs and Sheets are switched on per organisation (SWITCHED_PRODUCTS), so
+  // their tiles appear only where the person's organisation has them on.
+  // Asked once per signed-in person, not per page. Anything but a clear "on"
+  // (an error, a refusal, no answer yet) leaves the tile out: a tile leading
+  // to "not switched on" is worse than no tile.
+  const [switchedOn, setSwitchedOn] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    if (!user?.id) return;
+    let gone = false;
+    void Promise.allSettled([docsApi.status(authedFetch), sheetsApi.status(authedFetch)])
+      .then(([docs, sheets]) => {
+        if (gone) return;
+        setSwitchedOn({
+          docs: docs.status === 'fulfilled' && docs.value === true,
+          sheets: sheets.status === 'fulfilled' && sheets.value === true,
+        });
+      });
+    return () => { gone = true; };
+  }, [authedFetch, user?.id]);
+
+  // Docs and Sheets sit right after Space: all three are about your files.
+  const products = RAIL_PRODUCTS
+    .filter((p) => p.code !== 'platform' && p.code !== 'core')
+    .flatMap((p) => p.code === 'drive'
+      ? [p, ...SWITCHED_PRODUCTS.filter((s) => switchedOn[s.code])]
+      : [p]);
+  const consoles = personal === true
+    ? []
+    : RAIL_PRODUCTS.filter((p) => p.code === 'platform' || p.code === 'core');
 
   return (
     <>

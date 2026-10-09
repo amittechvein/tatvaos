@@ -65,9 +65,14 @@ export default function AdminOrganisations() {
       subtitle="Every customer on the platform"
       nav={NAV}
       actions={
-        <Link href="/admin/organisations/new">
-          <Button variant="primary">Onboard organisation</Button>
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="/admin/organisations/deleted">
+            <Button variant="secondary">Deleted organisations</Button>
+          </Link>
+          <Link href="/admin/organisations/new">
+            <Button variant="primary">Onboard organisation</Button>
+          </Link>
+        </div>
       }
     >
       <div className="mb-6 flex flex-wrap items-center gap-2">
@@ -374,7 +379,7 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
 
       <Field label="Plan">
         <Select value={planId} onChange={(e) => setPlanId(e.target.value)}>
-          {plans.map((p) => (
+          {plans.filter((p) => p.audience !== 'personal').map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
               {p.maxUsers ? ` — up to ${p.maxUsers} people` : ' — unlimited people'}
@@ -409,6 +414,16 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
 
       <AiUsageSection orgId={org.id} />
       <AiCreditsSection orgId={org.id} />
+      <MailAiOfferSection orgId={org.id} />
+
+      <hr className="my-6" />
+
+      <DocsSwitch orgId={org.id} />
+
+      <hr className="my-6" />
+
+      <ProductSwitch orgId={org.id} product="sheets" name="Sheets"
+        blurb="Collaborative spreadsheets, stored in Space. Separate from Docs: either can be on without the other. Off until you turn it on. Only you can change this; the organisation cannot. Turning it off closes open spreadsheets within a minute; nothing is deleted." />
     </Modal>
   );
 }
@@ -435,6 +450,70 @@ type CapsAnswer = {
   defaultPerMeeting: number;
   ceiling: number;
 };
+
+/**
+ * TatvaOS Docs, on or off for this organisation. Off by default; only the
+ * platform operator turns it on (DocsAdminEndpoints), and every change is
+ * audited. Turning it on also means this organisation's documents may go to
+ * the AI provider when its AI switch is on.
+ */
+function DocsSwitch({ orgId }: { orgId: string }) {
+  const { authedFetch } = useAuth();
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const path = `/admin/organisations/${orgId}/docs`;
+
+  useEffect(() => {
+    let gone = false;
+    authedFetch(path)
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? 'Could not load the Docs setting.');
+        if (!gone) setEnabled(Boolean(body.enabled));
+      })
+      .catch((e) => { if (!gone) setError(e instanceof Error ? e.message : 'Could not load the Docs setting.'); });
+    return () => { gone = true; };
+  }, [authedFetch, path]);
+
+  async function flip() {
+    if (enabled === null) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await authedFetch(path, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !enabled }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not change the Docs setting.');
+      setEnabled(Boolean(body.enabled));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not change the Docs setting.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <h6 className="font-semibold mb-2">Docs</h6>
+      <p className="text-[0.75rem] text-ink-muted mb-4">
+        Collaborative documents, stored in Space. Off until you turn it on. Only you can change this;
+        the organisation cannot. Turning it off closes open documents within a minute; nothing is deleted.
+      </p>
+      {error && <Alert tone="danger">{error}</Alert>}
+      <div className="flex items-center justify-between">
+        <span className="text-sm">
+          {enabled === null ? 'Loading…' : enabled ? 'On for this organisation' : 'Off for this organisation'}
+        </span>
+        <Button variant={enabled ? 'secondary' : 'primary'} onClick={flip} disabled={busy || enabled === null}>
+          {busy ? 'Saving…' : enabled ? 'Turn Docs off' : 'Turn Docs on'}
+        </Button>
+      </div>
+    </>
+  );
+}
 
 /**
  * This organisation's AI use this month — the same summary its own TatvaOS AI
@@ -569,6 +648,107 @@ function AiCreditsSection({ orgId }: { orgId: string }) {
         {saved && <span className="text-[0.75rem] text-ok">Saved and recorded in the audit trail.</span>}
       </div>
       <TopupsPanel orgId={orgId} topups={topups} hasLimit={c?.base !== null && c?.base !== undefined} onChanged={load} />
+    </>
+  );
+}
+
+/**
+ * Mail AI for this organisation (30 Sept 2026): whether it is on the Mail AI
+ * list (ai.mail.organisations), and the one action that puts it there.
+ *
+ * Offering is also a RESET: the organisation's own Mail AI goes off, sorting
+ * off, features to their defaults, so its administrator agrees again under
+ * the text that is live now. Organisation 5 is why: their switch from 25 Sept
+ * was still on behind the gate, and a plain list edit would have resumed it.
+ * The page sends back the list it showed, and the server refuses if it has
+ * changed since. Run only after the privacy text is live, on Amit's go.
+ */
+function MailAiOfferSection({ orgId }: { orgId: string }) {
+  const { authedFetch } = useAuth();
+  type S = { list: string; onList: boolean; everyone: boolean; allowAi: boolean; allowMailAi: boolean;
+    privacyTextComplete: boolean; privacyTextIncomplete: string | null;
+    sorting: boolean; features: { rewrite: boolean; suggest: boolean; summary: boolean } };
+  const [s, setS] = useState<S | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const path = `/admin/organisations/${orgId}/mail-ai`;
+
+  const load = useCallback(() => {
+    authedFetch(path)
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? 'Could not load Mail AI.');
+        setS(body);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Could not load Mail AI.'));
+  }, [authedFetch, path]);
+  useEffect(() => { load(); }, [load]);
+
+  async function offer() {
+    if (!s) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await authedFetch(`${path}/offer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expectedList: s.list }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not offer Mail AI.');
+      setDone(true); setConfirming(false);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not offer Mail AI.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const onOff = (b: boolean) => (b ? 'on' : 'off');
+  return (
+    <>
+      <h6 className="font-semibold mb-2 mt-4">TatvaOS AI in Mail</h6>
+      {error && <Alert tone="danger">{error}</Alert>}
+      {s && (
+        <p className="text-sm mb-2">
+          {s.everyone ? 'Offered to every organisation (the list is "all").'
+            : s.onList ? 'On the Mail AI list.' : 'Not on the Mail AI list: its administrators see "not available yet".'}{' '}
+          <span className="text-ink-muted">
+            Its own switches: AI {onOff(s.allowAi)}, Mail AI {onOff(s.allowMailAi)}, sorting {onOff(s.sorting)};
+            Help me write {onOff(s.features.rewrite)}, suggested replies {onOff(s.features.suggest)},
+            Summarise {onOff(s.features.summary)}.
+          </span>
+        </p>
+      )}
+      {s && !s.onList && !s.everyone && !s.privacyTextComplete && (
+        <p className="text-[0.75rem] text-warn mb-0">{s.privacyTextIncomplete}</p>
+      )}
+      {s && !s.onList && !s.everyone && s.privacyTextComplete && (
+        <Button variant="ghost" disabled={busy} onClick={() => setConfirming(true)}>
+          Offer Mail AI to this organisation…
+        </Button>
+      )}
+      {done && <p className="text-[0.75rem] text-ok mb-0">Offered, reset, and recorded in the audit trail under your name.</p>}
+      {confirming && s && (
+        <Modal onClose={() => !busy && setConfirming(false)} title="Offer TatvaOS AI in Mail?" busy={busy}>
+          <p>
+            This organisation goes on the Mail AI list, and in the same step its own Mail AI is reset:
+            Mail AI off, sorting off, Help me write on, suggested replies and Summarise off. Nothing is
+            sent until its administrator turns Mail AI on again and agrees to the text shown then.
+          </p>
+          <p className="text-ink-muted">
+            Only do this once the Mail AI privacy text is live on production. It is recorded in this
+            organisation&apos;s audit trail under your name.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>Cancel</Button>
+            <Button variant="primary" disabled={busy} onClick={() => void offer()}>
+              {busy ? 'Offering…' : 'Offer and reset'}
+            </Button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
@@ -780,6 +960,66 @@ function InvitationCaps({ orgId }: { orgId: string }) {
       <div className="flex justify-end">
         <Button variant="primary" onClick={save} disabled={busy || !dirty}>
           {busy ? 'Saving…' : 'Save limits'}
+        </Button>
+      </div>
+    </>
+  );
+}
+
+/**
+ * A product's on/off switch for this organisation, for the products whose
+ * operator route is /admin/organisations/{id}/{product} with { enabled }.
+ * Sheets uses it (SheetsAdminEndpoints); every change is audited there.
+ */
+function ProductSwitch({ orgId, product, name, blurb }: { orgId: string; product: string; name: string; blurb: string }) {
+  const { authedFetch } = useAuth();
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const path = `/admin/organisations/${orgId}/${product}`;
+
+  useEffect(() => {
+    let gone = false;
+    authedFetch(path)
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? `Could not load the ${name} setting.`);
+        if (!gone) setEnabled(Boolean(body.enabled));
+      })
+      .catch((e) => { if (!gone) setError(e instanceof Error ? e.message : `Could not load the ${name} setting.`); });
+    return () => { gone = true; };
+  }, [authedFetch, path, name]);
+
+  async function flip() {
+    if (enabled === null) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await authedFetch(path, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !enabled }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? `Could not change the ${name} setting.`);
+      setEnabled(Boolean(body.enabled));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `Could not change the ${name} setting.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <h6 className="font-semibold mb-2">{name}</h6>
+      <p className="text-[0.75rem] text-ink-muted mb-4">{blurb}</p>
+      {error && <Alert tone="danger">{error}</Alert>}
+      <div className="flex items-center justify-between">
+        <span className="text-sm">
+          {enabled === null ? 'Loading…' : enabled ? 'On for this organisation' : 'Off for this organisation'}
+        </span>
+        <Button variant={enabled ? 'secondary' : 'primary'} onClick={flip} disabled={busy || enabled === null}>
+          {busy ? 'Saving…' : enabled ? `Turn ${name} off` : `Turn ${name} on`}
         </Button>
       </div>
     </>

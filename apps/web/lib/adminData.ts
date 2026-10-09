@@ -34,6 +34,12 @@ export interface OrgRow {
 export interface PlanRow {
   id: string;
   name: string;
+  /**
+   * 'personal' (20260926-z-personal-plans.sql): held by one person in the
+   * personal house, limits ENFORCED. Never offered to an organisation — the
+   * API refuses it too.
+   */
+  audience?: 'organisation' | 'personal';
   maxUsers: number | null;
   storageModel: string;
   perUserQuotaBytes: number | null;
@@ -42,6 +48,9 @@ export interface PlanRow {
   includedProducts: string[];
   pricePerUserMonthly: number | null;
   priceMonthly: number | null;
+  /** Yearly prices (billing, 26 Sept 2026). null = 12 x monthly. */
+  pricePerUserYearly?: number | null;
+  priceYearly?: number | null;
   /** AI credits (26 Sept 2026): per user × users, or one pool. Null amount = no limit. */
   aiCreditModel?: string;
   aiCreditsPerUser?: number | null;
@@ -113,6 +122,8 @@ export interface UpsertPlanBody {
   includedProducts?: string[];
   pricePerUserMonthly?: number | null;
   priceMonthly?: number | null;
+  pricePerUserYearly?: number | null;
+  priceYearly?: number | null;
   aiCreditModel?: 'per_user' | 'pooled';
   aiCreditsPerUser?: number | null;
   aiCreditsPooled?: number | null;
@@ -318,4 +329,84 @@ export async function fetchPlanWarnings(authedFetch: AuthedFetch): Promise<PlanW
   const res = await authedFetch('/admin/plan-warnings');
   if (!res.ok) throw new Error('Could not load plan warnings.');
   return res.json();
+}
+
+// ---------------------------------------------------------------------------
+//  Deleting an organisation for good. The rules are the database's
+//  (local/postgres/init/20260929-organisation-deletions.sql); these only ask.
+// ---------------------------------------------------------------------------
+
+export interface DeletionPreview {
+  org: { id: string; name: string; status: string; kind: string; createdAt: string; suspendedAt: string | null };
+  canDelete: boolean;
+  blockers: { code: string; reason: string }[];
+  counts: {
+    people: number; domains: number; mailboxes: number; messages: number;
+    meetings: number; recordings: number; files: number; documents: number; rowsInAll: number;
+  };
+  /** "schema.table.column" → rows. Everything that names the organisation. */
+  tables: Record<string, number>;
+  domains: string[];
+  /** Domains whose mail folder is on the server. These are NOT removed. */
+  mailFolders: string[];
+  /** False: the mail store could not be looked at; mailFolders is every domain, out of caution. */
+  mailStoreSeen: boolean;
+  spaceFolderOnDisk: boolean;
+}
+
+export interface DeletedFiles {
+  space?: { files: number; bytes: number; removed: boolean };
+  recordings?: { listed: number; removed: number; alreadyGone: number; failed: number };
+  dkimKeys?: { removed: number };
+  errors?: string[];
+  error?: string;
+}
+
+export interface OrganisationDeletion {
+  id: string;
+  organisationId: string;
+  name: string;
+  type: string | null;
+  origin: string | null;
+  organisationCreatedAt: string | null;
+  domains: string[];
+  counts: Record<string, number>;
+  reason: string | null;
+  deletedBy: string;
+  deletedAt: string;
+  recordingFiles: number;
+  filesRemoved: DeletedFiles | null;
+  filesRemovedAt: string | null;
+  mailFolders: string[];
+  /** Folders the mail server has removed so far, one domain at a time. */
+  mailFoldersRemoved: string[];
+  mailFoldersRemovedAt: string | null;
+}
+
+export async function fetchDeletionPreview(authedFetch: AuthedFetch, id: string): Promise<DeletionPreview> {
+  const res = await authedFetch(`/admin/organisations/${id}/deletion-preview`);
+  if (!res.ok) throw new Error(await orgError(res, 'Could not work out what would be deleted.'));
+  return res.json();
+}
+
+export async function deleteOrganisation(
+  authedFetch: AuthedFetch, id: string, typedName: string, reason: string,
+): Promise<{ deleted: boolean; record: string; name: string; mailFoldersLeft: string[]; files: DeletedFiles | null }> {
+  const res = await authedFetch(`/admin/organisations/${id}/delete`, {
+    method: 'POST', body: JSON.stringify({ typedName, reason }),
+  });
+  if (!res.ok) throw new Error(await orgError(res, 'The organisation was not deleted.'));
+  return res.json();
+}
+
+export async function fetchOrganisationDeletions(authedFetch: AuthedFetch): Promise<OrganisationDeletion[]> {
+  const res = await authedFetch('/admin/organisation-deletions');
+  if (!res.ok) throw new Error('Could not load the deleted organisations.');
+  return res.json();
+}
+
+export async function removeDeletedFiles(authedFetch: AuthedFetch, recordId: string): Promise<DeletedFiles> {
+  const res = await authedFetch(`/admin/organisation-deletions/${recordId}/remove-files`, { method: 'POST' });
+  if (!res.ok) throw new Error(await orgError(res, 'The files could not be removed.'));
+  return (await res.json()).files;
 }

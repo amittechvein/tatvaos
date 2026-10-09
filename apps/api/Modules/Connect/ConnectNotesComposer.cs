@@ -75,7 +75,9 @@ namespace TatvaOS.Api.Modules.Connect;
 public sealed class ConnectNotesComposer(
     TatvaOS.Api.Shared.Ai.IAiGateway ai,
     ConnectRecordingOptions options,
-    ILogger<ConnectNotesComposer> log)
+    ILogger<ConnectNotesComposer> log,
+    TatvaOS.Api.Shared.Data.AppDbContext db,
+    TatvaOS.Api.Shared.Tenancy.TenantContext tenant)
 {
 
 
@@ -360,7 +362,13 @@ public sealed class ConnectNotesComposer(
         // that reads like an instruction to the model is a person being
         // quoted, not an order to obey. The gateway's contract makes that
         // distinction structural.
-        var result = await ai.CompleteAsync(system, user, ct, feature: "connect.minutes");
+        // Offered to this organisation (AiGate, ai.connect.organisations)?
+        // No: the digest, exactly as when the organisation's AI is off.
+        if (!await TatvaOS.Api.Shared.Ai.AiGate.AllowedAsync(db, tenant.HasTenant ? tenant.TenantId : null,
+                TatvaOS.Api.Shared.Ai.AiGate.ConnectMinutes, log, ct))
+            return null;
+
+        var result = await ai.CompleteAsync(system, user, ct, feature: TatvaOS.Api.Shared.Ai.AiGate.ConnectMinutes);
 
         if (result.Error is not null)
         {

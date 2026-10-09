@@ -168,7 +168,7 @@ HTTP; none of this needs the button.
 | 4 | Suspended organisation | Refused | Not implemented in `resolve_share_token` today — see below |
 | 5 | Wrong recording | A share for recording A must not authorise recording B, even in the same meeting | `meeting_id` is denormalised onto the share for exactly this check |
 | 6 | **Participant with no share at all** | **Still reads the recording** | The baseline never moves. `SeenMeetingAsync` decides it and nothing here may override it. The likeliest invariant for a future change to break |
-| 7 | **Named grant across organisations** | Reader in tenant B reads a recording owned by tenant A, and **cannot list who else it was shared with** | The only reason `share_for_user` is SECURITY DEFINER. The second half is enforced by what the RLS policy omits, which makes it invisible |
+| 7 | **Named grant across organisations** | Reader in tenant B reads a recording owned by tenant A, and **cannot list who else it was shared with** | The only reason `share_access_for_user` is SECURITY DEFINER (until 28 Sept 2026 this row named `share_for_user`, superseded on 26 Sept and dropped on 28 Sept as unused). The second half is enforced by what the RLS policy omits, which makes it invisible |
 | 8 | **The switch flipped off while a link is live** | The existing link stops resolving immediately; the row is not deleted; flipping back on resumes it | Read-time enforcement. Verified by me in a sandbox, never against the deployed system |
 | 9 | **An anonymous read is logged** | A row appears in `recording_access_log` with the tenant, recording and level taken from the share, `subject_user_id` NULL | Not an authorisation outcome, so nobody thinks to test it — and a public link with no record of who opened it is the failure that matters after the fact |
 
@@ -289,6 +289,27 @@ result is written here, and the button is switched on by configuration.
 Order: fixes → Mr. Singh reads → merge → Amit's go + no live meeting → hand
 deploy, dark → production matrix → switch on. The deploy report says "not
 purely additive: replaces unused definer functions".
+
+### Switched on, 27 September 2026 — BEFORE the production matrix
+
+What happened, in order:
+- 26 Sept 11:52Z: #312 deployed dark (`7f2de67`).
+- 12:34Z: stage 1. The test list was Techvein and Trineetra by Techvein.
+- 16:53Z: #323 deployed (`c7cb110`): visible fields, colour per level, and a branded link page.
+
+Amit used sharing on production and reported "all work perfectly".
+
+On 27 Sept he chose to switch the button on for every organisation **before
+the production matrix was run**. He was told what it covers that ordinary use
+does not: revocation mid-playback, expiry, suspension, the password pause,
+public links switched off while live, and the access log. That is an override
+of this section's order, recorded here, and it was his decision to make.
+
+Now set: `CONNECT_RECORDING_SHARING_OFFERED=true`, and the test list is removed.
+The server's `.env` was backed up first, as `.env.before-sharing-on-*`.
+
+**Still owed:** the production matrix, run by the rules above now that sharing
+is on for everyone. Its result is to be written here.
 
 ---
 
