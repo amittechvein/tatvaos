@@ -500,6 +500,8 @@ builder.Services.AddScoped<TatvaOS.Api.Modules.Calendar.ICalendarImipSink,
 // finished telling us about is asked about directly, so a lost webhook costs
 // a delay rather than a recording that never appears.
 builder.Services.AddHostedService<ConnectNotesWorker>();
+// Hire: deletes candidates past their retention period (Amit, 24 Sept 2026).
+builder.Services.AddHostedService<TatvaOS.Api.Workers.HireRetentionWorker>();
 // Personal accounts (build plan §4.5, §5): a personal host's meeting ends at
 // their plan's time; the AI trial's day-12 reminder and end note.
 builder.Services.AddHostedService<PersonalMeetingLimitWorker>();

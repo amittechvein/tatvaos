@@ -381,6 +381,12 @@ jobs:
           fi
           for _ in $(seq 1 20); do curl -s -o /dev/null http://127.0.0.1:5198/mail && break; sleep 0.5; done
           bash tests/connect-isolation/test-minutes-worker.sh
+      # Automatic deletion of candidates past their retention period (Amit,
+      # 24 Sept 2026: six months after the decision, shorter per organisation,
+      # longer only with consent). A sweep that stops working keeps people's
+      # data longer than promised with nothing looking wrong, so it runs here.
+      - name: "Hire: candidates past their retention period are deleted, and only they"
+        run: bash tests/hire/test-retention.sh
 
       - name: Install the web app's TypeScript (for the PiP check)
         run: pnpm install --frozen-lockfile

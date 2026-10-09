@@ -43,6 +43,8 @@
 #  18. two people opening the pipeline for the first time at the same moment
 #      both get the twelve stages, and the organisation has exactly twelve
 #      (TATVAOS_HIRE_RACE_ROUNDS, default 5 rounds of 10 requests at once)
+#  19. retention settings (30..180 days, admins only, per organisation) and
+#      the decision clock: set on reject/withdraw, cleared on reopen
 #
 # ── CALIBRATION, 24 September 2026 (house rule 6) ──────────────────────────
 #  * PUBLISH CHECK REMOVED FROM SAVE -> "blanking the description of an open
@@ -572,6 +574,68 @@ for round in $(seq 1 $ROUNDS); do
 done
 same "all $((ROUNDS * PAR)) answers were read" "$race_answers" "$((ROUNDS * PAR))"
 same "every one answered 200 with twelve stages, and each round left exactly twelve rows" "$race_bad" "0"
+step "19. Retention settings and the decision clock"
+r=$(call "$TOKEN" GET /hire/settings)
+expect "an admin reads the Hire settings" 200 "$r"
+same "the default is 180 days, between 30 and 180" "$(jq_ "$(body "$r")" "f\"{d['retentionDays']}/{d['minDays']}/{d['maxDays']}\"")" "180/30/180"
+expect "longer than 180 days" 400 "$(call "$TOKEN" PUT /hire/settings '{"retentionDays":181}')" "consent"
+expect "shorter than 30 days" 400 "$(call "$TOKEN" PUT /hire/settings '{"retentionDays":29}')" "between 30 and 180"
+# Shortening states what it will destroy and waits seven days, visibly and
+# cancellably (Mr. Singh, 24 Sept 2026).
+r=$(call "$TOKEN" GET "/hire/settings/impact?days=90")
+expect "the impact of 90 days is asked for first" 200 "$r"
+DELETES=$(jq_ "$(body "$r")" "d['deletes']")
+printf '%s' "$DELETES" | grep -qE '^[0-9]+$' && pass "it answers with a number ($DELETES) and a date" || fail "impact answered '$DELETES'"
+r=$(call "$TOKEN" PUT /hire/settings '{"retentionDays":90}')
+expect "shortening without confirming the number" 409 "$r" "confirm that number"
+same "is refused with the same number" "$(jq_ "$(body "$r")" "d['deletes']")" "$DELETES"
+expect "confirming a different number" 409 "$(call "$TOKEN" PUT /hire/settings "{\"retentionDays\":90,\"confirmDeletes\":$((DELETES + 1))}")" "confirm that number"
+r=$(call "$TOKEN" PUT /hire/settings "{\"retentionDays\":90,\"confirmDeletes\":$DELETES}")
+expect "confirming the number shown" 200 "$r"
+r=$(call "$TOKEN" GET /hire/settings)
+same "does NOT change the period yet" "$(jq_ "$(body "$r")" "d['retentionDays']")" "180"
+same "it waits, visibly, for seven days" \
+    "$(jq_ "$(body "$r")" "str(d['pending']['days'])+'/'+str(6 < (__import__('datetime').datetime.fromisoformat(d['pending']['effectiveAt'].replace('Z','+00:00')) - __import__('datetime').datetime.now(__import__('datetime').timezone.utc)).days + 1 <= 7)")" "90/True"
+same "and says who asked" "$(jq_ "$(body "$r")" "d['pending']['requestedBy']")" "$(PG "SELECT display_name FROM core.users WHERE id='$OWNER_ID'")"
+same "the scheduling is audited with the number" \
+    "$(PG "SELECT (after_state->>'pendingDays')||'/'||(after_state->>'deletes') FROM core.audit_logs WHERE action='hire_settings.retention_shortening_scheduled' ORDER BY id DESC LIMIT 1")" "90/$DELETES"
+expect "it can be cancelled" 200 "$(call "$TOKEN" DELETE /hire/settings/pending)"
+same "and then nothing is waiting" "$(jq_ "$(body "$(call "$TOKEN" GET /hire/settings)")" "str(d['pending'])")" "None"
+expect "cancelling twice" 404 "$(call "$TOKEN" DELETE /hire/settings/pending)"
+call "$TOKEN" PUT /hire/settings "{\"retentionDays\":60,\"confirmDeletes\":$(jq_ "$(body "$(call "$TOKEN" GET "/hire/settings/impact?days=60")")" "d['deletes']")}" >/dev/null
+same "a shortening scheduled again" "$(jq_ "$(body "$(call "$TOKEN" GET /hire/settings)")" "str(d['pending']['days'])")" "60"
+expect "lengthening (180) applies at once" 200 "$(call "$TOKEN" PUT /hire/settings '{"retentionDays":180}')"
+same "and cancels what was waiting" "$(jq_ "$(body "$(call "$TOKEN" GET /hire/settings)")" "str(d['pending'])")" "None"
+expect "ABC School's admin still sees their own default" 200 "$(call "$OTHER" GET /hire/settings)"
+same "untouched by Techvein's changes" "$(jq_ "$(body "$(call "$OTHER" GET /hire/settings)")" "f\"{d['retentionDays']}/{d['pending']}\"")" "180/None"
+
+# The retention clock for someone never put forward is a PERSON'S edit —
+# not viewing, not activity on their applications (Mr. Singh, 24 Sept).
+EDIT_BEFORE=$(PG "SELECT last_edited_at FROM hire.candidates WHERE id='$CAND_B'")
+call "$TOKEN" GET /hire/candidates/$CAND_B >/dev/null
+call "$TOKEN" GET "/hire/candidates?q=$RUN" >/dev/null
+call "$TOKEN" GET /hire/applications/$APP_B1/history >/dev/null
+same "viewing a candidate, the list and a history leaves the clock alone" \
+    "$(PG "SELECT last_edited_at FROM hire.candidates WHERE id='$CAND_B'")" "$EDIT_BEFORE"
+expect "a person edits the profile" 200 \
+    "$(call "$TOKEN" PUT /hire/candidates/$CAND_B "{\"fullName\":\"$NAME_B\",\"phone\":\"+91 91234 56789\",\"source\":\"job_board\",\"tags\":[\"clock\"]}")"
+same "and that restarts it" "$(PG "SELECT (last_edited_at > '$EDIT_BEFORE')::text FROM hire.candidates WHERE id='$CAND_B'")" "true"
+EDIT_AFTER=$(PG "SELECT last_edited_at FROM hire.candidates WHERE id='$CAND_B'")
+expect "a recruiter is made" 200 "$(call "$TOKEN" PUT /hire/team/$EMPLOYEE_ID '{"role":"recruiter"}')"
+expect "a recruiter cannot read the settings" 403 "$(call "$EMP" GET /hire/settings)"
+expect "nor change them" 403 "$(call "$EMP" PUT /hire/settings '{"retentionDays":30}')" "only an administrator"
+expect "the recruiter leaves the team" 200 "$(call "$TOKEN" DELETE /hire/team/$EMPLOYEE_ID)"
+expect "back to 180" 200 "$(call "$TOKEN" PUT /hire/settings '{"retentionDays":180}')"
+
+same "an active application has no decision date" "$(PG "SELECT coalesce(decided_at::text,'none') FROM hire.applications WHERE id='$APP_B1'")" "none"
+expect "rejecting it" 200 "$(call "$TOKEN" POST /hire/applications/$APP_B1/reject '{"reason":"Retention clock check"}')"
+same "starts the clock" "$(PG "SELECT (decided_at IS NOT NULL AND decided_at > now() - interval '5 minutes')::text FROM hire.applications WHERE id='$APP_B1'")" "true"
+expect "reopening it" 200 "$(call "$TOKEN" POST /hire/applications/$APP_B1/reopen)"
+same "stops the clock" "$(PG "SELECT coalesce(decided_at::text,'none') FROM hire.applications WHERE id='$APP_B1'")" "none"
+expect "withdrawing it" 200 "$(call "$TOKEN" POST /hire/applications/$APP_B1/withdraw '{}')"
+same "starts it again" "$(PG "SELECT (decided_at IS NOT NULL)::text FROM hire.applications WHERE id='$APP_B1'")" "true"
+same "rejecting, reopening and withdrawing an application left the candidate's own clock alone" \
+    "$(PG "SELECT last_edited_at FROM hire.candidates WHERE id='$CAND_B'")" "$EDIT_AFTER"
 
 printf '\n%s----------------------------------------%s\n' "$CYAN" "$RST"
 printf '  passed: %d   failed: %d\n\n' "$PASSED" "$FAILED"

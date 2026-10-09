@@ -384,7 +384,7 @@ export function connectNav(): NavSection[] {
 //  customer's app grid before Amit has decided to launch it. Admins reach it
 //  at /hire directly until then. Add the tile in the commit that launches it.
 // ============================================================================
-export function hireNav({ showTeam, showCareers = false }: { showTeam: boolean; showCareers?: boolean }): NavSection[] {
+export function hireNav({ showTeam, showCareers = false, showSettings = false }: { showTeam: boolean; showCareers?: boolean; showSettings?: boolean }): NavSection[] {
   return [
     {
       heading: 'Hire',
@@ -400,6 +400,10 @@ export function hireNav({ showTeam, showCareers = false }: { showTeam: boolean; 
         // Administrators only: it decides what the public sees.
         ...(showCareers
           ? [{ href: '/hire/careers', label: 'Careers page', icon: <Icon d={PATHS.globe} colour="#28c76f" /> }]
+          : []),
+        // Administrators only: it decides when candidates' data is deleted.
+        ...(showSettings
+          ? [{ href: '/hire/settings', label: 'Settings', icon: <Icon d={PATHS.gear} colour="#5c5c72" /> }]
           : []),
       ],
     },
