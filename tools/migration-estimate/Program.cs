@@ -10,6 +10,7 @@
 //
 //    dotnet run --project tools/migration-estimate -- \
 //        --key ~/keys/migration-test.json --admin admin@customer.example \
+//        (or --person someone@customer.example [--labels] instead of --admin) \
 //        [--disk /var/mail/vhosts] [--space-disk /var/lib/space/blobs] \
 //        [--mail-left-gib N] [--space-left-gib N] [--per-user-quota-gib N]
 //
@@ -20,6 +21,13 @@
 //    * readable by anyone but its owner (chmod 600) - on a shared machine
 //      that is a key handed to every account on it.
 //  It never prints the key; it prints the service account's address.
+//
+//  --person measures only the people named (comma-separated): no directory
+//  listing, so no admin is impersonated and nobody else's data is read - the
+//  way to try it on one test mailbox. --labels adds that person's Gmail labels
+//  with their message counts (design section 4: "prove the client by listing
+//  one mailbox's folders and counts"). Delegation then needs only
+//  drive.readonly (and gmail.readonly for --labels).
 //
 //  WHAT IT CANNOT KNOW from a laptop: the organisation's own storage (that
 //  is in the database). Pass it with --mail-left-gib / --space-left-gib, or
@@ -39,7 +47,7 @@ using TatvaOS.Api.Shared.Google;
 var opts = ParseArgs(args);
 if (opts is null)
 {
-    Console.Error.WriteLine("usage: migration-estimate --key <service-account.json> --admin <admin@domain> " +
+    Console.Error.WriteLine("usage: migration-estimate --key <service-account.json> (--admin <admin@domain> | --person <a@domain[,b@domain]> [--labels yes]) " +
                             "[--disk <path>] [--space-disk <path>] [--mail-left-gib N] [--space-left-gib N] [--per-user-quota-gib N]");
     return 2;
 }
@@ -73,10 +81,19 @@ using (account)
     var estimator = new MigrationSizeEstimator(new GoogleWorkspaceClient(api));
 
     Console.WriteLine($"\n  Google Workspace size estimate - {DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm} UTC");
-    Console.WriteLine($"  as {account.ClientEmail}, listing people as {opts["admin"]}\n");
+    var named = opts.TryGetValue("person", out var ps)
+        ? ps.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : null;
+    Console.WriteLine(named is null
+        ? $"  as {account.ClientEmail}, listing people as {opts["admin"]}\n"
+        : $"  as {account.ClientEmail}, for {string.Join(", ", named)} only (no directory listing)\n");
 
     MigrationSizeReport report;
-    try { report = await estimator.MeasureAsync(account, opts["admin"], CancellationToken.None); }
+    try
+    {
+        report = named is null
+            ? await estimator.MeasureAsync(account, opts["admin"], CancellationToken.None)
+            : await estimator.MeasurePeopleAsync(account, named, CancellationToken.None);
+    }
     catch (Exception ex) when (ex is GoogleAuthException or GoogleApiException or GoogleScopeRefusedException)
     {
         Console.Error.WriteLine($"  could not list the domain's people: {ex.Message}");
@@ -96,6 +113,28 @@ using (account)
     Console.WriteLine($"  {$"{report.People.Count} people".PadRight(width)}  {MigrationFit.Size(report.MailBytes),10}  {MigrationFit.Size(report.DriveBytes),10}");
     Console.WriteLine("  * mail includes Google Photos (an over-estimate); Google Docs/Sheets count as nothing in Google's");
     Console.WriteLine("    quota but arrive as .docx/.xlsx files, so the Drive column under-counts them.");
+
+    if (named is not null && opts.ContainsKey("labels"))
+    {
+        var gmail = new GmailClient(api);
+        foreach (var person in named)
+        {
+            Console.WriteLine($"\n  Gmail labels for {person}:");
+            try
+            {
+                var profile = await gmail.GetProfileAsync(account, person, CancellationToken.None);
+                Console.WriteLine($"    {profile.MessagesTotal} messages in {profile.ThreadsTotal} conversations");
+                foreach (var l in (await gmail.ListLabelsAsync(account, person, CancellationToken.None))
+                             .OrderBy(l => l.Type).ThenBy(l => l.Name, StringComparer.OrdinalIgnoreCase))
+                    Console.WriteLine($"    {l.Type,-6}  {l.Name,-40} {l.MessagesTotal,8}");
+            }
+            catch (Exception ex) when (ex is GoogleAuthException or GoogleApiException)
+            {
+                Console.WriteLine($"    could not read Gmail: {ex.Message}");
+            }
+        }
+        Console.WriteLine();
+    }
 
     foreach (var n in report.NotMigrated) Console.WriteLine($"  not migrated: {n.Email} ({n.Reason})");
     foreach (var n in report.Unmeasured) Console.WriteLine($"  UNMEASURED:   {n.Email} ({n.Reason})");
@@ -134,7 +173,7 @@ static Dictionary<string, string>? ParseArgs(string[] a)
         o[a[i][2..]] = a[i + 1];
     }
     if (a.Length % 2 != 0) return null;
-    return o.ContainsKey("key") && o.ContainsKey("admin") ? o : null;
+    return o.ContainsKey("key") && (o.ContainsKey("admin") ^ o.ContainsKey("person")) ? o : null;
 }
 
 static string? InsideGitWorkTree(string file)

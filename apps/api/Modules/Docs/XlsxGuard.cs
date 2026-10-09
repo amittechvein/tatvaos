@@ -124,6 +124,21 @@ public static partial class XlsxGuard
                         var formula = WebUtility.HtmlDecode(m.Groups[1].Value);
                         if (!FormulaIsSafe(formula)) return "calling_out_formula";
                     }
+                    // Rule formulas too: <formula> in conditional formatting,
+                    // <formula1>/<formula2> in data validation. Excel evaluates
+                    // them like any cell formula, so a DDE or web call hidden in
+                    // a colour rule is the same attack. Until 9 Oct 2026 only
+                    // <f> and definedName were read (found while adding Sheets'
+                    // colour rules; the editor's own writer only ever puts a
+                    // quoted string or a number in one — xlsx.ts colourRuleXml).
+                    if (lower.StartsWith("xl/worksheets/"))
+                    {
+                        foreach (Match m in RuleFormula().Matches(text))
+                        {
+                            var formula = WebUtility.HtmlDecode(m.Groups[1].Value);
+                            if (!FormulaIsSafe(formula)) return "calling_out_formula";
+                        }
+                    }
                 }
             }
 
@@ -214,6 +229,10 @@ public static partial class XlsxGuard
 
     [GeneratedRegex(@"<(?:\w+:)?f(?:\s[^>]*)?>(.*?)</(?:\w+:)?f>", RegexOptions.Singleline)]
     private static partial Regex CellFormula();
+
+    // <formula>, <formula1>, <formula2> — and x14's <xm:f> inside them is a <f>, already read above.
+    [GeneratedRegex(@"<(?:\w+:)?formula[12]?(?:\s[^>]*)?>(.*?)</(?:\w+:)?formula[12]?>", RegexOptions.Singleline)]
+    private static partial Regex RuleFormula();
 
     [GeneratedRegex(@"<(?:\w+:)?definedName(?:\s[^>]*)?>(.*?)</(?:\w+:)?definedName>", RegexOptions.Singleline)]
     private static partial Regex DefinedName();

@@ -21,6 +21,7 @@ import {
 import { DocsLiveProvider, type LiveEvent } from '@/lib/docsLive';
 import { formatDateTime } from '@/lib/dates';
 import { ShareDialog } from '@/components/space/ShareDialog';
+import { AccountButton } from '@/components/shell/AccountButton';
 import { Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Kit';
 
@@ -786,7 +787,7 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
           <HeaderButton title="TatvaOS AI" active={panel === 'ai'} onClick={() => setPanel(panel === 'ai' ? null : 'ai')}><I.sparkle /></HeaderButton>
           {canShare ? (
             <button type="button" onClick={() => setSharing(true)}
-              className="flex items-center gap-2 rounded-full bg-[#c2e7ff] px-5 py-2 text-sm font-medium text-[#001d35] hover:shadow">
+              className="flex items-center gap-2 rounded-full bg-brand-600 px-5 py-2 text-sm font-medium text-white hover:bg-brand-700">
               <I.share className="h-4 w-4" /> Share
             </button>
           ) : (
@@ -794,6 +795,9 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
               {canEdit ? 'Editor' : perm === 'comment' ? 'Commenter' : 'Viewer'}
             </span>
           )}
+          {/* Who is signed in. The circles further left are the people IN
+              the document; this one is you, and opens the account menu. */}
+          <AccountButton />
         </div>
       </header>
 
@@ -838,7 +842,7 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
       <div className="flex min-h-0 flex-1 border-t border-line">
         <main className="scroll-thin min-w-0 flex-1 overflow-auto py-6">
           {preview && (
-            <div className="sticky top-0 z-20 mx-auto mb-4 flex max-w-3xl flex-wrap items-center gap-3 rounded-lg bg-[#e8f0fe] px-4 py-2 text-sm text-[#174ea6] shadow">
+            <div className="sticky top-0 z-20 mx-auto mb-4 flex max-w-3xl flex-wrap items-center gap-3 rounded-lg bg-brand-50 px-4 py-2 text-sm text-brand-700 dark:bg-brand-600/25 dark:text-white shadow">
               <span className="flex-1">
                 Viewing {preview.v.name ? `“${preview.v.name}”` : 'the version'} from {formatDateTime(preview.v.createdAt)}
               </span>
@@ -847,7 +851,7 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
                   className="rounded-full bg-brand-600 px-4 py-1 text-xs font-semibold text-white">Restore this version</button>
               )}
               <button type="button" onClick={() => setPreview(null)}
-                className="rounded-full border border-[#174ea6]/40 px-4 py-1 text-xs font-semibold">Back to current</button>
+                className="rounded-full border border-brand-600/40 px-4 py-1 text-xs font-semibold">Back to current</button>
             </div>
           )}
           <div style={{ zoom: zoom / 100 }}>
@@ -957,7 +961,7 @@ function HeaderButton({ title, active, onClick, children }: {
 }) {
   return (
     <button type="button" title={title} aria-label={title} aria-pressed={active} onClick={onClick}
-      className={`flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-canvas ${active ? 'bg-[#d3e3fd] text-[#0b57d0]' : 'text-ink'}`}>
+      className={`flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-ink/[0.06] ${active ? 'bg-brand-100 text-brand-700 dark:bg-brand-600/35 dark:text-white' : 'text-ink'}`}>
       {children}
     </button>
   );

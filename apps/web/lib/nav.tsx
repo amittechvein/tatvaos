@@ -119,14 +119,11 @@ export const RAIL_PRODUCTS: RailProduct[] = [
   // entries were bought under that code — but the product's NAME is Space.
   { code: 'drive', label: 'Space', href: '/space/personal', icon: <Icon d={PATHS.drive} />,
     live: true, colour: '#28c76f', match: ['/space'] },
-  // Docs has NO tile yet, on purpose. It ships switched off and is turned on
-  // per organisation by the platform operator (docs.tenant_settings), and this
-  // list is the same for everyone — a tile here would lead every customer to
-  // a "not switched on" page. The tile comes back, blue (#1a73e8, not
-  // Calendar's #4285f4), in the commit that turns Docs on for everyone.
-  // Sheets, likewise: no tile. It has its own per-organisation switch
-  // (SheetsSwitch), off by default; the tile (green, #188038) comes back in
-  // the commit that turns Sheets on for everyone.
+  // Docs and Sheets are NOT in this list, on purpose: it is the same for
+  // everyone, and each is switched on per organisation by the platform
+  // operator (docs.tenant_settings, docs.sheets_tenant_settings). A tile here
+  // would lead every other customer to a "not switched on" page. They live in
+  // SWITCHED_PRODUCTS below, which the launcher shows per organisation.
   // Being built. It stays in the grid because it is genuinely next and the
   // tile sets the expectation; products nobody has STARTED were removed —
   // a wall of greyed tiles reads as a suite that does not exist.
@@ -151,6 +148,22 @@ export const RAIL_PRODUCTS: RailProduct[] = [
   // which is why it sits apart at the end rather than among the products.
   { code: 'platform', label: 'Platform admin', href: '/admin',
     icon: <Icon d={PATHS.gear} />, live: true, colour: '#5c5c72', match: ['/admin'] },
+];
+
+/**
+ * Products switched on per ORGANISATION, so not in RAIL_PRODUCTS. The app
+ * launcher asks /docs/status and /sheets/status for the signed-in person's
+ * organisation and shows each tile only where it is on (Amit, 9 Oct 2026:
+ * "add docs sheets here"). If that check fails, the tile stays hidden: a
+ * tile that leads to "not switched on" is worse than no tile. Colours as
+ * reserved when they were left out: Docs blue (#1a73e8, not Calendar's
+ * #4285f4), Sheets green (#188038, not Space's #28c76f).
+ */
+export const SWITCHED_PRODUCTS: RailProduct[] = [
+  { code: 'docs', label: 'Docs', href: '/docs', icon: <Icon d={PATHS.doc} />,
+    live: true, colour: '#1a73e8', match: ['/docs'] },
+  { code: 'sheets', label: 'Sheets', href: '/sheets', icon: <Icon d={PATHS.sheet} />,
+    live: true, colour: '#188038', match: ['/sheets'] },
 ];
 
 /** Techvein running the platform. */
@@ -371,13 +384,14 @@ export function connectNav(): NavSection[] {
 //  customer's app grid before Amit has decided to launch it. Admins reach it
 //  at /hire directly until then. Add the tile in the commit that launches it.
 // ============================================================================
-export function hireNav({ showTeam, showCareers = false }: { showTeam: boolean; showCareers?: boolean }): NavSection[] {
+export function hireNav({ showTeam, showCareers = false, showSettings = false }: { showTeam: boolean; showCareers?: boolean; showSettings?: boolean }): NavSection[] {
   return [
     {
       heading: 'Hire',
       items: [
         { href: '/hire/jobs', label: 'Job openings', icon: <Icon d={PATHS.notes} colour="#7367f0" /> },
         { href: '/hire/jobs/new', label: 'New job opening', icon: <Icon d={PATHS.compose} colour="#6C3CE9" /> },
+        { href: '/hire/candidates', label: 'Candidates', icon: <Icon d={PATHS.users} colour="#28c76f" /> },
         // Administrators change the team; recruiters may see who is on it.
         // Hiring managers see neither — it is not their question.
         ...(showTeam
@@ -386,6 +400,47 @@ export function hireNav({ showTeam, showCareers = false }: { showTeam: boolean; 
         // Administrators only: it decides what the public sees.
         ...(showCareers
           ? [{ href: '/hire/careers', label: 'Careers page', icon: <Icon d={PATHS.globe} colour="#28c76f" /> }]
+          : []),
+        // Administrators only: it decides when candidates' data is deleted.
+        ...(showSettings
+          ? [{ href: '/hire/settings', label: 'Settings', icon: <Icon d={PATHS.gear} colour="#5c5c72" /> }]
+          : []),
+      ],
+    },
+  ];
+}
+
+// ============================================================================
+//  People — employee records (decision 0018). Like Hire, not in the launcher
+//  until Amit launches it (the product row is is_available=false); reached at
+//  /people directly. HR sees everyone; anyone else themselves and their team.
+// ============================================================================
+export function peopleNav({ isHr, hasRecord, showDirectory, showHrList }: {
+  isHr: boolean; hasRecord: boolean; showDirectory: boolean; showHrList: boolean;
+}): NavSection[] {
+  return [
+    {
+      heading: 'People',
+      items: [
+        // Colleagues' names, titles and teams (0018 §5) - everyone, by default.
+        ...(showDirectory
+          ? [{ href: '/people/directory', label: 'Directory', icon: <Icon d={PATHS.building} colour="#28c76f" /> }]
+          : []),
+        // HR: every record. Anyone else with a record: themselves and their team.
+        ...(isHr || hasRecord
+          ? [{ href: '/people', label: isHr ? 'Employees' : 'My team', icon: <Icon d={PATHS.users} colour="#00b8d9" /> }]
+          : []),
+        // Your own record, and asking HR to correct it (20261009-c).
+        ...(hasRecord
+          ? [{ href: '/people/me', label: 'My record', icon: <Icon d={PATHS.notes} colour="#7367f0" /> }]
+          : []),
+        ...(isHr
+          ? [{ href: '/people/new', label: 'Add employee', icon: <Icon d={PATHS.compose} colour="#6C3CE9" /> },
+             { href: '/people/corrections', label: 'Correction requests', icon: <Icon d={PATHS.inbox} colour="#ff9f43" /> }]
+          : []),
+        // Administrators name People HR; HR may see who else is.
+        ...(showHrList
+          ? [{ href: '/people/hr', label: 'People HR', icon: <Icon d={PATHS.key} colour="#5c5c72" /> }]
           : []),
       ],
     },
