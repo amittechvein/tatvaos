@@ -362,6 +362,14 @@ jobs:
       - name: "MFA: recovery codes are 80 bits, stored hashed, used once"
         run: bash tests/mfa/test-recovery-codes.sh
 
+      # Decision 0014: the production memory alert, driven across every line
+      # and back against fake /proc readings and a fake docker that records
+      # mail. No network, no Docker, no database. Calibrated 8 Oct 2026: three
+      # deliberate breaks (warning line raised, deploy restarts counted, the
+      # fail-loud trap removed) each failed their own checks.
+      - name: "Memory alert: thresholds, container kills, fails loudly (0014)"
+        run: bash tests/memory-alert/test.sh
+
       # Connect's tenantless paths, walked (decision 0007): every entry point
       # that starts with no session and finds the organisation some other way.
       # Mr. Singh, 1 Oct 2026 (PR 340 review): "add the Connect isolation
