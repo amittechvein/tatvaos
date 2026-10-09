@@ -490,6 +490,35 @@ async function main() {
   const back = await A(`/docs/${id}`);
   check('switched back on, the spreadsheet is still there', back.status === 200 && back.body?.title === 'E2E fees', `${back.status}`);
 
+  // ---- the browser-file guard, Sheets' own (9 Oct 2026) ----------------------------
+  // Until this the Sheets switch had no guard: an operator ran
+  // docs.browser_written_count by hand before each switch-on (Mr. Singh: a
+  // switch should refuse by itself). Only the database can make a
+  // browser-written file now, so the test makes one, as Docs' test does.
+  console.log('The browser-file guard refuses Sheets switch-on');
+  check('this spreadsheet was built by the server (rendered_seq and checkpoint_at set)',
+    pg(`SELECT rendered_seq IS NOT NULL AND checkpoint_at IS NOT NULL FROM docs.documents WHERE file_id='${id}'`) === 't');
+  const builtFrom = pg(`SELECT rendered_seq FROM docs.documents WHERE file_id='${id}'`);
+  pg(`UPDATE docs.documents SET rendered_seq = NULL WHERE file_id='${id}'`);
+  // Calibration: through the app role and RLS the operator sees none of this
+  // organisation's files, so a plain count reads 0 and would pass.
+  const plainCount = pg(`SET ROLE tatvaos_app; SELECT set_config('app.tenant_id', '${TENANT_A}', false); `
+    + `SELECT count(*) FROM docs.documents WHERE rendered_seq IS NULL AND checkpoint_at IS NOT NULL`);
+  const definerCount = pg(`SELECT docs.browser_written_count('${TENANT_A}')`);
+  check('calibration: a plain count through RLS reads 0 — the definer function reads 1',
+    plainCount === '0' && definerCount === '1', `plain ${plainCount}, definer ${definerCount}`);
+  await sw('sheets', TENANT_A, false);
+  const guardedOn = await sw('sheets', TENANT_A, true);
+  check('switching Sheets on is REFUSED while a browser-written file exists (409 browser_files, with the count)',
+    guardedOn.status === 409 && guardedOn.body?.reason === 'browser_files' && guardedOn.body?.count === 1,
+    `${guardedOn.status} ${JSON.stringify(guardedOn.body)}`);
+  check('…and Sheets stays off', (await A('/sheets/status')).body?.enabled === false);
+  check('…while the other organisation, with no such file, is unaffected (still on)', (await C('/sheets/status')).body?.enabled === true);
+  pg(`UPDATE docs.documents SET rendered_seq = ${Number(builtFrom)} WHERE file_id='${id}'`);
+  const unguardedOn = await sw('sheets', TENANT_A, true);
+  check('the same request once the file is server-built is allowed (200) — the refusal was the file, nothing else',
+    unguardedOn.status === 200 && unguardedOn.body?.enabled === true, `${unguardedOn.status} ${JSON.stringify(unguardedOn.body)}`);
+
   for (const s of [a1, a2]) { s?.model?.destroy(); s?.ws.close(); }
   await stopRender();
   console.log(`\n${passed} passed, ${failed} failed`);
