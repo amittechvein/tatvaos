@@ -33,7 +33,7 @@ public static class PersonalPlanEndpoints
             .RequireAuthorization("User").WithTags("Account");
 
         var g = app.MapGroup("/api/admin/personal-accounts")
-            .RequireAuthorization("SuperAdmin").WithTags("Platform administration");
+            .RequireOperator().WithTags("Platform administration");
         g.MapGet("/{userId:guid}/plan", GetAsync);
         g.MapPut("/{userId:guid}/plan", ChangeAsync);
     }
@@ -139,7 +139,11 @@ public static class PersonalPlanEndpoints
         // Two saves in one transaction: the cancelled row must be written
         // before the new live one, or the one-live-plan-per-person index
         // (ux_core_subs_one_live_per_user) refuses the pair.
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        // Joins the operator request's transaction (OperatorWriteTransaction),
+        // so the two saves and the audit line commit together; opens its own
+        // only when called outside one.
+        var own = db.Database.CurrentTransaction is null;
+        await using var tx = own ? await db.Database.BeginTransactionAsync(ct) : null;
         var now = DateTimeOffset.UtcNow;
         var live = await db.Subscriptions
             .Where(s => s.TenantId == house && s.UserId == userId && Live.Contains(s.Status))
@@ -162,7 +166,7 @@ public static class PersonalPlanEndpoints
         await audit.WriteAsync("personal.plan_changed", "user", userId.ToString(),
             before: new { planId = before?.PlanId, plan = before?.PlanName },
             after: new { planId = plan.Id, plan = plan.Name, reason }, ct: ct);
-        await tx.CommitAsync(ct);
+        if (tx is not null) await tx.CommitAsync(ct);
 
         var after = await settings.ForUserAsync(userId, ct);
         return after is null ? Results.NotFound() : Results.Ok(Shape(after));

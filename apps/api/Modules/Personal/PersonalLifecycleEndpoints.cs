@@ -35,15 +35,22 @@ public static class PersonalLifecycleEndpoints
         me.MapPost("/export/link", ExportLinkAsync);
         app.MapGet("/api/me/export/file", ExportFileAsync).AllowAnonymous().WithTags("Account");
 
-        var op = app.MapGroup("/api/admin/personal-accounts").RequireAuthorization("SuperAdmin")
+        var op = app.MapGroup("/api/admin/personal-accounts").RequireOperator()
             .WithTags("Platform administration");
         op.MapGet("/", ListAsync);
         op.MapGet("/stats", StatsAsync);
         op.MapPost("/{userId:guid}/suspend", SuspendAsync);
         op.MapPost("/{userId:guid}/resume", ResumeAsync);
-        op.MapPost("/{userId:guid}/delete", OperatorDeleteAsync);
+        // Its own transaction (OperatorWriteTransaction): PersonalLifecycle.PurgeAsync
+        // commits the rows and their audit line together, THEN removes files,
+        // which no rollback could bring back.
+        op.MapPost("/{userId:guid}/delete", OperatorDeleteAsync)
+            .WithMetadata(new OperatorWriteTransaction.ManagesOwnTransaction());
+        // One pass of the lifecycle worker, by hand: each purge in it owns its
+        // transaction and removes files after its commit, as above.
         app.MapPost("/api/admin/personal-lifecycle/run", RunAsync)
-            .RequireAuthorization("SuperAdmin").WithTags("Platform administration");
+            .RequireOperator().WithTags("Platform administration")
+            .WithMetadata(new OperatorWriteTransaction.ManagesOwnTransaction());
     }
 
     private static readonly object NotPersonal = new { error = "That is not a personal account." };
