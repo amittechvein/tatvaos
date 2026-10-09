@@ -331,7 +331,10 @@ export default function PeoplePage() {
 
 interface PendingCounts {
   pending: number; toSend: number; signInLinks: number; invitations: number;
-  skipped: { linkStillWorks: number; noRecoveryEmail: number; owners: number; yourself: number };
+  skipped: {
+    linkStillWorks: number; noRecoveryEmail: number; unconfirmedEmail: number; onHold: number;
+    owners: number; yourself: number;
+  };
 }
 
 /**
@@ -423,6 +426,16 @@ function SendToPending({ onClose, onSent }: {
             {counts.skipped.noRecoveryEmail > 0 && (
               <li>{people(counts.skipped.noRecoveryEmail)} left out: no recovery email on
                 file, so a link has nowhere to go. Use Reset password for them.</li>
+            )}
+            {/* Decision 0009: the same refusals the single buttons make. */}
+            {counts.skipped.unconfirmedEmail > 0 && (
+              <li>{people(counts.skipped.unconfirmedEmail)} left out: their recovery email has
+                not been confirmed, so a sign-in link has nowhere safe to go. Use Reset password
+                for them.</li>
+            )}
+            {counts.skipped.onHold > 0 && (
+              <li>{people(counts.skipped.onHold)} left out: an administrator changed their
+                recovery email and it is still on hold. Use Reset password for them.</li>
             )}
             {/* Mr. Singh, 1 Oct 2026: a sweep never sends to an owner, whoever
                 presses it. The count is shown so the owner is not forgotten. */}

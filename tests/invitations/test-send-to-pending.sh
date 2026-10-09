@@ -203,6 +203,11 @@ MADE="'$A','$B','$C','$D','$E','$F'"
 same "six people made" "$(PG "SELECT count(*) FROM core.users WHERE id IN ($MADE)")" "6"
 same "...all of them pending" "$(PG "SELECT count(*) FROM core.users WHERE id IN ($MADE) AND status='pending'")" "6"
 same "...and the owner among them IS an owner" "$(col "$F" role)" "org_owner"
+# Decision 0009: a sign-in link goes only to a CONFIRMED recovery email. The
+# people meant to be eligible have theirs confirmed here, as a person opening
+# the confirmation link would; step 1b takes A's away to prove the refusal.
+PG "UPDATE core.users SET recovery_email_verified_at=now() WHERE id IN ('$A','$C','$E','$F')" >/dev/null
+same "...four recovery emails confirmed" "$(PG "SELECT count(*) FROM core.users WHERE id IN ($MADE) AND recovery_email_verified_at IS NOT NULL")" "4"
 PG "UPDATE core.users SET status='active' WHERE id='$E'" >/dev/null
 # B was invited when made; that mail is not this test's subject. Expire B's
 # link so the press has something to do for B, and arm C with one that works.
@@ -258,6 +263,19 @@ same "no mail left" "$(mails)" "0"
 same "A has no link" "$(col "$A" invite_token_hash)" "none"
 same "B's old link is untouched" "$(col "$B" invite_token_hash)" "$B_BEFORE"
 same "nothing audited" "$(PG "SELECT count(*) FROM core.audit_logs WHERE action='user.pending_links_sent' AND occurred_at >= '$T0'")" "0"
+
+step "1b. An unconfirmed recovery email gets no sign-in link (decision 0009)"
+# The same refusal SendSignInLinkAsync makes for one person. Both directions,
+# so this cannot pass by A simply never being counted.
+PG "UPDATE core.users SET recovery_email_verified_at=NULL WHERE id='$A'" >/dev/null
+r=$(post "/api/org/users/pending/send-links" '{"dryRun":true}' "$OWNER")
+same "A unconfirmed: to send is B only" "$(body "$r" | j "d['counts']['toSend']")" "1"
+same "...A counted as unconfirmed" "$(body "$r" | j "d['counts']['skipped']['unconfirmedEmail']")" "1"
+same "...no sign-in links" "$(body "$r" | j "d['counts']['signInLinks']")" "0"
+PG "UPDATE core.users SET recovery_email_verified_at=now() WHERE id='$A'" >/dev/null
+r=$(post "/api/org/users/pending/send-links" '{"dryRun":true}' "$OWNER")
+same "A confirmed again: A is counted to send" "$(body "$r" | j "d['counts']['signInLinks']")/$(body "$r" | j "d['counts']['skipped']['unconfirmedEmail']")" "1/0"
+same "...still nothing mailed" "$(mails)" "0"
 
 step "2. No body at all is a dry run"
 r=$(post_nobody "/api/org/users/pending/send-links" "$OWNER")

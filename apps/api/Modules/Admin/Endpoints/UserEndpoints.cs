@@ -1256,7 +1256,8 @@ public static class UserEndpoints
             .OrderBy(u => u.Email)
             .ToListAsync(ct);
 
-        int linkStillWorks = 0, noRecoveryEmail = 0, owners = 0, yourself = 0, signInLinks = 0, invitations = 0;
+        int linkStillWorks = 0, noRecoveryEmail = 0, unconfirmedEmail = 0, onHold = 0,
+            owners = 0, yourself = 0, signInLinks = 0, invitations = 0;
         var send = new List<(User User, string Channel)>();
         foreach (var user in pending)
         {
@@ -1267,6 +1268,17 @@ public static class UserEndpoints
                 ? (string.IsNullOrWhiteSpace(user.RecoveryEmail) ? null : Invitations.ChannelSignInLink)
                 : Invitations.ChannelFor(user.RecoveryEmail, user.Phone);
             if (channel is null) { noRecoveryEmail++; continue; }
+
+            // Decision 0009, the same two refusals the single buttons make
+            // (SendSignInLinkAsync, ResendInvitationAsync). This branch was
+            // written before 0009 went live on 3 Oct and, merged without
+            // these, would have sent in bulk what each single button refuses:
+            // sign-in links to addresses nobody had confirmed. Found 9 Oct when
+            // step 7c's single-button check started answering 400.
+            var hold = await RecoveryEmailAdminEndpoints.ActiveHoldAsync(db, user.Id, ct);
+            if (hold is not null && !hold.HasConfirmedOld) { onHold++; continue; }
+            if (channel == Invitations.ChannelSignInLink && user.RecoveryEmailVerifiedAt is null)
+            { unconfirmedEmail++; continue; }
 
             var linkOut = user.InviteTokenHash is not null && user.InviteAcceptedAt is null
                           && user.InviteDelivered == true && !Invitations.IsExpired(user);
@@ -1282,7 +1294,7 @@ public static class UserEndpoints
             toSend = send.Count,
             signInLinks,
             invitations,
-            skipped = new { linkStillWorks, noRecoveryEmail, owners, yourself },
+            skipped = new { linkStillWorks, noRecoveryEmail, unconfirmedEmail, onHold, owners, yourself },
         };
 
         if (dryRun) return Results.Ok(new { dryRun = true, counts });
@@ -1306,9 +1318,9 @@ public static class UserEndpoints
         loggers.CreateLogger("TatvaOS.SendToPending").LogInformation(
             "Send to pending: {ToSend} of {Pending} pending in tenant {TenantId}, by {ActorId} "
             + "({SignInLinks} sign-in links, {Invitations} invitations; skipped {LinkStillWorks} holding a link, "
-            + "{NoRecoveryEmail} with no recovery email, {Owners} owners)",
+            + "{NoRecoveryEmail} with no recovery email, {UnconfirmedEmail} unconfirmed, {OnHold} on hold, {Owners} owners)",
             send.Count, pending.Count, tenant.TenantId, tenant.UserId,
-            signInLinks, invitations, linkStillWorks, noRecoveryEmail, owners);
+            signInLinks, invitations, linkStillWorks, noRecoveryEmail, unconfirmedEmail, onHold, owners);
 
         var (orgName, baseUrl) = await OrgNameAndBaseUrlAsync(db, tenant, config, ct);
         SendInvitationsInBackground(scopeFactory, tenant.TenantId, tenant.UserId!.Value, tenant.Role!,
