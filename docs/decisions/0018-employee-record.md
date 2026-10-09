@@ -1,11 +1,11 @@
 # 0018 — The employee record, and who reports to whom
 
-**Status:** **accepted by Mr. Singh, 9 Oct 2026, with the three additions
-below.** Amit's two decisions (§5 directory, §4 owners) are recorded in the
-ruling table once he gives them. Nothing here is built yet.
+**Status:** **accepted.** Mr. Singh, 9 Oct 2026, with the three additions
+below; Amit decided §4 and §5 the same day, as recommended. Nothing here is
+built yet.
 **Date:** 2026-10-09 (proposed and ruled)
 **Lane:** Hire & People
-**Needs:** Amit (§4, §5). Mr. Singh's part is done.
+**Needs:** nothing further. Next is the build.
 
 ## The ruling — read this before the proposal
 
@@ -18,7 +18,7 @@ ruling wins.**
 | §2 Trigger + advisory lock | **Accepted. Keep it in the trigger** | A lock in the endpoint can be forgotten by the next writer (an import, a migration, a hand fix); a lock in the trigger cannot. A closure table or materialised path was considered and rejected: more machinery, same race. **Addition 1, below:** state the lock-key derivation. |
 | §3 Manager from `reports_to`, never `core.users.role` | **Accepted, as the right model, not a workaround** | Manager-ness is a relationship: a role cannot say *of whom*. People does not care what `role = 'manager'` comes to mean elsewhere. **Addition 2, below:** writing `reports_to` grants access. |
 | §7 check 6 | **Extended** | **Addition 3, below.** |
-| §5, §4 | Recommended to Amit as proposed | Mr. Singh: hiding "on notice" is the half that matters; manager's name is the only field with an edge (it shows the whole hierarchy in a small school), and he thinks it is fine. Organisations may narrow the directory. Owners see records only if they name themselves, which costs one click and buys the audit record of the moment they did. **Amit decides.** |
+| §5, §4 | Recommended to Amit as proposed | Mr. Singh: hiding "on notice" is the half that matters; manager's name is the only field with an edge (it shows the whole hierarchy in a small school), and he thinks it is fine. Organisations may narrow the directory. Owners see records only if they name themselves, which costs one click and buys the audit record of the moment they did. **Amit, 9 Oct: both as proposed.** The directory default stands, organisations may narrow it, and owners see employee records only after naming themselves People HR. |
 
 ### Addition 1: the advisory-lock key, written down
 
