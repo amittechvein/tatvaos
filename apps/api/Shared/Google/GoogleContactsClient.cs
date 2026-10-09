@@ -7,10 +7,8 @@ namespace TatvaOS.Api.Shared.Google;
 /// contacts.readonly. Their "My Contacts", a page at a time, and the names of
 /// their contact groups (which become labels here).
 ///
-/// NOT "Other contacts" - the addresses Gmail saved automatically from mail.
-/// Those need a further scope (contacts.other.readonly), which is not in
-/// GoogleScopes.Allowed; asking for it is a change to what every customer is
-/// asked to grant, so it is a review, not an edit.
+/// Also "Other contacts" - the addresses Gmail saved automatically from mail
+/// (ListOtherAsync), with their own scope, contacts.other.readonly.
 /// </summary>
 public sealed class GoogleContactsClient(GoogleApi api)
 {
@@ -31,6 +29,26 @@ public sealed class GoogleContactsClient(GoogleApi api)
         return new GooglePeoplePage(people,
             root.TryGetProperty("nextPageToken", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null,
             root.TryGetProperty("totalPeople", out var n) && n.TryGetInt64(out var total) ? total : null);
+    }
+
+    /// <summary>
+    /// Gmail's "Other contacts" (otherContacts.list, contacts.other.readonly):
+    /// the addresses Gmail saved from mail the person exchanged. Names,
+    /// addresses and numbers only - that is all Google keeps for them.
+    /// </summary>
+    public async Task<GooglePeoplePage> ListOtherAsync(
+        GoogleServiceAccount account, string person, string? pageToken, int pageSize, CancellationToken ct)
+    {
+        var q = $"otherContacts?readMask=names,emailAddresses,phoneNumbers&pageSize={Math.Clamp(pageSize, 1, 1000)}" +
+                (pageToken is null ? "" : $"&pageToken={Uri.EscapeDataString(pageToken)}");
+        using var doc = await api.GetJsonAsync(account, person, [GoogleScopes.OtherContactsReadOnly], new Uri(api.Endpoints.People, q), ct);
+        var root = doc.RootElement;
+        var people = new List<JsonElement>();
+        if (root.TryGetProperty("otherContacts", out var cs) && cs.ValueKind == JsonValueKind.Array)
+            foreach (var c in cs.EnumerateArray()) people.Add(c.Clone());
+        return new GooglePeoplePage(people,
+            root.TryGetProperty("nextPageToken", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null,
+            root.TryGetProperty("totalSize", out var n) && n.TryGetInt64(out var total) ? total : null);
     }
 
     /// <summary>The person's own contact groups: resource name -> name.</summary>

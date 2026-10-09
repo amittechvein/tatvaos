@@ -31,6 +31,11 @@ namespace TatvaOS.Api.Modules.Migration.Contacts;
 ///  NO address (a phone number only) cannot be recognised that way; the
 ///  job's ledger stops it in every case but the page in flight at a kill.
 ///
+///  THEN GMAIL'S OTHER CONTACTS (cursor "o:"), the addresses Gmail saved
+///  from mail, under the label "Other contacts (Gmail)" so the person can
+///  tell them from the ones they made, or remove them in one go. An address
+///  that is both arrives once, as the contact (the runner's dedupe key).
+///
 ///  Birthdays: the importer counts them and does not store them yet
 ///  (family.contact_dates has no entity) - its own comment says so.
 ///
@@ -51,29 +56,61 @@ public sealed class GoogleContactsSource(
 
     private int PageSize => Math.Clamp(config.GetValue("Migration:Contacts:PageSize", 100), 1, 1000);
 
+    /// <summary>The label Gmail's automatically saved addresses arrive under, so they can be told apart.</summary>
+    public const string OtherContactsLabel = "Other contacts (Gmail)";
+
+    // The cursor: null or "c:<token>" for the person's own contacts, then
+    // "o:<token>" for Gmail's Other contacts. A plain token (no prefix) is an
+    // own-contacts page from before the two passes.
     public async Task<MigrationPage> FetchAsync(MigrationJobView job, CancellationToken ct)
     {
         var account = await credentials.ForTenantAsync(job.TenantId, ct)
                       ?? throw new InvalidOperationException("this organisation has no Google service account on file");
+        var other = job.Cursor?.StartsWith("o:") == true;
+        var token = job.Cursor switch
+        {
+            null => null,
+            { Length: >= 2 } c when c[1] == ':' => c.Length > 2 ? c[2..] : null,
+            var c => c,
+        };
+
+        if (other)
+        {
+            var page = await google.ListOtherAsync(account, job.SourceUser, token, PageSize, ct);
+            var items = new List<MigrationSourceItem>(page.People.Count);
+            foreach (var p in page.People)
+                if (GooglePersonMap.ResourceName(p) is { } id)
+                {
+                    var record = GooglePersonMap.ToRecord(p, new Dictionary<string, string>());
+                    record.Labels.Add(OtherContactsLabel);
+                    var key = record.Emails.Select(e => ContactMatching.NormaliseEmail(e.Value)).FirstOrDefault(k => k.Length > 0);
+                    items.Add(new MigrationSourceItem($"other:{id}", key, record));
+                }
+            return page.NextPageToken is { } n
+                ? new MigrationPage(items, $"o:{n}", IsLast: false)
+                : new MigrationPage(items, null, IsLast: true);
+        }
+
         // Group names afresh each page: cheap (one call), and a group renamed
         // mid-migration should land under its current name.
         var groups = await google.GroupNamesAsync(account, job.SourceUser, ct);
-        var page = await google.ListAsync(account, job.SourceUser, job.Cursor, PageSize, ct);
-
-        var items = new List<MigrationSourceItem>(page.People.Count);
-        foreach (var p in page.People)
+        var own = await google.ListAsync(account, job.SourceUser, token, PageSize, ct);
+        var ownItems = new List<MigrationSourceItem>(own.People.Count);
+        foreach (var p in own.People)
             if (GooglePersonMap.ResourceName(p) is { } id)
             {
                 var record = GooglePersonMap.ToRecord(p, groups);
                 // The dedupe key is the first address, normalised the way the
                 // importer will: two Google entries for one address are one
-                // contact here.
+                // contact here - including an address that is BOTH a contact
+                // and an Other contact, which arrives once, as the contact.
                 var key = record.Emails.Select(e => ContactMatching.NormaliseEmail(e.Value)).FirstOrDefault(k => k.Length > 0);
-                items.Add(new MigrationSourceItem(id, key, record));
+                ownItems.Add(new MigrationSourceItem(id, key, record));
             }
 
-        return new MigrationPage(items, page.NextPageToken, IsLast: page.NextPageToken is null,
-            ItemsTotal: job.Cursor is null ? page.TotalPeople : null);
+        return own.NextPageToken is { } next
+            ? new MigrationPage(ownItems, $"c:{next}", IsLast: false, ItemsTotal: job.Cursor is null ? own.TotalPeople : null)
+            : new MigrationPage(ownItems, "o:", IsLast: false, ItemsTotal: job.Cursor is null ? own.TotalPeople : null);
     }
 
     public async Task<MigrationWriteResult> WriteAsync(MigrationJobView job, MigrationSourceItem item, CancellationToken ct)

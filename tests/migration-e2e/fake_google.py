@@ -87,6 +87,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"files": []})
         if p == "/calendar/v3/calendars/primary/events":
             return self.send(200, {"items": [], "timeZone": "Asia/Kolkata"})
+        if p == "/v1/otherContacts":
+            return self.send(200, {"otherContacts": []})
         if p == "/v1/contactGroups":
             return self.send(200, {"contactGroups": []})
         if p == "/v1/people/me/connections":

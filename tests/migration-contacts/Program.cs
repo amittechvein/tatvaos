@@ -117,8 +117,11 @@ const string Mine = $"FROM family.contacts c WHERE c.tenant_id = '11111111-1111-
 
 Console.WriteLine("\n  Google Contacts into the address book\n\n>> first run");
 var first = await RunAll();
-Same("outcomes", string.Join(",", first.Select(r => $"{r.Id.Split('/')[1]}={r.Outcome}")), "c1=done,c2=done,c3=done,c4=skipped");
-Same("three contacts in amit's book, personal and his", await Super($"SELECT count(*) {Mine} AND c.ownership_type = 'personal'"), "3");
+Same("outcomes: own contacts, then Gmail's Other contacts", string.Join(",", first.Select(r => $"{r.Id.Split('/')[1]}={r.Outcome}")), "c1=done,c2=done,c3=done,c4=skipped,o1=done,o2=skipped");
+Same("an Other contact arrives under its own label",
+    await Super($"SELECT string_agg(g.name, ',') FROM family.contact_group_members m JOIN family.contact_groups g ON g.id = m.group_id JOIN family.contacts c ON c.id = m.contact_id WHERE c.display_name = 'Auto Sender' AND c.owner_user_id = '{AMIT}'"),
+    GoogleContactsSource.OtherContactsLabel);
+Same("four contacts in amit's book (three of his, one Other), personal and his", await Super($"SELECT count(*) {Mine} AND c.ownership_type = 'personal'"), "4");
 Same("Ravi: name, company, title",
     await Super($"SELECT c.display_name || '|' || coalesce(c.company_name,'') || '|' || coalesce(c.job_title,'') {Mine} AND c.first_name = 'Ravi'"),
     "Ravi Kumar|Acme Supplies|Buyer");
@@ -131,9 +134,9 @@ Same("the phone-only contact's custom label 'Farmhouse' is 'other'",
     await Super($"SELECT p.type FROM family.contact_phones p JOIN family.contacts c ON c.id = p.contact_id WHERE c.display_name = 'Plumber' AND c.owner_user_id = '{AMIT}'"), "other");
 Same("the second entry for Ravi's address (other case) was skipped, not added",
     await Super($"SELECT count(*) FROM family.contact_emails e JOIN family.contacts c ON c.id = e.contact_id WHERE e.email_normalised = 'ravi@supplier.test' AND c.owner_user_id = '{AMIT}'"), "1");
-Same("the audit trail: three creates by amit, as this migration",
+Same("the audit trail: four creates by amit, as this migration",
     await Super($"SELECT count(*) || '|' || min(a.user_agent) FROM family.contact_audit_logs a JOIN family.contacts c ON c.id = a.contact_id WHERE c.owner_user_id = '{AMIT}' AND a.operation = 'create' AND a.actor_user_id = '{AMIT}' AND a.reason = 'import'"),
-    $"3|{GoogleContactsSource.UserAgent}");
+    $"4|{GoogleContactsSource.UserAgent}");
 
 Console.WriteLine("\n>> whose they are");
 Same("amit sees his three", await AsApp(TECHVEIN, AMIT, "SELECT count(*) FROM family.contacts WHERE display_name IN ('Ravi Kumar','Accounts','Plumber')"), "3");
@@ -196,6 +199,7 @@ sealed class FakePeople : HttpMessageHandler
     {
         var path = req.RequestUri!.AbsolutePath;
         var body = path == "/token" ? """{"access_token":"ya29.fake","expires_in":3600}"""
+            : path.EndsWith("/otherContacts") ? """{"otherContacts":[{"resourceName":"otherContacts/o1","names":[{"displayName":"Auto Sender"}],"emailAddresses":[{"value":"auto@sender.test"}]},{"resourceName":"otherContacts/o2","emailAddresses":[{"value":"Ravi@Supplier.TEST"}]}],"totalSize":2}"""
             : path.EndsWith("/contactGroups") ? """{"contactGroups":[{"resourceName":"contactGroups/myContacts","name":"myContacts","groupType":"SYSTEM_CONTACT_GROUP"},{"resourceName":"contactGroups/abc123","name":"Suppliers","groupType":"USER_CONTACT_GROUP"}]}"""
             : req.RequestUri.Query.Contains("pageToken=p2") ? Page2 : Page1;
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
