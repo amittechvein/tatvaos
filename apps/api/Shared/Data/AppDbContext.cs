@@ -149,6 +149,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<CalendarReminder> CalendarReminders => Set<CalendarReminder>();
     public DbSet<CalendarReminderSend> CalendarReminderSends => Set<CalendarReminderSend>();
 
+    // ---- Google Workspace migration. RLS forced; 20261009-migration-jobs.sql
+    public DbSet<MigrationJob> MigrationJobs => Set<MigrationJob>();
+    public DbSet<MigrationItem> MigrationItems => Set<MigrationItem>();
+
     // ---- Connect. RLS enabled and forced; see 20260901-connect.sql -------
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeeting> ConnectMeetings
         => Set<TatvaOS.Api.Modules.Connect.ConnectMeeting>();
@@ -345,6 +349,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<CalendarReminderSend>().ToTable("reminder_sends", "calendar");
         // Decision 0007's zero-layer PR: the second layer, beside the new RLS.
         b.Entity<CalendarReminderSend>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+
+        // ---- Google Workspace migration ----------------------------------
+        // Both layers from birth (decision 0007): RLS forced in the SQL, the
+        // filter here. tests/tenant-filters fails the build without it.
+        b.Entity<MigrationJob>().ToTable("jobs", "migration");
+        b.Entity<MigrationJob>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<MigrationItem>().ToTable("items", "migration");
+        b.Entity<MigrationItem>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<MigrationItem>().Property(i => i.Id).UseIdentityAlwaysColumn();
 
         // ---- Connect -----------------------------------------------------
         // Explicit schema on every one, like everything else here: a default
