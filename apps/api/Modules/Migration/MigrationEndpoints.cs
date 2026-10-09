@@ -70,13 +70,17 @@ public static class MigrationEndpoints
     private static async Task<IResult> PeopleAsync(MigrationEnrolment enrolment, CancellationToken ct)
     {
         var people = await enrolment.ProgressAsync(ct);
+        // Shared drives are listed with the people (one row each) but are not
+        // people: counted on their own, so "matched" stays a count of people.
+        bool IsDrive(PersonProgress p) => p.GoogleAddress.StartsWith("shareddrive:", StringComparison.Ordinal);
         return Results.Ok(new
         {
             people,
             totals = new
             {
-                people = people.Count,
-                matched = people.Count(p => p.TargetUserId is not null),
+                people = people.Count(p => !IsDrive(p)),
+                sharedDrives = people.Count(IsDrive),
+                matched = people.Count(p => !IsDrive(p) && p.TargetUserId is not null),
                 jobs = people.Sum(p => p.Types.Count),
                 byState = people.SelectMany(p => p.Types).GroupBy(t => t.State).ToDictionary(x => x.Key, x => x.Count()),
                 itemsDone = people.SelectMany(p => p.Types).Sum(t => t.ItemsDone),
@@ -227,9 +231,26 @@ public static class MigrationEndpoints
             return Err(502, $"Google did not answer the directory listing: {ex.Message}");
         }
         var report = await enrolment.EnrolAsync(tenant.TenantId, people, types, tenant.UserId, ct);
+
+        // Shared drives are the organisation's: one job each, through the admin
+        // doing this (they save into organisational Space folders).
+        int sharedDrives = 0, sharedCreated = 0;
+        if (types.Contains("drive") && tenant.UserId is Guid adminUserId)
+        {
+            try
+            {
+                var drives = await sp.GetRequiredService<GoogleDriveClient>().ListSharedDrivesAsync(provider.Account, grant.GoogleAdmin, ct);
+                sharedDrives = drives.Count;
+                (sharedCreated, _) = await enrolment.EnrolSharedDrivesAsync(tenant.TenantId, drives, adminUserId, ct);
+            }
+            catch (Exception ex) when (ex is GoogleAuthException or GoogleApiException)
+            {
+                return Err(502, $"People were added, but Google did not list the shared drives: {ex.Message}");
+            }
+        }
         await audit.WriteAsync("migration.enrolled", "migration", null,
-            after: new { types, report.People, report.JobsCreated, report.Matched, unmatched = report.Unmatched.Count }, ct: ct);
-        return Results.Ok(report);
+            after: new { types, report.People, report.JobsCreated, report.Matched, unmatched = report.Unmatched.Count, sharedDrives, sharedCreated }, ct: ct);
+        return Results.Ok(new { report.People, report.JobsCreated, report.Matched, report.Unmatched, report.NotEnrolled, sharedDrives, sharedDrivesCreated = sharedCreated });
     }
 
     private static async Task<IResult> StartAsync(

@@ -83,6 +83,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"users": [{"primaryEmail": e} for e in PEOPLE]})
         if p == "/drive/v3/about":
             return self.send(200, {"storageQuota": {"usage": str(3 * 1024**2), "usageInDrive": str(1024**2), "usageInDriveTrash": "0"}})
+        if p == "/drive/v3/drives":
+            return self.send(200, {"drives": []})
         if p == "/drive/v3/files":
             return self.send(200, {"files": []})
         if p == "/calendar/v3/calendars/primary/events":

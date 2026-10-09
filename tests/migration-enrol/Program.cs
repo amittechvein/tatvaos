@@ -49,6 +49,7 @@ void Same<T>(string what, T got, T want)
 
 Guid TECHVEIN = Guid.Parse("11111111-1111-1111-1111-111111111111"), SCHOOL = Guid.Parse("22222222-2222-2222-2222-222222222222");
 var XAVIER = Guid.Parse("e1111111-1111-4111-8111-000000000421");
+var AMIT = Guid.Parse("d1111111-1111-1111-1111-111111111111");
 
 var services = new ServiceCollection();
 services.AddScoped<TenantContext>();
@@ -160,6 +161,16 @@ Same("...still holding its marker, so it brings only what was added",
     "d:5");
 var cu2 = await In(TECHVEIN, e => e.CatchUpMailAsync(["hr@techvein.local"], CancellationToken.None));
 Same("asked for hr by name: nothing, hr's copy never finished", cu2.Count, 0);
+
+Console.WriteLine("\n>> shared drives (the organisation's)");
+var sd1 = await In(TECHVEIN, e => e.EnrolSharedDrivesAsync(TECHVEIN, [new("SD1", "Finance"), new("SD2", "Sales: West")], AMIT, CancellationToken.None));
+Same("two shared drives: two jobs", sd1, (2, 0));
+var sd2 = await In(TECHVEIN, e => e.EnrolSharedDrivesAsync(TECHVEIN, [new("SD1", "Finance (old)"), new("SD2", "Sales: West")], AMIT, CancellationToken.None));
+Same("again, one renamed in Google: no new job, one renamed", sd2, (0, 1));
+progress = await In(TECHVEIN, e => e.ProgressAsync(CancellationToken.None));
+Same("...listed under their current names (a ':' in a name is made a space), through the admin who enrolled them",
+    string.Join(",", progress.Where(p => p.GoogleAddress.StartsWith("shareddrive:")).Select(p => $"{p.GoogleAddress}>{p.TargetEmail}").Order()),
+    "shareddrive:SD1:Finance (old)>amit@techvein.local,shareddrive:SD2:Sales  West>amit@techvein.local");
 
 Console.WriteLine("\n>> another organisation");
 var school = await In(SCHOOL, e => e.ProgressAsync(CancellationToken.None));

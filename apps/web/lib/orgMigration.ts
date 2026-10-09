@@ -57,6 +57,9 @@ export interface EnrolmentReport {
   matched: number;
   unmatched: string[];
   notEnrolled: string[];
+  /** Shared drives found in Google, and how many were new. */
+  sharedDrives?: number;
+  sharedDrivesCreated?: number;
 }
 
 export interface StartReport { jobsStarted: number; peopleStarted: number; notStarted: PersonNote[] }
@@ -80,7 +83,7 @@ export interface PersonProgress {
 }
 export interface MigrationPeople {
   people: PersonProgress[];
-  totals: { people: number; matched: number; jobs: number; byState: Record<string, number>; itemsDone: number; bytesDone: number };
+  totals: { people: number; sharedDrives: number; matched: number; jobs: number; byState: Record<string, number>; itemsDone: number; bytesDone: number };
 }
 
 export class MigrationError extends Error {
@@ -111,6 +114,17 @@ export const start = (f: AuthedFetch, dataTypes: DataType[], people: string[] | 
   call<StartReport>(f, '/start', post({ dataTypes, people }), 'Could not start.');
 export const catchUp = (f: AuthedFetch, people: string[] | null) =>
   call<{ queued: string[] }>(f, '/catch-up', post({ people }), 'Could not start the catch-up.');
+
+/**
+ * A shared drive's row: googleAddress is "shareddrive:<id>:<name>". The
+ * organisation's, not a person's - only Drive files apply to it.
+ */
+export function sharedDriveName(googleAddress: string): string | null {
+  if (!googleAddress.startsWith('shareddrive:')) return null;
+  const rest = googleAddress.slice('shareddrive:'.length);
+  const colon = rest.indexOf(':');
+  return colon >= 0 ? rest.slice(colon + 1) : rest;
+}
 
 /** A job still moving: the page keeps refreshing while any is. */
 export const isActive = (s: TypeProgress['state']) => s === 'pending' || s === 'running';

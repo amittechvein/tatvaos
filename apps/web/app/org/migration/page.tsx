@@ -24,7 +24,7 @@ import { Alert } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
 import {
   DATA_TYPES, DATA_TYPE_LABEL, catchUp, enrol, fetchPeople, fetchSetup, grantAccess, isActive,
-  revokeAccess, runEstimate, start,
+  revokeAccess, runEstimate, sharedDriveName, start,
   type DataType, type EnrolmentReport, type MigrationEstimate, type MigrationPeople, type MigrationSetup,
   type TypeProgress,
 } from '@/lib/orgMigration';
@@ -216,6 +216,7 @@ export default function OrgMigrationPage() {
           {enrolled && (
             <Alert tone={enrolled.unmatched.length ? 'warn' : 'ok'} className="mb-4" onDismiss={() => setEnrolled(null)}>
               {enrolled.people} people in Google, {enrolled.matched} matched to a TatvaOS person.
+              {(enrolled.sharedDrives ?? 0) > 0 && <> {enrolled.sharedDrives} shared drive(s) too - they land in the organisation&apos;s Space.</>}
               {enrolled.unmatched.length > 0 && <> Not matched (create them in TatvaOS first, then add again): {enrolled.unmatched.join(', ')}.</>}
             </Alert>
           )}
@@ -223,12 +224,15 @@ export default function OrgMigrationPage() {
             <Empty title="Nobody added yet" hint={grant ? 'Add everyone from Google, then choose who to start with.' : 'Give access first.'} />
           ) : (
             <Table head={['', 'Google address', 'Lands with', ...DATA_TYPES.map(t => DATA_TYPE_LABEL[t])]}>
-              {people.people.map(p => (
+              {people.people.map(p => {
+                const drive = sharedDriveName(p.googleAddress);
+                return (
                 <tr key={p.googleAddress}>
-                  <Td><input type="checkbox" aria-label={`Select ${p.googleAddress}`} disabled={!p.targetUserId}
+                  <Td><input type="checkbox" aria-label={`Select ${drive ? `shared drive ${drive}` : p.googleAddress}`} disabled={!p.targetUserId}
                              checked={selected.has(p.googleAddress)} onChange={() => toggle(p.googleAddress)} /></Td>
-                  <Td className="break-all">{p.googleAddress}</Td>
-                  <Td>{p.targetEmail ?? <span className="text-ink-muted">No TatvaOS person</span>}</Td>
+                  <Td className="break-all">{drive ? <><Badge tone="info">Shared drive</Badge> {drive}</> : p.googleAddress}</Td>
+                  <Td>{drive ? <span className="text-ink-muted">The organisation&apos;s Space</span>
+                             : p.targetEmail ?? <span className="text-ink-muted">No TatvaOS person</span>}</Td>
                   {DATA_TYPES.map(t => {
                     const j = p.types.find(x => x.dataType === t);
                     return (
@@ -248,7 +252,8 @@ export default function OrgMigrationPage() {
                     );
                   })}
                 </tr>
-              ))}
+                );
+              })}
             </Table>
           )}
         </Card>
