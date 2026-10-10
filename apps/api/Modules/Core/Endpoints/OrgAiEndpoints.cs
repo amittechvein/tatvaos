@@ -46,7 +46,9 @@ public static class OrgAiEndpoints
     /// Mail is Mail's own switch on top of it (allow_mail_ai, 25 Sept 2026).
     /// </summary>
     public sealed record PutRequest(
-        bool? Enabled, bool? Mail = null, bool? MailTriage = null, MailFeaturesRequest? MailFeatures = null);
+        bool? Enabled, bool? Mail = null, bool? MailTriage = null, MailFeaturesRequest? MailFeatures = null,
+        // Docs AI's own switch (allow_docs_ai, #406, 10 Oct 2026), like Mail's.
+        bool? Docs = null);
 
     /// <summary>
     /// Each Mail AI feature's own switch (Amit, 26 Sept 2026: "turn on and off …
@@ -60,10 +62,12 @@ public static class OrgAiEndpoints
     {
         // Mail AI may be held back for this organisation (ai.mail.organisations).
         var mailOffered = await AiProductSwitch.MailOfferedToAsync(db, tenant.TenantId, logs.CreateLogger("OrgAi"), ct);
+        // …and Docs AI likewise (ai.docs.organisations, #406).
+        var docsOffered = await AiProductSwitch.DocsOfferedToAsync(db, tenant.TenantId, logs.CreateLogger("OrgAi"), ct);
         var row = await db.Tenants.AsNoTracking()
             .Where(t => t.Id == tenant.TenantId)
             .Select(t => new { t.AllowAi, t.AllowMailAi, t.MailAiTriageSince, t.Type,
-                               t.MailAiRewrite, t.MailAiSuggest, t.MailAiSummary })
+                               t.MailAiRewrite, t.MailAiSuggest, t.MailAiSummary, t.AllowDocsAi })
             .FirstOrDefaultAsync(ct);
         if (row is null) return Results.NotFound();
 
@@ -155,6 +159,22 @@ public static class OrgAiEndpoints
                   + "text, so that it can be labelled Needs reply, FYI, Updates or Promotions. Emails that "
                   + $"arrived before sorting was switched on are never sent. {AiDisclosure.Retention}"
                 : "TatvaOS AI is not configured on this platform. Nothing is sent.",
+            // Docs AI's own switch (#406, 10 Oct 2026), shown as Mail's is: the
+            // switch only where Docs AI is offered, the sentence otherwise.
+            docsEnabled = row.AllowDocsAi && docsOffered,
+            docsOffered,
+            docsNotOffered = docsOffered ? null : AiProductSwitch.DocsNotOffered,
+            // What Docs sends, built ONLY from the approved sentences (#384,
+            // AiDisclosure.Docs*), the same words the privacy page carries —
+            // tests/ai/privacy-text-matches.py holds them to it.
+            docsDisclosure = ai.IsConfigured
+                ? $"When Docs AI is on, the following is sent to {toWhom}. "
+                  + $"Summarise: {AiDisclosure.DocsSummarise}. "
+                  + $"Improve, shorten, expand, make formal or make simpler: {AiDisclosure.DocsRewrite}. "
+                  + $"Translate: {AiDisclosure.DocsTranslate}. "
+                  + $"Write: {AiDisclosure.DocsWrite}. "
+                  + $"{AiDisclosure.DocsNeverSent} {AiDisclosure.DocsWhoDecides} {AiDisclosure.Retention}"
+                : "TatvaOS AI is not configured on this platform. Nothing is sent.",
             // This month's use against the allowance — the number the
             // administrator is emailed about at 80 % and 100 % (MeteredAiGateway).
             usage = await AiUsageReport.ThisMonthAsync(db, settings, ct),
@@ -168,7 +188,7 @@ public static class OrgAiEndpoints
         PutRequest req, AppDbContext db, TenantContext tenant,
         AuditWriter audit, ILoggerFactory logs, CancellationToken ct)
     {
-        if (req?.Enabled is null && req?.Mail is null && req?.MailTriage is null && req?.MailFeatures is null)
+        if (req?.Enabled is null && req?.Mail is null && req?.MailTriage is null && req?.MailFeatures is null && req?.Docs is null)
             return Results.BadRequest(new { error = "Say on or off." });
 
         var row = await db.Tenants
@@ -187,9 +207,15 @@ public static class OrgAiEndpoints
         if (req.MailTriage == true && !AiProductSwitch.TriageOfferedTo(row.Type))
             return Results.BadRequest(new { error = AiProductSwitch.MailTriageNotOffered });
 
-        var before = new { allowAi = row.AllowAi, allowMailAi = row.AllowMailAi, triage = row.MailAiTriageSince != null };
+        // Docs AI likewise: ON only once offered (ai.docs.organisations). OFF always works.
+        if (req.Docs == true && !await AiProductSwitch.DocsOfferedToAsync(db, tenant.TenantId, logs.CreateLogger("OrgAi"), ct))
+            return Results.BadRequest(new { error = AiProductSwitch.DocsNotOffered });
+
+        var before = new { allowAi = row.AllowAi, allowMailAi = row.AllowMailAi, triage = row.MailAiTriageSince != null,
+                           allowDocsAi = row.AllowDocsAi };
         if (req.Enabled is bool enabled) row.AllowAi = enabled;
         if (req.Mail is bool mail) row.AllowMailAi = mail;
+        if (req.Docs is bool docs) row.AllowDocsAi = docs;
         // ON stamps the moment (only later mail is ever sent); ON again keeps
         // the first stamp; OFF clears it.
         if (req.MailTriage is bool triage)
@@ -220,9 +246,10 @@ public static class OrgAiEndpoints
             || featuresBefore.suggest != row.MailAiSuggest || featuresBefore.summary != row.MailAiSummary;
         object FeaturesNow() => new { rewrite = row.MailAiRewrite, suggest = row.MailAiSuggest, summary = row.MailAiSummary };
 
-        if (row.AllowAi == before.allowAi && row.AllowMailAi == before.allowMailAi && triageNow == before.triage && !featuresChanged)
+        if (row.AllowAi == before.allowAi && row.AllowMailAi == before.allowMailAi && triageNow == before.triage && !featuresChanged
+            && row.AllowDocsAi == before.allowDocsAi)
             return Results.Ok(new { enabled = row.AllowAi, mailEnabled = row.AllowMailAi, mailTriageEnabled = triageNow,
-                                    mailFeatures = FeaturesNow() });   // idempotent, no audit noise
+                                    mailFeatures = FeaturesNow(), docsEnabled = row.AllowDocsAi });   // idempotent, no audit noise
 
         await db.SaveChangesAsync(ct);
 
@@ -259,6 +286,14 @@ public static class OrgAiEndpoints
                 "core.tenant", row.Id.ToString(),
                 before: new { allowMailAi = before.allowMailAi }, after: new { allowMailAi = row.AllowMailAi },
                 ct: ct, productCode: "mail");
+        // Docs AI: its own row, "who turned Docs AI on" answerable on its own.
+        // productCode "drive": a document is a Space file, and Space's
+        // catalogue row is 'drive' (as Docs' operator switch audits).
+        if (row.AllowDocsAi != before.allowDocsAi)
+            await audit.WriteAsync("org.ai.docs." + (row.AllowDocsAi ? "enabled" : "disabled"),
+                "core.tenant", row.Id.ToString(),
+                before: new { allowDocsAi = before.allowDocsAi }, after: new { allowDocsAi = row.AllowDocsAi },
+                ct: ct, productCode: "drive");
         if (triageNow != before.triage)
             await audit.WriteAsync("org.ai.mail_triage." + (triageNow ? "enabled" : "disabled"),
                 "core.tenant", row.Id.ToString(),
@@ -283,6 +318,6 @@ public static class OrgAiEndpoints
         }
 
         return Results.Ok(new { enabled = row.AllowAi, mailEnabled = row.AllowMailAi, mailTriageEnabled = triageNow,
-                                mailFeatures = FeaturesNow() });
+                                mailFeatures = FeaturesNow(), docsEnabled = row.AllowDocsAi });
     }
 }

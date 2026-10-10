@@ -71,6 +71,14 @@ public class Tenant
     public bool AllowMailAi { get; set; }
 
     /// <summary>
+    /// May Docs use TatvaOS AI for this organisation? Needs AllowAi too, as
+    /// Mail's does. FALSE BY DEFAULT; enforced in the gateway on the "docs."
+    /// feature label (AiProductSwitch.DocsAllowedAsync). #406, 10 Oct 2026.
+    /// Column: 20261010-docs-ai-switch.sql.
+    /// </summary>
+    public bool AllowDocsAi { get; set; }
+
+    /// <summary>
     /// TatvaOS AI sorts incoming inbox mail since this moment; null = off.
     /// Needs AllowAi and AllowMailAi too. Only mail that ARRIVED after it is
     /// ever sent. Enforced in the gateway on "mail.triage" (AiProductSwitch).

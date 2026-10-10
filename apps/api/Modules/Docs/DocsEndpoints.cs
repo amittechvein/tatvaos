@@ -378,6 +378,18 @@ public static class DocsEndpoints
             : !await ai.EnabledForTenantAsync(ct)
                 ? new(false, "AI is switched off for your organisation. An administrator can turn it on.")
                 : new(true, null);
+        // A DOCUMENT's AI also needs Docs AI offered and switched on (#406, 10
+        // Oct 2026), the same two checks AiAsync and the gateway make — so the
+        // editor never offers a button that would be refused. A spreadsheet's
+        // AI is Sheets AI, which has no product switch (yet), so it is untouched.
+        if (aiState.Available && !LiveSwitch.IsSheet(file!.MimeType))
+        {
+            var quiet = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+            if (!await AiProductSwitch.DocsOfferedToAsync(db, tenant.TenantId, quiet, ct))
+                aiState = new(false, AiProductSwitch.DocsNotOffered);
+            else if (!await AiProductSwitch.DocsAllowedAsync(db, tenant, quiet, ct))
+                aiState = new(false, AiProductSwitch.DocsOff);
+        }
 
         return Results.Ok(new DocumentDto(
             file.Id, file.Name, perm, file.OwnerUserId,
@@ -1259,6 +1271,10 @@ public static class DocsEndpoints
         if (!await TatvaOS.Api.Shared.Ai.AiGate.AllowedAsync(db, tenant.HasTenant ? tenant.TenantId : null,
                 TatvaOS.Api.Shared.Ai.AiGate.Docs, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, ct))
             return Error(403, TatvaOS.Api.Shared.Ai.AiGate.NotOffered);
+        // Docs AI's own switch (#406): checked here so the person reads the
+        // sentence at once; the gateway checks it again for every docs.* label.
+        if (!await AiProductSwitch.DocsAllowedAsync(db, tenant, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, ct))
+            return Error(403, AiProductSwitch.DocsOff);
 
         const string Plain =
             " Reply with the text only — no preamble, no closing remarks, no quotation marks around it." +

@@ -86,6 +86,42 @@ public static class AiDisclosure
     //  Mail AI offer button (Complete, below).
     public const string MeetingNotes = "the meeting's transcript";
 
+    // ── DOCS AI (approved wording #384, price final #388; built with its own
+    //    switch, #406, 10 Oct 2026). Checked against the code that day:
+    //      what is sent   DocsEndpoints.AiAsync sends req.Text ONLY — the
+    //                     selection (rewrite, translate), the document's text
+    //                     (summarise, and as context for write) — plus, for
+    //                     write, the person's own request; never pictures,
+    //                     comments, versions or editors' names
+    //      24,000         AiInput.MaxCharacters, cut in the gateway for every
+    //                     request (OpenAiGateway)
+    //      only on click  the editor's AI panel; no Docs AI call runs unasked
+    //      off / who      allow_docs_ai, default false, set only by an
+    //                     organisation administrator (OrgAiEndpoints), checked
+    //                     in the gateway for every docs.* label
+    public const string DocsSummarise =
+        "the text of the document, when a person asks for a summary";
+
+    public const string DocsRewrite =
+        "only the text a person has selected, when they ask for it to be improved, shortened, expanded, "
+        + "made formal or made simpler";
+
+    public const string DocsTranslate =
+        "only the text a person has selected, and the language they choose, when they ask for a translation";
+
+    public const string DocsWrite =
+        "what a person asks to be written, together with the text of the document for context, when they "
+        + "ask TatvaOS AI to write something";
+
+    public const string DocsNeverSent =
+        "Pictures, comments, earlier versions and the names of the people who edited a document are never "
+        + "sent. Only text is sent, and no more than about 24,000 characters of it at a time. Nothing is sent "
+        + "unless a person clicks.";
+
+    public const string DocsWhoDecides =
+        "Docs AI is off by default. Only your organisation's administrator can turn it on, and they can turn "
+        + "it off again at any time.";
+
     /// <summary>"OpenAI, in the United States" - the one way every sentence names who and where.</summary>
     public static string ToWhom(string vendor, string location) => $"{vendor}, in {location}";
 

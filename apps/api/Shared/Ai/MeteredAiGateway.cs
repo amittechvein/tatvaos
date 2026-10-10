@@ -200,6 +200,10 @@ public sealed class MeteredAiGateway(
         if (feature == AiProductSwitch.MailTriageFeature
             && !await AiProductSwitch.TriageAllowedAsync(db, tenant, log, ct))
             return AiResult.Failed(AiProductSwitch.MailTriageOff);
+        //     Docs AI's own switch (10 Oct 2026, #406): every docs.* label,
+        //     so no Docs caller can forget it — as Mail's above.
+        if (AiProductSwitch.IsDocs(feature) && !await AiProductSwitch.DocsAllowedAsync(db, tenant, log, ct))
+            return AiResult.Failed(AiProductSwitch.DocsOff);
 
         var now = DateTimeOffset.UtcNow;
         var user = tenant.UserId;
