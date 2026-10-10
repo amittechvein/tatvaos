@@ -21,6 +21,61 @@ public static class PhoneNumber
         return Regex.IsMatch(p, @"^\+?[0-9]{8,15}$") ? p : null;
     }
 
+    /// <summary>
+    /// The ONE spelling a number is stored and compared in: "+" and digits,
+    /// with a country code. A bare 10-digit Indian mobile (6-9...), "0" + 10
+    /// digits, or "91" + 10 digits all become +91XXXXXXXXXX; a number that
+    /// already carries its "+" is kept (after Normalise). Null if it is none
+    /// of those. The same rule as core.phone_canonical() in
+    /// 20261009-z-phone-canonical.sql, which brings stored rows to it.
+    ///
+    /// Issue #327 (27 Sept 2026, fixed 9 Oct): sign-in matched the number AS
+    /// TYPED against the number AS STORED, so "+919876543210" on the row and
+    /// "98765 43210" at the door never met - admins store numbers however
+    /// they type them. The join key of every phone flow has to agree to the
+    /// character, on BOTH sides.
+    /// </summary>
+    public static string? Canonical(string? raw)
+    {
+        var n = Normalise(raw);
+        if (n is null) return null;
+        if (n.StartsWith('+')) return n.Length >= 9 ? n : null;
+        if (n.Length == 10 && n[0] is >= '6' and <= '9') return "+91" + n;
+        if (n.Length == 11 && n[0] == '0' && n[1] is >= '6' and <= '9') return "+91" + n[1..];
+        if (n.Length == 12 && n.StartsWith("91") && n[2] is >= '6' and <= '9') return "+" + n;
+        return null;
+    }
+
+    /// <summary>
+    /// What every write and every lookup uses: Canonical where the number is
+    /// one, otherwise the plain Normalise result (an 8-digit landline, a bare
+    /// non-Indian number) exactly as before - so nothing that was accepted is
+    /// now refused, and such a number still matches itself. Both sides of a
+    /// comparison go through this; that is the whole fix.
+    /// </summary>
+    public static string? Stored(string? raw) => Canonical(raw) ?? Normalise(raw);
+
+    /// <summary>
+    /// Every raw spelling Stored() maps to this value - what a LOOKUP matches
+    /// the stored column against, so a row not yet rewritten (the colliding
+    /// pair the migration leaves alone, or a database the migration never
+    /// reached) is still found. Two live rows on one number are then two
+    /// matches, and the callers fail closed on that, which is the point: the
+    /// first run of the suite (25/26) showed that matching only the canonical
+    /// spelling reached one half of a colliding pair and silently locked the
+    /// other half out of phone sign-in for good. Empty for null.
+    /// </summary>
+    public static string[] Spellings(string? stored)
+    {
+        if (string.IsNullOrEmpty(stored)) return [];
+        if (stored.Length == 13 && stored.StartsWith("+91") && stored[3] is >= '6' and <= '9')
+        {
+            var d = stored[3..];
+            return [stored, d, "0" + d, "91" + d];
+        }
+        return [stored];
+    }
+
     /// <summary>Everything but the last four digits. Enough to recognise your
     /// own number, useless for guessing anyone else's.</summary>
     public static string? Mask(string? phone) =>

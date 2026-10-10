@@ -12,8 +12,12 @@
    everything; the .docs-content block puts a document's typography back.
    ========================================================================== */
 
-.docs-app { background: #f9fbfd; }
-.dark .docs-app { background: rgb(var(--canvas)); }
+/* TatvaOS colours, not Google's (Amit, 9 Oct 2026: the top panel "looks
+   like copy of Google"). Until then the chrome used Google Docs' own values —
+   #f9fbfd behind the page, #edf2fa toolbar, #d3e3fd/#0b57d0 for a pressed
+   button, #c2e7ff for Share. Now the app's canvas, surface and brand tokens,
+   so Docs and Sheets look like the rest of TatvaOS and follow its dark mode. */
+.docs-app { background: rgb(var(--canvas)); }
 
 /* ---- toolbar ----------------------------------------------------------- */
 
@@ -24,8 +28,8 @@
 }
 .docs-tb:hover:not(:disabled) { background: rgb(var(--ink) / 0.08); }
 .docs-tb:disabled { color: rgb(var(--ink-faint)); cursor: default; }
-.docs-tb-on { background: #d3e3fd; color: #0b57d0; }
-.dark .docs-tb-on { background: #004a77; color: #c2e7ff; }
+.docs-tb-on { background: rgb(var(--brand-100)); color: rgb(var(--brand-700)); }
+.dark .docs-tb-on { background: rgb(var(--brand-600) / 0.35); color: #fff; }
 
 .docs-select {
   height: 28px; flex-shrink: 0; border-radius: 4px; border: 0;

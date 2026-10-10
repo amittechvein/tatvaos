@@ -19,9 +19,10 @@
 //  Answers:  200 {pdf (base64), ms, dropped, schema}
 //            422 {reason: "script_not_checked", scripts} — a script no reader
 //                has checked yet (Amit, 1 Oct 2026); the send says so
-//            413 {reason: "pictures_too_large"} — its pictures do not fit in
-//                the job folder (/tmp, a 16 MB tmpfs); the sentence says to
-//                remove some and try again (Mr. Singh, 7 Oct 2026)
+//            413 {reason: "pictures_too_large"} — its OWN pictures cannot fit
+//                in the job folder (/tmp, a 16 MB tmpfs) however empty it is;
+//                the sentence says to remove some and try again (Mr. Singh,
+//                7 Oct 2026). When other jobs filled it instead: the 500.
 //            504 past the SAME time limit as a render (render + PDF together)
 //            500 {reason: "pdf_failed"} — Typst could not build it (the log
 //                says no_room when /tmp filled with no pictures of its own)
@@ -179,7 +180,7 @@ const server = http.createServer((req, res) => {
       const code = e instanceof PdfFailed ? e.code : 'pdf_failed';
       const d = e?.detail ?? {};
       log(`pdf FAILED ${code} ms=${Date.now() - t0}${d.scripts ? ` scripts=${d.scripts.join(',')}` : ''}${d.message ? ` typst: ${d.message}` : ''}`
-        + `${d.stage ? ` stage=${d.stage} pictures=${d.pictures} bytes=${d.bytes}` : ''}${code === 'pdf_failed' && e?.code ? ` error=${e.code}` : ''}`);
+        + `${d.stage ? ` stage=${d.stage} pictures=${d.pictures} bytes=${d.bytes} tmp_capacity=${d.capacity}` : ''}${code === 'pdf_failed' && e?.code ? ` error=${e.code}` : ''}`);
       if (code === 'pictures_too_large') return send(res, 413, { error: PICTURES_TOO_LARGE, reason: code });
       if (code === 'script_not_checked') return send(res, 422, { error: 'This document contains text in a script whose PDF has not been checked by a reader yet.', reason: code, scripts: e.detail.scripts });
       if (code === 'timeout') return send(res, 504, { error: 'render timed out', limitMs: LIMIT_MS });
