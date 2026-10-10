@@ -140,19 +140,48 @@ public sealed class GoogleCalendarSource(
         AppDbContext db, MigrationJobView job, JsonElement e, string calendarZone, string? calendarName, CancellationToken ct)
     {
         var uid = UidOf(e);
-        if (await OwnerOfAsync(db, uid, ct) is { } owner)
-            return MigrationWriteResult.Skipped(owner.UserId == job.TargetUserId
-                ? "already migrated" : $"already in {owner.Email ?? "another person"}'s calendar");
-
         var organiser = e.TryGetProperty("organizer", out var o) ? o : default;
         var self = True(organiser, "self");
+        if (await OwnerOfAsync(db, uid, ct) is { } owner)
+        {
+            // Decision 0019 §3 (Mr. Singh, 10 Oct 2026): dedupe on the RFC 5545
+            // UID, and when the ORGANISER arrives after their meeting was placed
+            // with an attendee (the sweep, or an earlier run), ADOPT it - move it
+            // to the organiser's calendar and name them - rather than keep a
+            // copy in the wrong calendar or make a second one.
+            if (self && owner.UserId is Guid prev && prev != job.TargetUserId)
+                return await AdoptEventAsync(db, job, e, uid, prev, owner.Email, ct);
+            return MigrationWriteResult.Skipped(owner.UserId == job.TargetUserId
+                ? "already migrated" : $"already in {owner.Email ?? "another person"}'s calendar");
+        }
+
         if (!self && Str(organiser, "email") is { } orgEmail)
         {
             var inOrg = await PeopleAsync(db, [orgEmail], ct);
             if (inOrg.ContainsKey(orgEmail.Trim().ToLowerInvariant()))
                 return MigrationWriteResult.Skipped($"organised by {orgEmail.Trim().ToLowerInvariant()}, in this organisation: it arrives with their calendar");
         }
-        return await CreateEventAsync(db, job, e, calendarZone, self, calendarName, ct);
+        return await CreateEventAsync(db, job, e, calendarZone, self, calendarName, ct, organiserUserId: null);
+    }
+
+    /// <summary>
+    /// The organiser's own run finds their meeting already here, placed with
+    /// an attendee: move it into the organiser's primary calendar, record them
+    /// as organiser and chair, and complete the attendee list from the
+    /// organiser's copy (the former owner stays an attendee, as they were in
+    /// Google). Nothing is deleted: the former owner's reminders are theirs.
+    /// </summary>
+    private async Task<MigrationWriteResult> AdoptEventAsync(
+        AppDbContext db, MigrationJobView job, JsonElement e, string uid, Guid previousOwner, string? previousEmail, CancellationToken ct)
+    {
+        var ev = await db.CalendarEvents.FirstOrDefaultAsync(x => x.Uid == uid, ct);
+        if (ev is null) return MigrationWriteResult.Skipped("already migrated");
+        ev.CalendarId = await CalendarProvisioning.EnsurePrimaryAsync(db, job.TenantId, job.TargetUserId, ct);
+        ev.OrganiserUserId = job.TargetUserId;
+        await EnsureAttendeesAsync(db, ev, e, self: true, organiserUserId: job.TargetUserId, ct);
+        await db.SaveChangesAsync(ct);
+        return new MigrationWriteResult("done", 0,
+            $"adopted from {previousEmail ?? "another person"}'s calendar: the organiser's meeting is now in the organiser's calendar");
     }
 
     /// <summary>
@@ -181,14 +210,15 @@ public sealed class GoogleCalendarSource(
                 throw new InvalidOperationException($"waiting for {orgEmail}'s calendar to finish before placing their meetings with attendees");
         }
 
-        var created = await CreateEventAsync(db, job, e, calendarZone, self: false, calendarName: null, ct);
+        var created = await CreateEventAsync(db, job, e, calendarZone, self: false, calendarName: null, ct, organiserUserId: organiserId);
         return created.Outcome != "done" ? created
             : new MigrationWriteResult("done", 0,
                 $"organised by {orgEmail}, whose calendar is not being migrated: placed with this attendee");
     }
 
     private async Task<MigrationWriteResult> CreateEventAsync(
-        AppDbContext db, MigrationJobView job, JsonElement e, string calendarZone, bool self, string? calendarName, CancellationToken ct)
+        AppDbContext db, MigrationJobView job, JsonElement e, string calendarZone, bool self, string? calendarName, CancellationToken ct,
+        Guid? organiserUserId)
     {
         var uid = UidOf(e);
 
@@ -209,7 +239,11 @@ public sealed class GoogleCalendarSource(
             Uid = uid,
             Sequence = e.TryGetProperty("sequence", out var sq) && sq.TryGetInt32(out var s) ? s : 0,
             CreatedByUserId = job.TargetUserId,
-            OrganiserUserId = self ? job.TargetUserId : null,
+            // Decision 0019 §3: never an attendee promoted to organiser. The
+            // organiser is this person when Google says self, the named person
+            // in this organisation when the sweep placed their meeting, and
+            // NULL when nobody in the organisation called the meeting.
+            OrganiserUserId = self ? job.TargetUserId : organiserUserId,
             Title = Clip(Str(e, "summary"), 300) ?? "(No title)",
             Description = Str(e, "description"),
             Location = Clip(Str(e, "location"), 300),
@@ -225,23 +259,7 @@ public sealed class GoogleCalendarSource(
         };
         db.CalendarEvents.Add(ev);
 
-        // Attendees, linked to their TatvaOS person where there is one.
-        var attendees = e.TryGetProperty("attendees", out var a) && a.ValueKind == JsonValueKind.Array
-            ? a.EnumerateArray().Where(x => Str(x, "email") is not null).ToList() : [];
-        var people = await PeopleAsync(db, attendees.Select(x => Str(x, "email")!), ct);
-        foreach (var x in attendees.DistinctBy(x => Str(x, "email")!.Trim().ToLowerInvariant()))
-        {
-            var email = Str(x, "email")!.Trim().ToLowerInvariant();
-            db.CalendarAttendees.Add(new CalendarAttendee
-            {
-                EventId = ev.Id,
-                UserId = people.TryGetValue(email, out var pid) ? pid : null,
-                Email = email,
-                DisplayName = Clip(Str(x, "displayName"), 200),
-                Role = True(x, "organizer") ? "chair" : True(x, "optional") ? "opt-participant" : "req-participant",
-                Status = AttendeeStatus(Str(x, "responseStatus")),
-            });
-        }
+        await EnsureAttendeesAsync(db, ev, e, self, self ? job.TargetUserId : organiserUserId, ct);
 
         foreach (var at in exDates.Distinct())
             db.CalendarEventExceptions.Add(new CalendarEventException { EventId = ev.Id, OccurrenceStartsAt = at, IsCancelled = true });
@@ -260,6 +278,63 @@ public sealed class GoogleCalendarSource(
         return notCarried.Count == 0
             ? MigrationWriteResult.Done(0)
             : new MigrationWriteResult("done", 0, $"not carried: {string.Join(", ", notCarried.Distinct())}");
+    }
+
+    /// <summary>
+    /// Attendee rows for the event from this Google copy, linked to their
+    /// TatvaOS person where there is one; rows already there are kept (an
+    /// adoption adds the organiser's copy's attendees to the attendee's). The
+    /// REAL organiser is always recorded as a "chair" row with their email -
+    /// decision 0019 §3 rule 2 - even when Google does not list them among the
+    /// attendees, which it does not for many external meetings. Before 10 Oct
+    /// 2026 such a meeting arrived with no trace of who called it.
+    /// </summary>
+    private static async Task EnsureAttendeesAsync(
+        AppDbContext db, CalendarEvent ev, JsonElement e, bool self, Guid? organiserUserId, CancellationToken ct)
+    {
+        var organiser = e.TryGetProperty("organizer", out var o) ? o : default;
+        var organiserEmail = Str(organiser, "email")?.Trim().ToLowerInvariant();
+        var attendees = e.TryGetProperty("attendees", out var a) && a.ValueKind == JsonValueKind.Array
+            ? a.EnumerateArray().Where(x => Str(x, "email") is not null).ToList() : [];
+        var people = await PeopleAsync(db, attendees.Select(x => Str(x, "email")!), ct);
+        var existing = ev.Id == default ? new HashSet<string>() :
+            (await db.CalendarAttendees.Where(x => x.EventId == ev.Id).Select(x => x.Email).ToListAsync(ct)).ToHashSet();
+        var seen = new HashSet<string>();
+        foreach (var x in attendees.DistinctBy(x => Str(x, "email")!.Trim().ToLowerInvariant()))
+        {
+            var email = Str(x, "email")!.Trim().ToLowerInvariant();
+            seen.Add(email);
+            var isOrganiser = True(x, "organizer") || email == organiserEmail;
+            if (existing.Contains(email))
+            {
+                if (isOrganiser)
+                    foreach (var row in await db.CalendarAttendees.Where(r => r.EventId == ev.Id && r.Email == email).ToListAsync(ct))
+                    { row.Role = "chair"; row.UserId ??= organiserUserId; }
+                continue;
+            }
+            db.CalendarAttendees.Add(new CalendarAttendee
+            {
+                EventId = ev.Id,
+                UserId = people.TryGetValue(email, out var pid) ? pid : (isOrganiser ? organiserUserId : null),
+                Email = email,
+                DisplayName = Clip(Str(x, "displayName"), 200),
+                Role = isOrganiser ? "chair" : True(x, "optional") ? "opt-participant" : "req-participant",
+                Status = AttendeeStatus(Str(x, "responseStatus")),
+            });
+        }
+        if (organiserEmail is not null && !seen.Contains(organiserEmail) && !existing.Contains(organiserEmail))
+            db.CalendarAttendees.Add(new CalendarAttendee
+            {
+                EventId = ev.Id,
+                UserId = organiserUserId,
+                Email = organiserEmail,
+                DisplayName = Clip(Str(organiser, "displayName"), 200),
+                Role = "chair",
+                // The organiser attends their own meeting: RFC 5545 gives the
+                // ORGANIZER no PARTSTAT, and Google does not say; "accepted"
+                // is the only reading that is not a question nobody can answer.
+                Status = "accepted",
+            });
     }
 
     private async Task<MigrationWriteResult> WriteExceptionAsync(
