@@ -44,6 +44,7 @@ var host = Environment.GetEnvironmentVariable("TATVAOS_IMAP_HOST") ?? "localhost
 var port = int.Parse(Environment.GetEnvironmentVariable("TATVAOS_IMAP_PORT") ?? "1143");
 const string Person = "amit@techvein.local";
 var password = Environment.GetEnvironmentVariable("MAIL_PASS") ?? "devpass123";
+string? LastCursor = null;
 var root = $"MigTest-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}-{Random.Shared.Next(1000, 9999)}";
 
 var passed = 0; var failed = 0;
@@ -134,6 +135,23 @@ try
     Same("written the second time", second.Count(r => r.Outcome == "done"), 0);
     Same("skipped the second time (all eight)", second.Count(r => r.Outcome == "skipped"), 8);
     var after = await Snapshot(probe);
+    before["INBOX"]["m9"] = default;   // the one message the catch-up added
+    Same("the full copy leaves the job at Gmail's history marker from BEFORE it began", LastCursor, "d:100");
+
+    Console.WriteLine("\n>> catch-up: mail that arrived after the full copy");
+    FakeGmail.Arrive("g9", "m9", ["INBOX"], historyBefore: "100", historyAfter: "120");
+    FakeGmail.Arrive("g10", "m10", ["INBOX"], historyBefore: "100", historyAfter: "120", deletedBeforeFetch: true);
+    var (catchUp, _, catchUpCursor) = await RunFrom(source, job, "d:100");
+    Same("only what was added: g9 written, g10 (deleted since) skipped by name",
+        string.Join(",", catchUp.Select(r => $"{r.Id}={r.Outcome}:{r.Reason}")), "g9=done:,g10=skipped:no longer in Gmail");
+    Same("...the job now holds the newer marker", catchUpCursor, "d:120");
+    Same("...m9 is in INBOX", Ids(await Snapshot(probe), "INBOX"), "m1,m3,m7,m9");
+    var (stale, _, staleCursor) = await RunFrom(source, job, "d:1");
+    Same("history too old (Google 404s): falls back to a full listing that writes nothing",
+        stale.Count(r => r.Outcome == "done"), 0);
+    Same("...and re-reads Gmail's marker", staleCursor, "d:120");
+    after = await Snapshot(probe);
+
     Same("no folder gained or lost a message",
         string.Join(";", after.OrderBy(k => k.Key).Select(k => $"{k.Key}={k.Value.Count}")),
         string.Join(";", before.OrderBy(k => k.Key).Select(k => $"{k.Key}={k.Value.Count}")));
@@ -163,9 +181,18 @@ Console.WriteLine($"  FAIL  {failed} of {passed + failed} checks\n"); return 1;
 // Drive the source as the runner does: fetch a page, write each item, move the cursor.
 async Task<(List<(string Id, string Outcome, string? Reason)>, long?)> RunAll(GmailMailSource s, MigrationJobView j)
 {
+    var (results, total, cursor) = await RunFrom(s, j, null);
+    LastCursor = cursor;
+    return (results, total);
+}
+
+// As the runner does: from a cursor, page by page, to the last page; the
+// cursor the job is left holding is returned (the runner stores it).
+async Task<(List<(string Id, string Outcome, string? Reason)>, long?, string?)> RunFrom(GmailMailSource s, MigrationJobView j, string? cursor)
+{
     var results = new List<(string, string, string?)>();
     long? total = null;
-    j = j with { Cursor = null };
+    j = j with { Cursor = cursor };
     while (true)
     {
         var page = await s.FetchAsync(j, CancellationToken.None);
@@ -175,7 +202,7 @@ async Task<(List<(string Id, string Outcome, string? Reason)>, long?)> RunAll(Gm
             var r = await s.WriteAsync(j, item, CancellationToken.None);
             results.Add((item.SourceId, r.Outcome, r.Reason));
         }
-        if (page.IsLast) return (results, total);
+        if (page.IsLast) return (results, total, page.NextCursor);
         j = j with { Cursor = page.NextCursor };
     }
 }
@@ -251,13 +278,29 @@ sealed class FakeGmail : HttpMessageHandler
         ("g8", "m8", ["Label_3"]),
     ];
     public static long Date(string id) => 1_700_000_000_000L + int.Parse(id[1..]) * 86_400_000L;
+    static string History = "100";
+    static readonly List<(string Id, string Mid, string[] Labels, string Before, bool Gone)> Arrived = [];
+    /// <summary>A message delivered to Gmail after the full copy began.</summary>
+    public static void Arrive(string id, string mid, string[] labels, string historyBefore, string historyAfter, bool deletedBeforeFetch = false)
+    {
+        Arrived.Add((id, mid, labels, historyBefore, deletedBeforeFetch));
+        History = historyAfter;
+    }
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
     {
         var path = req.RequestUri!.AbsolutePath;
         var query = req.RequestUri.Query;
         if (path == "/token") return Json("""{"access_token":"ya29.fake","expires_in":3600}""");
-        if (path.EndsWith("/profile")) return Json("""{"emailAddress":"alice@customer.test","messagesTotal":8}""");
+        if (path.EndsWith("/profile")) return Json($$"""{"emailAddress":"alice@customer.test","messagesTotal":8,"historyId":"{{History}}"}""");
+        if (path.EndsWith("/history"))
+        {
+            var since = query.Split("startHistoryId=")[1].Split('&')[0];
+            if (since == "1") return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
+                { Content = new StringContent("""{"error":{"code":404,"message":"Requested entity was not found.","errors":[{"reason":"notFound"}]}}""") });
+            var added = Arrived.Where(a => a.Before == since).Select(a => $$$"""{"messagesAdded":[{"message":{"id":"{{{a.Id}}}"}}]}""");
+            return Json($$"""{"history":[{{string.Join(",", added)}}],"historyId":"{{History}}"}""");
+        }
         if (path.EndsWith("/labels"))
             return Json("""{"labels":[{"id":"INBOX","name":"INBOX","type":"system"},{"id":"Label_1","name":"Clients/Acme","type":"user"},{"id":"Label_2","name":"Invoices","type":"user"},{"id":"Label_3","name":"Archive","type":"user"}]}""");
         if (path.EndsWith("/messages"))
@@ -267,6 +310,14 @@ sealed class FakeGmail : HttpMessageHandler
             return Json($$"""{"messages":[{{string.Join(",", ids)}}]{{(second ? "" : ",\"nextPageToken\":\"p2\"")}},"resultSizeEstimate":8}""");
         }
         var id = path.Split('/')[^1];
+        if (Arrived.FirstOrDefault(a => a.Id == id) is { Id: not null } late)
+        {
+            if (late.Gone) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
+                { Content = new StringContent("""{"error":{"code":404,"message":"Requested entity was not found.","errors":[{"reason":"notFound"}]}}""") });
+            var lraw = $"Message-ID: <{late.Mid}@customer.test>\r\nFrom: someone@else.test\r\nSubject: late {late.Id}\r\n\r\nLate.\r\n";
+            var lb64 = Convert.ToBase64String(Encoding.ASCII.GetBytes(lraw)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+            return Json($$"""{"id":"{{id}}","labelIds":[{{string.Join(",", late.Labels.Select(l => $"\"{l}\""))}}],"internalDate":"{{Date("g1")}}","raw":"{{lb64}}"}""");
+        }
         var msg = Messages.Single(m => m.Id == id);
         var raw = $"Message-ID: <{msg.Mid}@customer.test>\r\nFrom: someone@else.test\r\nTo: alice@customer.test\r\n" +
                   $"Subject: migration test {msg.Id}\r\nDate: Tue, 14 Nov 2023 10:00:00 +0000\r\n\r\nBody of {msg.Id}.\r\n";

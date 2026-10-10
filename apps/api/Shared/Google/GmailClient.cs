@@ -21,7 +21,35 @@ public sealed class GmailClient(GoogleApi api)
         return new GmailProfile(
             Str(r, "emailAddress") ?? person,
             Long(r, "messagesTotal"),
-            Long(r, "threadsTotal"));
+            Long(r, "threadsTotal"),
+            Str(r, "historyId"));
+    }
+
+    /// <summary>
+    /// Messages ADDED since <paramref name="startHistoryId"/> (users.history,
+    /// historyTypes=messageAdded), a page at a time - the catch-up after a
+    /// full copy. Null when Google no longer holds history that far back
+    /// (404): the caller must fall back to a full listing.
+    /// </summary>
+    public async Task<GmailHistoryPage?> ListAddedSinceAsync(
+        GoogleServiceAccount account, string person, string startHistoryId, string? pageToken, CancellationToken ct)
+    {
+        var q = $"history?startHistoryId={Uri.EscapeDataString(startHistoryId)}&historyTypes=messageAdded&maxResults=500" +
+                (pageToken is null ? "" : $"&pageToken={Uri.EscapeDataString(pageToken)}");
+        JsonDocument doc;
+        try { doc = await api.GetJsonAsync(account, person, Scopes, Url(person, q), ct); }
+        catch (GoogleApiException ex) when (ex.Status == 404) { return null; }
+        using (doc)
+        {
+            var ids = new List<string>();
+            if (doc.RootElement.TryGetProperty("history", out var hs) && hs.ValueKind == JsonValueKind.Array)
+                foreach (var h in hs.EnumerateArray())
+                    if (h.TryGetProperty("messagesAdded", out var added) && added.ValueKind == JsonValueKind.Array)
+                        foreach (var a in added.EnumerateArray())
+                            if (a.TryGetProperty("message", out var m) && Str(m, "id") is { } id && !ids.Contains(id))
+                                ids.Add(id);
+            return new GmailHistoryPage(ids, Str(doc.RootElement, "nextPageToken"), Str(doc.RootElement, "historyId"));
+        }
     }
 
     /// <summary>
@@ -117,7 +145,11 @@ public sealed class GmailClient(GoogleApi api)
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n) ? n : 0;
 }
 
-public sealed record GmailProfile(string EmailAddress, long MessagesTotal, long ThreadsTotal);
+/// <param name="HistoryId">Gmail's change marker now; a catch-up asks for what was added after it.</param>
+public sealed record GmailProfile(string EmailAddress, long MessagesTotal, long ThreadsTotal, string? HistoryId = null);
+
+/// <param name="HistoryId">The marker as of this answer - the next catch-up starts here.</param>
+public sealed record GmailHistoryPage(IReadOnlyList<string> Ids, string? NextPageToken, string? HistoryId);
 
 public sealed record GmailMessagePage(IReadOnlyList<string> Ids, string? NextPageToken, long? ResultSizeEstimate);
 

@@ -148,6 +148,34 @@ public sealed class MigrationEnrolment(AppDbContext db)
         return new StartReport(started.Count, started.Distinct().Count(), notStarted);
     }
 
+    /// <summary>
+    /// Mail that arrived in Gmail since a person's mail job finished: put
+    /// their COMPLETED mail jobs back to pending, keeping the cursor
+    /// ("d:&lt;historyId&gt;"), so the next run brings only what was added.
+    /// Run as often as needed before the customer switches MX, and once after.
+    /// <paramref name="onlyPeople"/> null = everyone. Returns the addresses re-queued.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> CatchUpMailAsync(IReadOnlyCollection<string>? onlyPeople, CancellationToken ct)
+    {
+        var people = onlyPeople?.Select(p => p.Trim().ToLowerInvariant()).Distinct().ToArray();
+        var conn = await OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            UPDATE migration.jobs SET state = 'pending', next_attempt_at = now(), attempts = 0,
+                   finished_at = NULL, updated_at = now()
+             WHERE source = 'google_workspace' AND data_type = 'mail'
+               AND state = 'completed' AND cursor LIKE 'd:%'
+               AND target_user_id IS NOT NULL
+               AND (@people::text[] IS NULL OR source_user = ANY(@people::text[]))
+            RETURNING source_user
+            """, conn);
+        cmd.Parameters.Add(new NpgsqlParameter("people", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text)
+            { Value = (object?)people ?? DBNull.Value });
+        var queued = new List<string>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct)) queued.Add(r.GetString(0));
+        return queued;
+    }
+
     /// <summary>Every enrolled person in this organisation, with each data type's progress.</summary>
     public async Task<IReadOnlyList<PersonProgress>> ProgressAsync(CancellationToken ct)
     {
