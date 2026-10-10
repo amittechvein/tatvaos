@@ -56,7 +56,16 @@ public sealed class TokenIssuer(IConfiguration config)
 
     public sealed record AccessToken(string Value, DateTimeOffset ExpiresAt);
 
-    public AccessToken IssueAccessToken(User user)
+    /// <summary>
+    /// The claim naming the sign-in this token belongs to: the refresh-token
+    /// family. It lets something be tied to ONE sign-in and end with it - the
+    /// identifier unlock window (Mr. Singh, 10 Oct 2026: "the window dies on
+    /// sign-out"). Signing out revokes the family; anything keyed by it then
+    /// stops counting, with no clean-up to forget.
+    /// </summary>
+    public const string SessionClaim = "sid";
+
+    public AccessToken IssueAccessToken(User user, Guid? sessionId = null)
     {
         var expires = DateTimeOffset.UtcNow.Add(AccessTokenLifetime);
 
@@ -76,6 +85,7 @@ public sealed class TokenIssuer(IConfiguration config)
             // something to log without logging the token itself.
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
         };
+        if (sessionId is Guid sid) claims.Add(new(SessionClaim, sid.ToString()));
 
         // JsonWebTokenHandler, not JwtSecurityTokenHandler. The latter lives in
         // System.IdentityModel.Tokens.Jwt, which is only a transitive
