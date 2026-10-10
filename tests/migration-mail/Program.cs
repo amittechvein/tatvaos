@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 // ============================================================================
 //  GMAIL INTO OUR DOVECOT: labels to folders, once, and safe to repeat
 // ============================================================================
@@ -72,6 +73,24 @@ Same("empty path parts are dropped", GmailLabelMap.FolderName(" /x// y/ "), "x/y
 Same("UNREAD: not seen; STARRED: flagged", string.Join(",", GmailLabelMap.Place(["INBOX", "UNREAD", "STARRED"], names).Flags), @"\Flagged");
 Same("Message-ID read from the headers alone", GmailMailSource.MessageIdOf(Encoding.ASCII.GetBytes("Message-ID: <abc@x.test>\r\nSubject: s\r\n\r\nbody")), "abc@x.test");
 Same("no Message-ID: null, not empty", GmailMailSource.MessageIdOf(Encoding.ASCII.GetBytes("Subject: s\r\n\r\nbody")), null);
+
+Console.WriteLine("\n>> the startup report (decision 0019 §2: the system notices when the master login is left on)");
+{
+    var dir = Directory.CreateTempSubdirectory("mm-"); var pw = Path.Combine(dir.FullName, "master.password");
+    IConfiguration Cfg(string? p) => new ConfigurationBuilder()
+        .AddInMemoryCollection(new Dictionary<string, string?> { ["Migration:Imap:MasterPasswordFile"] = p }).Build();
+    Same("not configured: Information", MasterMailboxLogin.StartupReport(Cfg(null)).Level, LogLevel.Information);
+    Same("configured but absent: Information, and it says off", MasterMailboxLogin.StartupReport(Cfg(pw)).Message.Contains("off"), true);
+    File.WriteAllText(pw, "");
+    Same("empty file (migration-master.sh off): Information", MasterMailboxLogin.StartupReport(Cfg(pw)).Level, LogLevel.Information);
+    File.WriteAllText(pw, "not-a-real-secret"); File.SetLastWriteTimeUtc(pw, DateTime.UtcNow.AddDays(-4).AddMinutes(-5));
+    var r = MasterMailboxLogin.StartupReport(Cfg(pw));
+    Same("non-empty file: CRITICAL", r.Level, LogLevel.Critical);
+    Same("...naming the age", r.Message.Contains("(4 day(s))"), true);
+    Same("...and how to switch it off", r.Message.Contains("infra/scripts/migration-master.sh off"), true);
+    Same("...never the content", r.Message.Contains("not-a-real-secret"), false);
+    dir.Delete(true);
+}
 
 // ---- The real thing -----------------------------------------------------------
 using var probe = new ImapClient();

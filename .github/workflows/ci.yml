@@ -396,6 +396,8 @@ jobs:
       # fail-loud trap removed) each failed their own checks.
       - name: "Memory alert: thresholds, container kills, fails loudly (0014)"
         run: bash tests/memory-alert/test.sh
+      - name: "Migration-login alert: on, left on, off, fails loudly (0019 §2)"
+        run: bash tests/migration-master-alert/test.sh
 
       # Connect's tenantless paths, walked (decision 0007): every entry point
       # that starts with no session and finds the organisation some other way.

@@ -83,6 +83,22 @@ maildir), where Mr. Singh already leans; it is not needed for this.
 
 ---
 
+### The system notices when it is left on (Mr. Singh's addition, built 10 Oct 2026)
+A master login left on is the worst thing on the server to leave on, and
+switching it off lives in a person's memory. So:
+- **The API logs CRITICAL at every start** while its copy of the password
+  file is non-empty, naming since when (the file's mtime) and the command
+  that switches it off (`MasterMailboxLogin.ReportAtStartup`). Off or not
+  configured: one Information line, so the state is always in the log.
+- **`infra/scripts/migration-master-alert.sh`, from cron hourly**, reads one
+  fact from the Dovecot container - whether `master.passwd` is non-empty,
+  and its mtime; never the content. First seen on: one mail at once. On for
+  more than three days: a daily reminder until it is off. Off: nothing, and
+  the next on is a new crossing. Fails loudly, like `memory-alert.sh`.
+  Install once on the server: `MIGRATION_ALERT_TO=<off-server address>
+  ./infra/scripts/migration-master-alert.sh --install`.
+- The "prove from outside that it refuses" step stays mandatory at switch-on.
+
 ## §3 Calendar: whose calendar a meeting lands in
 
 Built in PR 426 as option A: a meeting lives in its ORGANISER's calendar;
