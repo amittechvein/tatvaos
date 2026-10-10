@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using TatvaOS.Api.Modules.Admin;
+using TatvaOS.Api.Modules.Auth.Endpoints;
+using TatvaOS.Api.Shared.Auth;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
 
@@ -29,9 +31,12 @@ namespace TatvaOS.Api.Modules.People;
 ///  FAILS CLOSED. Without People:IdentifierKey and People:IdentifierLookupKey
 ///  nothing is saved or revealed (503), and nothing falls back to another key.
 ///
-///  NOT YET HERE (0015 §5, for Mr. Singh): asking for two-step verification
-///  again before a reveal. It is the first step-up in TatvaOS - a sign-in
-///  change - so it waits for his ruling rather than being guessed at.
+///  PROVE IT IS YOU FIRST (Mr. Singh, 10 Oct 2026, ruling 1 on #448). A
+///  reveal needs an open window: POST /identifiers/unlock with the person's
+///  authenticator code (if they have one) or password (if not) opens ten
+///  minutes in this sign-in only. Each reveal inside it is still recorded.
+///  Someone who signs in by phone code only, with neither, is told to set a
+///  password first - there is nothing else to prove presence with.
 /// ─────────────────────────────────────────────────────────────────────────
 /// </summary>
 public static class IdentifierEndpoints
@@ -40,11 +45,13 @@ public static class IdentifierEndpoints
 
     public sealed record SetIdentifierRequest(string? Value, string? Ifsc);
     public sealed record RevealRequest(string? Reason, string? Note);
+    public sealed record UnlockRequest(string? CurrentPassword, string? MfaCode);
 
     public static void MapIdentifierEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/people").RequireAuthorization("User").WithTags("People");
-        g.MapGet("/identifiers/status", (PeopleAccess access) => Results.Ok(new { configured = access.IdentifiersConfigured }));
+        g.MapGet("/identifiers/status", StatusAsync);
+        g.MapPost("/identifiers/unlock", UnlockAsync);
         g.MapGet("/employees/{id:guid}/identifiers", ListAsync);
         g.MapPut("/employees/{id:guid}/identifiers/{kind}", SetAsync);
         g.MapPost("/employees/{id:guid}/identifiers/{kind}/verify", VerifyAsync);
@@ -58,6 +65,39 @@ public static class IdentifierEndpoints
     private static IResult Forbidden(string msg) => Results.Json(new { error = msg }, statusCode: StatusCodes.Status403Forbidden);
     private static IResult NotConfigured() => Results.Json(
         new { error = "Identity and bank details are not set up on this server yet." }, statusCode: StatusCodes.Status503ServiceUnavailable);
+
+    /// <summary>Configured, whether this sign-in is unlocked and until when, and what proof it would take.</summary>
+    private static async Task<IResult> StatusAsync(PeopleAccess access, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var me = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
+        return Results.Ok(new
+        {
+            configured = access.IdentifiersConfigured,
+            unlockedUntil = await access.UnlockedUntilAsync(ct),
+            proof = me is null ? "none" : ProofKind(me),
+        });
+    }
+
+    private static string ProofKind(User u) =>
+        u.MfaEnabled && u.MfaSecretRef is not null ? "mfa" : u.PasswordHash is not null ? "password" : "none";
+
+    private static async Task<IResult> UnlockAsync(
+        UnlockRequest req, PeopleAccess access, AppDbContext db, TenantContext tenant,
+        IPasswordHasher hasher, TotpService totp, AuditWriter audit, CancellationToken ct)
+    {
+        if (!access.IdentifiersConfigured) return NotConfigured();
+        if (access.SessionId is null)
+            return Results.Json(new { error = "Sign out and sign in again, then try once more." }, statusCode: StatusCodes.Status409Conflict);
+        var me = await db.Users.FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
+        if (me is null) return Results.Unauthorized();
+        // The same check, counter and lock as sign-in: code if they have MFA, password if not.
+        var unproven = await AuthEndpoints.RequireActorProofAsync(me, req.CurrentPassword, req.MfaCode, hasher, totp, db, ct);
+        if (unproven is not null) return unproven;
+        var proof = ProofKind(me);
+        var until = await access.UnlockAsync(proof, ct);
+        await audit.WriteAsync("identifier.unlocked", "user", me.Id.ToString(), after: new { proof, minutes = (int)PeopleAccess.UnlockWindow.TotalMinutes }, ct: ct, productCode: Product);
+        return Results.Ok(new { unlockedUntil = until });
+    }
 
     private static async Task<IResult> ListAsync(Guid id, PeopleAccess access, CancellationToken ct)
     {
@@ -126,6 +166,8 @@ public static class IdentifierEndpoints
             return Results.BadRequest(new { error = "Choose why you need to see it." });
         var note = req.Note?.Trim();
         if (note is { Length: > 300 }) return Results.BadRequest(new { error = "The note can be at most 300 characters." });
+        if (await access.UnlockedUntilAsync(ct) is null)
+            return Results.Json(new { error = "Confirm it is you first.", needsUnlock = true }, statusCode: StatusCodes.Status403Forbidden);
 
         var (value, outcome) = await access.RevealAsync(id, kind, req.Reason, string.IsNullOrEmpty(note) ? null : note, ct);
         http.Response.Headers.CacheControl = "no-store";

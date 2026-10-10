@@ -137,14 +137,26 @@ signin() {
     PG "UPDATE core.users SET login_otp_sent_at=NULL, login_otp_attempts=0 WHERE phone='$phone'" >/dev/null
     code=$(curl -s -X POST "$API/api/auth/otp/request" -H 'Content-Type: application/json' -d "{\"phone\":\"$phone\"}" | j "d.get('devCode') or ''")
     curl -s -X POST "$API/api/auth/otp/verify" -H 'Content-Type: application/json' \
-         -d "{\"phone\":\"$phone\",\"code\":\"$code\"}" | j "d.get('accessToken') or ''"
+         -d "{\"phone\":\"$phone\",\"code\":\"$code\"}" | j "(d.get('accessToken') or '')+' '+(d.get('refreshToken') or '')"
 }
+# signin gives "ACCESS REFRESH"; most calls want only the access token.
+access()  { printf '%s' "${1%% *}"; }
+refresh() { printf '%s' "${1#* }"; }
+totp() { SECRET="$1" "$PY" -c '
+import os, time, hmac, hashlib, base64, struct
+s = os.environ["SECRET"].upper(); s += "=" * (-len(s) % 8)
+h = hmac.new(base64.b32decode(s), struct.pack(">Q", int(time.time()) // 30), hashlib.sha1).digest()
+o = h[-1] & 15
+print("%06d" % ((struct.unpack(">I", h[o:o + 4])[0] & 0x7fffffff) % 1000000))' | tr -d "\r"; }
+# Seconds from now until an ISO time (the unlock window's end).
+secs_until() { "$PY" -c "import sys,datetime; t=datetime.datetime.fromisoformat(sys.argv[1].replace('Z','+00:00')); print(int((t-datetime.datetime.now(datetime.timezone.utc)).total_seconds()))" "$1" | tr -d '\r'; }
 PG "UPDATE core.users SET role='org_owner' WHERE email='amit@techvein.local' AND role='owner'" >/dev/null
 PG "UPDATE core.users SET role='org_admin' WHERE email='principal@abcschool.local' AND role='admin'" >/dev/null
 OWNER_ID=$(PG "SELECT id FROM core.users WHERE email='amit@techvein.local'")
 STAFF_ID=$(PG "SELECT id FROM core.users WHERE email='hr@techvein.local'")
 PRINCIPAL_ID=$(PG "SELECT id FROM core.users WHERE email='principal@abcschool.local'")
-OWNER=$(signin '+919999900001'); STAFF=$(signin '+919999900002'); OTHER=$(signin '+919999900003')
+OWNER=$(access "$(signin '+919999900001')"); STAFF_PAIR=$(signin '+919999900002'); STAFF=$(access "$STAFF_PAIR")
+OTHER=$(access "$(signin '+919999900003')")
 [ -n "$OWNER" ] && [ -n "$STAFF" ] && [ -n "$OTHER" ] && pass "three sign-ins" || { fail "sign-in failed"; exit 1; }
 FLOOR=$(PG "SELECT coalesce(max(id),0) FROM core.audit_logs")
 expect "the owner names themselves People HR (to add employees)" 200 "$(call "$OWNER" PUT /people/hr/$OWNER_ID)"
@@ -203,6 +215,32 @@ same "the organisation's data key is stored wrapped (60 bytes), not raw" \
 step "4. Reveal: named people and the employee, a reason, one row each (check 5)"
 expect "People HR who is not a named reader cannot reveal" 403 "$(call "$OWNER" POST /people/employees/$H/identifiers/pan/reveal '{"reason":"payroll_setup"}')" "names"
 expect "no reason" 400 "$(call "$STAFF" POST /people/employees/$H/identifiers/pan/reveal '{}')" "why"
+
+# ---- Prove it is you first (Mr. Singh, 10 Oct 2026, ruling 1 on #448) ------
+r=$(call "$STAFF" POST /people/employees/$H/identifiers/pan/reveal '{"reason":"own_record"}')
+expect "Hari, signed in but not proven present, cannot reveal even his own" 403 "$r" "confirm it is you"
+same "the refusal says what is needed" "$(jq_ "$(body "$r")" "str(d.get('needsUnlock'))")" "True"
+same "status: not unlocked, and Hari has nothing to prove it with yet" \
+    "$(jq_ "$(body "$(call "$STAFF" GET /people/identifiers/status)")" "str(d['unlockedUntil'])+'/'+d['proof']")" "None/none"
+expect "with no password and no authenticator, unlocking says how to get one" 403 "$(call "$STAFF" POST /people/identifiers/unlock '{}')" "set one"
+HARI_PW=$(jq_ "$(body "$(call "$OWNER" POST /org/users/$STAFF_ID/reset-password '{}')")" "d.get('temporaryPassword') or ''")
+[ -n "$HARI_PW" ] && pass "the owner gives Hari a password" || fail "could not give Hari a password"
+STAFF_PAIR=$(signin '+919999900002'); STAFF=$(access "$STAFF_PAIR")
+same "status: Hari now proves with his password" "$(jq_ "$(body "$(call "$STAFF" GET /people/identifiers/status)")" "d['proof']")" "password"
+expect "unlock with no password" 403 "$(call "$STAFF" POST /people/identifiers/unlock '{}')" "password"
+expect "unlock with the wrong password" 403 "$(call "$STAFF" POST /people/identifiers/unlock '{"currentPassword":"not-his-password"}')" "not your password"
+same "a wrong password counts against the sign-in lock, as at sign-in" \
+    "$(PG "SELECT failed_login_count FROM core.users WHERE id='$STAFF_ID'")" "1"
+r=$(call "$STAFF" POST /people/identifiers/unlock "{\"currentPassword\":\"$HARI_PW\"}")
+expect "unlock with his password" 200 "$r"
+left=$(secs_until "$(jq_ "$(body "$r")" "d['unlockedUntil']")")
+[ "${left:-0}" -ge 540 ] && [ "${left:-0}" -le 660 ] && pass "the window is about ten minutes  [${left}s]" \
+                                                    || fail "the window is not about ten minutes  [${left:-?}s]"
+same "recorded, with the kind of proof" \
+    "$(PG "SELECT after_state->>'proof' FROM core.audit_logs WHERE id > $FLOOR AND action='identifier.unlocked' ORDER BY id DESC LIMIT 1")" "password"
+same "the password is in no audit row" "$(PG "SELECT count(*) FROM core.audit_logs WHERE id > $FLOOR AND coalesce(after_state::text,'') LIKE '%$HARI_PW%'")" "0"
+HARI2=$(access "$(signin '+919999900002')")
+expect "Hari's OTHER sign-in (another device) is not unlocked by this one" 403 "$(call "$HARI2" POST /people/employees/$H/identifiers/pan/reveal '{"reason":"own_record"}')" "confirm it is you"
 r=$(curl -s -D "$SCRATCH/h.txt" -w '\n%{http_code}' -X POST "$API/api/people/employees/$H/identifiers/pan/reveal" -H 'Content-Type: application/json' -H "Authorization: Bearer $STAFF" -d '{"reason":"own_record"}')
 expect "Hari reveals his own PAN" 200 "$r"
 same "and gets the full value" "$(jq_ "$(body "$r")" "d['value']")" "$PAN"
@@ -210,6 +248,22 @@ has "the reveal is not cached" "$(cat "$SCRATCH/h.txt")" "no-store"
 expect "the owner names themselves a reader" 200 "$(call "$OWNER" PUT /people/identifier-readers/$OWNER_ID)"
 same "recorded as appointing themselves" \
     "$(PG "SELECT after_state->>'appointedThemselves' FROM core.audit_logs WHERE id > $FLOOR AND action='identifier_reader.added' ORDER BY id DESC LIMIT 1")" "true"
+expect "Hari's window never unlocks someone else: the reader is still refused" 403 \
+    "$(call "$OWNER" POST /people/employees/$H/identifiers/pan/reveal '{"reason":"payroll_setup"}')" "confirm it is you"
+# The owner has two-step verification: the code, not a password, is the proof.
+SECRET=$(jq_ "$(body "$(call "$OWNER" POST /auth/mfa/begin '{}')")" "d.get('secret') or ''")
+expect "the owner turns on two-step verification" 200 "$(call "$OWNER" POST /auth/mfa/confirm "{\"code\":\"$(totp "$SECRET")\"}")"
+same "status: the owner proves with a code" "$(jq_ "$(body "$(call "$OWNER" GET /people/identifiers/status)")" "d['proof']")" "mfa"
+r=$(call "$OWNER" POST /people/identifiers/unlock '{"currentPassword":"anything"}')
+same "with two-step on, a password alone is refused and the code asked for" "$(status "$r")/$(jq_ "$(body "$r")" "str(d.get('mfaRequired'))")" "403/True"
+expect "a wrong code" 403 "$(call "$OWNER" POST /people/identifiers/unlock '{"mfaCode":"000000"}')" "not accepted"
+# A code is spent once accepted (sign-in's rule): wait for a fresh 30-second step.
+sleep $(( 31 - $(date +%s) % 30 ))
+expect "the right code unlocks" 200 "$(call "$OWNER" POST /people/identifiers/unlock "{\"mfaCode\":\"$(totp "$SECRET")\"}")"
+same "recorded as proven by code" \
+    "$(PG "SELECT after_state->>'proof' FROM core.audit_logs WHERE id > $FLOOR AND action='identifier.unlocked' ORDER BY id DESC LIMIT 1")" "mfa"
+# Turned off again so later phone sign-ins in this file are not stopped at a code.
+PG "UPDATE core.users SET mfa_enabled=false, mfa_secret_ref=NULL, mfa_pending_secret=NULL WHERE id='$OWNER_ID'" >/dev/null
 for k in aadhaar pan bank_account; do
     expect "the reader reveals $k for payroll" 200 "$(call "$OWNER" POST /people/employees/$H/identifiers/$k/reveal '{"reason":"payroll_setup","note":"October run"}')"
 done
@@ -239,21 +293,33 @@ same "and is no longer verified" "$(PG "SELECT (verified_at IS NULL)::text FROM 
 expect "Yusuf leaves" 200 "$(call "$OWNER" POST /people/employees/$Y/exit '{"exitOn":"2026-10-31"}')"
 expect "nothing new is recorded for someone who has left" 409 "$(call "$OWNER" PUT /people/employees/$Y/identifiers/pan '{"value":"ZZZZZ9999Z"}')" "has left"
 
+step "6b. The window closes: after ten minutes, and at sign-out"
+expect "inside the window, a reveal works" 200 "$(call "$OWNER" POST /people/employees/$H/identifiers/pan/reveal '{"reason":"payroll_setup"}')"
+PG "UPDATE people.identifier_unlocks SET unlocked_at = now() - interval '11 minutes', expires_at = now() - interval '1 minute' WHERE user_id='$OWNER_ID'" >/dev/null
+expect "after it has expired, refused" 403 "$(call "$OWNER" POST /people/employees/$H/identifiers/pan/reveal '{"reason":"payroll_setup"}')" "confirm it is you"
+expect "Hari's window is still open" 200 "$(call "$STAFF" POST /people/employees/$H/identifiers/pan/reveal '{"reason":"own_record"}')"
+expect "Hari signs out" 200 "$(call "$STAFF" POST /auth/logout "{\"refreshToken\":\"$(refresh "$STAFF_PAIR")\"}")"
+expect "his access token still works for 15 minutes - but not to reveal" 403 \
+    "$(call "$STAFF" POST /people/employees/$H/identifiers/pan/reveal '{"reason":"own_record"}')" "confirm it is you"
+same "every reveal, in and out of windows, has its own read row" \
+    "$(PG "SELECT count(*) FROM people.identifier_reads WHERE employee_id='$H' AND outcome='shown'")" "6"
+
 step "7. Logs: Development logging prints every parameter - and no value (check 7)"
 grep -q "Executed DbCommand" "$LOG" && pass "the API log does record SQL commands (so this check can see)" \
                                     || fail "no SQL commands in the API log - this check would prove nothing"
 grep -qF -- "idt-Xena" "$LOG" && pass "and their parameter values (an employee's name is there)" \
                               || fail "parameter values are not logged - the 'never in the log' checks below would prove nothing"
-for v in "$AADHAAR" "$PAN" "$ACCT" "KQZPM4821S"; do
+for v in "$AADHAAR" "$PAN" "$ACCT" "KQZPM4821S" "$HARI_PW"; do
     same "the API log never contains …${v: -4}" "$(grep -c -- "$v" "$LOG")" "0"
 done
 
 step "8. Fail closed: the same API without its keys (check 4)"
 stop_api
 start_api without-keys
-OWNER=$(signin '+919999900001'); STAFF=$(signin '+919999900002')
+OWNER=$(access "$(signin '+919999900001')")
 same "status (signed in) says not configured" "$(jq_ "$(body "$(call "$OWNER" GET /people/identifiers/status)")" "str(d['configured'])")" "False"
 expect "saving is refused" 503 "$(call "$OWNER" PUT /people/employees/$H/identifiers/pan '{"value":"KQZPM4821T"}')" "not set up"
+expect "unlocking is refused" 503 "$(call "$OWNER" POST /people/identifiers/unlock '{}')" "not set up"
 expect "revealing is refused" 503 "$(call "$OWNER" POST /people/employees/$H/identifiers/pan/reveal '{"reason":"payroll_setup"}')" "not set up"
 same "and nothing changed in the table" "$(PG "SELECT last4 FROM people.employee_identifiers WHERE employee_id='$H' AND kind='pan'")" "821S"
 

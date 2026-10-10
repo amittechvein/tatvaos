@@ -467,6 +467,77 @@ public sealed class PeopleAccess(
         return true;
     }
 
+    // ---- Prove it is you before a reveal (Mr. Singh, 10 Oct 2026, ruling 1 on #448) ----
+    //
+    //  The person proves they are present (authenticator code if they have
+    //  one, password if not - AuthEndpoints.RequireActorProofAsync, the same
+    //  check and the same lock as sign-in), and that unlocks TEN MINUTES from
+    //  the proof - fixed, not sliding - for this person in this sign-in.
+    //  Counted only while (a) it has not expired, (b) it is the caller's own
+    //  row, and (c) the sign-in it names still has a live refresh token. So
+    //  sign-out, "sign out everywhere", a password change or a replay kill
+    //  ends it at once, and nothing has to remember to delete the row.
+
+    public static readonly TimeSpan UnlockWindow = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// The sign-in this request belongs to: the access token's "sid" claim
+    /// (the refresh-token family). Null for a token issued before the claim
+    /// existed - those expire within fifteen minutes and simply cannot unlock.
+    /// Read under both names in case the bearer handler maps inbound claims.
+    /// </summary>
+    public Guid? SessionId
+    {
+        get
+        {
+            var principal = http.HttpContext?.User;
+            var raw = principal?.FindFirst(Shared.Auth.TokenIssuer.SessionClaim)?.Value
+                   ?? principal?.FindFirst(ClaimTypes.Sid)?.Value;
+            return Guid.TryParse(raw, out var sid) ? sid : null;
+        }
+    }
+
+    /// <summary>When this person's window in this sign-in closes, or null if it is not open.</summary>
+    public async Task<DateTimeOffset?> UnlockedUntilAsync(CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid || SessionId is not Guid sid) return null;
+        var now = DateTimeOffset.UtcNow;
+        var row = await db.Set<IdentifierUnlock>().AsNoTracking()
+            .FirstOrDefaultAsync(u => u.UserId == uid && u.SessionId == sid && u.ExpiresAt > now, ct);
+        if (row is null) return null;
+        var signedIn = await db.RefreshTokens.AsNoTracking()
+            .AnyAsync(t => t.FamilyId == sid && t.UserId == uid && t.RevokedAt == null && t.ExpiresAt > now, ct);
+        return signedIn ? row.ExpiresAt : null;
+    }
+
+    /// <summary>Opens (or restarts) the window. Call only after the proof has passed.</summary>
+    public async Task<DateTimeOffset> UnlockAsync(string proof, CancellationToken ct)
+    {
+        var uid = tenant.UserId!.Value;
+        var sid = SessionId!.Value;
+        var now = DateTimeOffset.UtcNow;
+        var row = await db.Set<IdentifierUnlock>().FirstOrDefaultAsync(u => u.UserId == uid && u.SessionId == sid, ct);
+        if (row is null)
+        {
+            row = new IdentifierUnlock { TenantId = tenant.TenantId, UserId = uid, SessionId = sid };
+            db.Set<IdentifierUnlock>().Add(row);
+        }
+        row.Proof = proof;
+        row.UnlockedAt = now;
+        row.ExpiresAt = now.Add(UnlockWindow);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            // Two tabs proved at once and the other inserted first: theirs stands.
+            db.ChangeTracker.Clear();
+            return await UnlockedUntilAsync(ct) ?? throw new InvalidOperationException("Unlock row vanished after a concurrent insert.");
+        }
+        return row.ExpiresAt;
+    }
+
     /// <summary>
     /// Decrypts one value for display and writes ONE read row, shown or
     /// failed, in the same save - there is no path to the value without the

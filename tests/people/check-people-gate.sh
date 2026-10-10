@@ -21,10 +21,10 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 API="$ROOT/apps/api"
 GATE="Modules/People/PeopleAccess.cs"
 
-TYPES='(Employee|ReportingChange|PeopleHrMember|CorrectionRequest|IdentifierKey|EmployeeIdentifier|IdentifierReader|IdentifierRead)'
+TYPES='(Employee|ReportingChange|PeopleHrMember|CorrectionRequest|IdentifierKey|EmployeeIdentifier|IdentifierReader|IdentifierRead|IdentifierUnlock)'
 SET_RE="Set<[[:space:]]*(TatvaOS\\.Api\\.Modules\\.People\\.)?${TYPES}[[:space:]]*>"
 DBSET_RE="DbSet<[[:space:]]*(TatvaOS\\.Api\\.Modules\\.People\\.)?${TYPES}[[:space:]]*>"
-SQL_RE='people\.(employees|reporting_changes|hr_members|correction_requests|identifier_keys|employee_identifiers|identifier_readers|identifier_reads)\b'
+SQL_RE='people\.(employees|reporting_changes|hr_members|correction_requests|identifier_keys|employee_identifiers|identifier_readers|identifier_reads|identifier_unlocks)\b'
 PROP_RE='\.(Employees|ReportingChanges|PeopleHrMembers|HrMembers|CorrectionRequests)\b[^(]'
 
 fails=0

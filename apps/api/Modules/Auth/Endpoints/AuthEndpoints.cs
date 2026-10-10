@@ -610,8 +610,8 @@ public static class AuthEndpoints
         // to record would count as evidence that we had seen it before.
         var alertDevice = await IsNewDeviceAsync(db, user, http, ct);
 
-        var (refresh, _) = await IssueRefreshAsync(db, user, Guid.NewGuid(), http, ct);
-        var access = tokens.IssueAccessToken(user);
+        var (refresh, refreshRow) = await IssueRefreshAsync(db, user, Guid.NewGuid(), http, ct);
+        var access = tokens.IssueAccessToken(user, refreshRow.FamilyId);
         await db.SaveChangesAsync(ct);
 
         // Sent in the background, deliberately: a slow or dead SMTP server must
@@ -1064,7 +1064,7 @@ public static class AuthEndpoints
         // A NEW family, not a continuation of the app's. The browser and the
         // phone are separate sessions from here: signing the browser out, or a
         // reuse detection there, must not end the app's session as well.
-        var (refresh, _) = await IssueRefreshAsync(db, user, Guid.NewGuid(), http, ct);
+        var (refresh, refreshRow) = await IssueRefreshAsync(db, user, Guid.NewGuid(), http, ct);
         await db.SaveChangesAsync(ct);
 
         // Exactly what CompleteSignInAsync does, for the same reason: take a
@@ -1182,7 +1182,7 @@ public static class AuthEndpoints
         old.RevokeReason = "rotated";
         old.ReplacedBy = newRow.Id;
 
-        var access = tokens.IssueAccessToken(user);
+        var access = tokens.IssueAccessToken(user, newRow.FamilyId);
         await db.SaveChangesAsync(ct);
 
         return new RotateOutcome(null, 200, user, newToken, access);

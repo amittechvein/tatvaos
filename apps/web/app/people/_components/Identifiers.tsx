@@ -87,8 +87,8 @@ export function IdentifiersCard({ employeeId, own, isHr, exited }: {
         {error && <div className="p-4 pb-0"><Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert></div>}
         <p className="px-4 pt-4 text-[0.8125rem] text-ink-muted">
           Stored encrypted and shown masked. {own ? 'You can see your own in full; ' : ''}Only the people your
-          organisation names can see them in full, and each time is recorded with the reason
-          {own ? ' — you can see who, below' : ''}.
+          organisation names can see them in full, after confirming it is them with their password or authenticator
+          code, and each time is recorded with the reason{own ? ' — you can see who, below' : ''}.
         </p>
         <Table head={['', 'Number', 'Original seen', '']}>
           {KINDS.map((k) => {
@@ -195,10 +195,19 @@ function SetDialog({ employeeId, kind, replacing, onClose, onSaved }: {
   );
 }
 
+type Proof = 'mfa' | 'password' | 'none';
+
+// Prove it is you, then why (Mr. Singh, 10 Oct 2026, ruling 1 on #448). The
+// proof opens ten minutes in this sign-in; inside it, only the reason is
+// asked. The password or code goes to the API once and is cleared from state
+// straight after, pass or fail.
 function RevealDialog({ employeeId, kind, own, onClose }: {
   employeeId: string; kind: Kind; own: boolean; onClose: () => void | Promise<void>;
 }) {
   const { authedFetch } = useAuth();
+  const [stage, setStage] = useState<'checking' | 'unlock' | 'reason'>('checking');
+  const [proof, setProof] = useState<Proof>('password');
+  const [secret, setSecret] = useState('');
   const [reason, setReason] = useState(own ? 'own_record' : '');
   const [note, setNote] = useState('');
   const [value, setValue] = useState<string | null>(null);
@@ -209,6 +218,34 @@ function RevealDialog({ employeeId, kind, own, onClose }: {
   // The value goes when the dialog does, and after a minute regardless.
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); setValue(null); }, []);
 
+  useEffect(() => {
+    void (async () => {
+      const res = await authedFetch('/people/identifiers/status');
+      const body = await res.json().catch(() => ({}));
+      setProof((body.proof as Proof) ?? 'password');
+      setStage(body.unlockedUntil ? 'reason' : 'unlock');
+    })();
+  }, [authedFetch]);
+
+  async function unlock() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await authedFetch('/people/identifiers/unlock', {
+        method: 'POST',
+        body: JSON.stringify(proof === 'mfa' ? { mfaCode: secret.trim() } : { currentPassword: secret }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not confirm it is you.');
+      setStage('reason');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not confirm it is you.');
+    } finally {
+      setSecret('');
+      setBusy(false);
+    }
+  }
+
   async function reveal() {
     setBusy(true);
     setError(null);
@@ -217,6 +254,8 @@ function RevealDialog({ employeeId, kind, own, onClose }: {
         method: 'POST', cache: 'no-store', body: JSON.stringify({ reason, note: note.trim() || null }),
       });
       const body = await res.json().catch(() => ({}));
+      // The window closed while the dialog was open (ten minutes, or signed out elsewhere).
+      if (res.status === 403 && body.needsUnlock) { setStage('unlock'); throw new Error('Confirm it is you again.'); }
       if (!res.ok) throw new Error(body.error ?? 'Could not show it.');
       setValue(body.value);
       timer.current = setTimeout(() => setValue(null), HIDE_AFTER_MS);
@@ -228,20 +267,46 @@ function RevealDialog({ employeeId, kind, own, onClose }: {
   }
 
   const reasons = Object.entries(REASON_LABEL).filter(([k]) => own || k !== 'own_record');
+  const cancel = <Button variant="ghost" onClick={() => void onClose()} disabled={busy}>Cancel</Button>;
+  const footer = value
+    ? <Button variant="primary" onClick={() => void onClose()}>Hide and close</Button>
+    : stage === 'unlock'
+      ? <>{cancel}{proof !== 'none' && <Button variant="primary" onClick={() => void unlock()} disabled={busy || !secret}>Confirm</Button>}</>
+      : stage === 'reason'
+        ? <>{cancel}<Button variant="primary" onClick={() => void reveal()} disabled={busy || !reason}>Show</Button></>
+        : cancel;
+
   return (
-    <Modal title={`Show ${KIND_LABEL[kind]}`} onClose={() => void onClose()} busy={busy}
-           footer={value
-             ? <Button variant="primary" onClick={() => void onClose()}>Hide and close</Button>
-             : <>
-                 <Button variant="ghost" onClick={() => void onClose()} disabled={busy}>Cancel</Button>
-                 <Button variant="primary" onClick={() => void reveal()} disabled={busy || !reason}>Show</Button>
-               </>}>
+    <Modal title={`Show ${KIND_LABEL[kind]}`} onClose={() => void onClose()} busy={busy} footer={footer}>
       {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
       {value ? (
         <>
           <p className="mb-2 select-all font-mono text-lg tracking-wider">{value}</p>
           <p className="text-[0.8125rem] text-ink-muted">This has been recorded. It hides itself after a minute.</p>
         </>
+      ) : stage === 'checking' ? (
+        <p className="text-[0.8125rem] text-ink-muted">One moment…</p>
+      ) : stage === 'unlock' ? (
+        proof === 'none' ? (
+          <Alert tone="info">
+            To see a full number you confirm it is you with your password. You sign in with a phone code only, so set a
+            password on your account page first.
+          </Alert>
+        ) : (
+          <>
+            <p className="mb-3 text-[0.8125rem] text-ink-muted">
+              Confirm it is you. For the next ten minutes on this device you will only be asked why — and every number you
+              see is still recorded.
+            </p>
+            <Field label={proof === 'mfa' ? 'Code from your authenticator app' : 'Your password'} required>
+              <Input aria-label={proof === 'mfa' ? 'Authenticator code' : 'Your password'}
+                     type={proof === 'mfa' ? 'text' : 'password'} inputMode={proof === 'mfa' ? 'numeric' : undefined}
+                     autoComplete={proof === 'mfa' ? 'one-time-code' : 'current-password'}
+                     value={secret} onChange={(e) => setSecret(e.target.value)}
+                     onKeyDown={(e) => { if (e.key === 'Enter' && secret && !busy) void unlock(); }} />
+            </Field>
+          </>
+        )
       ) : (
         <>
           <p className="mb-3 text-[0.8125rem] text-ink-muted">

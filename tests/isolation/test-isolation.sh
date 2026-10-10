@@ -1170,14 +1170,18 @@ run_as postgres "INSERT INTO people.identifier_keys (tenant_id, version, wrapped
     INSERT INTO people.identifier_readers (tenant_id, user_id) VALUES
         ('$SCHOOL','d2222222-2222-2222-2222-222222222222') ON CONFLICT DO NOTHING;
     INSERT INTO people.identifier_reads (tenant_id, employee_id, kind, reader_id, reason, outcome) VALUES
-        ('$SCHOOL','0e000000-0000-0000-0000-0000000000b2','aadhaar','d2222222-2222-2222-2222-222222222222','payroll_setup','shown');" >/dev/null 2>&1
+        ('$SCHOOL','0e000000-0000-0000-0000-0000000000b2','aadhaar','d2222222-2222-2222-2222-222222222222','payroll_setup','shown');
+    INSERT INTO people.identifier_unlocks (tenant_id, user_id, session_id, proof, expires_at) VALUES
+        ('$SCHOOL','d2222222-2222-2222-2222-222222222222','0e000000-0000-0000-0000-00000000f00d','password', now() + interval '10 minutes')
+    ON CONFLICT DO NOTHING;" >/dev/null 2>&1
 fx=$(scalar_as postgres "SELECT (SELECT count(*) FROM people.identifier_keys WHERE tenant_id='$SCHOOL')
                              ||'/'||(SELECT count(*) FROM people.employee_identifiers WHERE tenant_id='$SCHOOL')
                              ||'/'||(SELECT count(*) FROM people.identifier_readers WHERE tenant_id='$SCHOOL')
-                             ||'/'||(SELECT count(*) FROM people.identifier_reads WHERE tenant_id='$SCHOOL')")
-case "$fx" in [1-9]*/[1-9]*/[1-9]*/[1-9]*) pass "fixture: ABC School has a key, an identifier, a reader and a read ($fx)" ;;
+                             ||'/'||(SELECT count(*) FROM people.identifier_reads WHERE tenant_id='$SCHOOL')
+                             ||'/'||(SELECT count(*) FROM people.identifier_unlocks WHERE tenant_id='$SCHOOL')")
+case "$fx" in [1-9]*/[1-9]*/[1-9]*/[1-9]*/[1-9]*) pass "fixture: ABC School has a key, an identifier, a reader, a read and an unlock ($fx)" ;;
               *) fail "fixture incomplete for identifiers ($fx) - the leak checks below would prove nothing" ;; esac
-for tbl in people.identifier_keys people.employee_identifiers people.identifier_readers people.identifier_reads; do
+for tbl in people.identifier_keys people.employee_identifiers people.identifier_readers people.identifier_reads people.identifier_unlocks; do
     leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM $tbl WHERE tenant_id = '$SCHOOL'")
     [ "${leak:-1}" -eq 0 ] && pass "$tbl: Techvein cannot see ABC School's rows" \
                            || fail "LEAK: $tbl shows $leak ABC School row(s) to Techvein"
@@ -1190,6 +1194,12 @@ forge_out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
 grep -qi 'row-level security' <<< "$forge_out" \
     && pass "Techvein cannot name a reader in ABC School (WITH CHECK)" \
     || fail "LEAK: Techvein named someone able to reveal ABC School's identifiers"
+forge_out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    INSERT INTO people.identifier_unlocks (tenant_id, user_id, session_id, proof, expires_at)
+    VALUES ('$SCHOOL','d2222222-2222-2222-2222-222222222222', gen_random_uuid(), 'password', now() + interval '5 minutes');" 2>&1)
+grep -qi 'row-level security' <<< "$forge_out" \
+    && pass "Techvein cannot open a reveal window for someone in ABC School (WITH CHECK)" \
+    || fail "LEAK: Techvein wrote an unlock window into ABC School"
 # Bypassing RLS, the composite foreign key refuses a Techvein identifier on
 # ABC School's employee.
 out=$(run_as postgres "INSERT INTO people.employee_identifiers (tenant_id, employee_id, kind, ciphertext, key_version, last4)
@@ -1204,6 +1214,7 @@ for stmt in "DELETE FROM people.employee_identifiers WHERE false" \
     run_as tatvaos_app "$stmt" >/dev/null 2>&1 && fail "app can still run: $stmt" || pass "app refused: $stmt"
 done
 run_as postgres "DELETE FROM people.identifier_readers WHERE tenant_id = '$SCHOOL' AND user_id = 'd2222222-2222-2222-2222-222222222222';
+    DELETE FROM people.identifier_unlocks WHERE tenant_id = '$SCHOOL' AND session_id = '0e000000-0000-0000-0000-00000000f00d';
     DELETE FROM people.employee_identifiers WHERE employee_id = '0e000000-0000-0000-0000-0000000000b2';
     DELETE FROM people.identifier_keys WHERE tenant_id = '$SCHOOL'
        AND NOT EXISTS (SELECT 1 FROM people.employee_identifiers i WHERE i.tenant_id = '$SCHOOL');" >/dev/null 2>&1

@@ -55,3 +55,19 @@ public sealed class IdentifierRead
     public string Outcome { get; set; } = "";
     public DateTimeOffset ReadAt { get; set; }
 }
+
+/// <summary>
+/// A person proved it was them (code or password) in one sign-in; reveals are
+/// allowed until <see cref="ExpiresAt"/> while that sign-in lives (Mr. Singh,
+/// 10 Oct 2026). <see cref="SessionId"/> is the refresh-token family.
+/// </summary>
+public sealed class IdentifierUnlock
+{
+    public Guid TenantId { get; set; }
+    public Guid UserId { get; set; }
+    public Guid SessionId { get; set; }
+    /// <summary>mfa or password.</summary>
+    public string Proof { get; set; } = "";
+    public DateTimeOffset UnlockedAt { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+}

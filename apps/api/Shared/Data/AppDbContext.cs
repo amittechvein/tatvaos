@@ -494,6 +494,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.People.IdentifierReader>().ToTable("identifier_readers", "people");
         b.Entity<TatvaOS.Api.Modules.People.IdentifierReader>().HasKey(r => new { r.TenantId, r.UserId });
         b.Entity<TatvaOS.Api.Modules.People.IdentifierReader>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.People.IdentifierUnlock>().ToTable("identifier_unlocks", "people");
+        b.Entity<TatvaOS.Api.Modules.People.IdentifierUnlock>().HasKey(u => new { u.TenantId, u.UserId, u.SessionId });
+        b.Entity<TatvaOS.Api.Modules.People.IdentifierUnlock>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.People.IdentifierRead>().ToTable("identifier_reads", "people");
         b.Entity<TatvaOS.Api.Modules.People.IdentifierRead>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.People.ReportingChange>().ToTable("reporting_changes", "people");
