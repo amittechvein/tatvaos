@@ -26,6 +26,8 @@ import { Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Kit';
 
 import { CommentHighlights, type CommentRange } from './extensions';
+import { FindHighlights } from './findReplace';
+import { FindBar } from './FindBar';
 import { documentExtensions } from './schema';
 import { MenuBar, Toolbar, applyStyle, type MenuItem } from './Toolbar';
 import { CommentsPanel } from './CommentsPanel';
@@ -214,6 +216,8 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
   const [sharing, setSharing] = useState(false);
   const [dialog, setDialog] = useState<'link' | 'page' | 'words' | 'keys' | 'nameVersion' | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The find bar: closed, finding (Ctrl+F) or finding and replacing (Ctrl+H).
+  const [finding, setFinding] = useState<null | 'find' | 'replace'>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -287,6 +291,7 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
       ...documentExtensions(loadImage),
       CharacterCount,
       Placeholder.configure({ placeholder: 'Start typing, or use TatvaOS AI to write a first draft…' }),
+      FindHighlights,
       CommentHighlights.configure({
         ranges: rangesFor,
         onClick: (tid) => { setActiveThread(tid); setPanel('comments'); },
@@ -616,6 +621,10 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
       if (mod && e.altKey && (e.key === 'm' || e.key === 'M')) { e.preventDefault(); startComment(); }
       else if (mod && !e.altKey && !e.shiftKey && (e.key === 'k' || e.key === 'K') && canEdit) { e.preventDefault(); setDialog('link'); }
       else if (mod && e.key === '\\' && canEdit && editor) { e.preventDefault(); editor.chain().focus().unsetAllMarks().run(); }
+      // Ctrl+F / Ctrl+H: the document's own find, as in Google Docs. The
+      // browser's find cannot see past the page on screen in a long document.
+      else if (mod && !e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); setFinding('find'); }
+      else if (mod && !e.altKey && !e.shiftKey && (e.key === 'h' || e.key === 'H')) { e.preventDefault(); setFinding(canEdit ? 'replace' : 'find'); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -668,6 +677,9 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
       { label: 'Redo', shortcut: 'Ctrl+Y', disabled: !canEdit, onClick: () => e.chain().focus().redo().run() },
       'sep',
       { label: 'Select all', shortcut: 'Ctrl+A', onClick: () => e.chain().focus().selectAll().run() },
+      'sep',
+      { label: 'Find', shortcut: 'Ctrl+F', onClick: () => setFinding('find') },
+      { label: 'Find and replace', shortcut: 'Ctrl+H', disabled: !canEdit, onClick: () => setFinding('replace') },
     ] },
     { name: 'View', items: [
       { label: 'Comments', onClick: () => setPanel('comments') },
@@ -839,7 +851,13 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
       )}
 
       {/* ---- body -------------------------------------------------------- */}
-      <div className="flex min-h-0 flex-1 border-t border-line">
+      <div className="relative flex min-h-0 flex-1 border-t border-line">
+        {/* The find bar sits over the body, not in the scrolling page, so it
+            stays put while the document scrolls to each match. */}
+        {finding && editor && (
+          <FindBar editor={editor} canEdit={canEdit && !preview} withReplace={finding === 'replace'}
+            onNotice={setNotice} onClose={() => { setFinding(null); editor.commands.focus(); }} />
+        )}
         <main className="scroll-thin min-w-0 flex-1 overflow-auto py-6">
           {preview && (
             <div className="sticky top-0 z-20 mx-auto mb-4 flex max-w-3xl flex-wrap items-center gap-3 rounded-lg bg-brand-50 px-4 py-2 text-sm text-brand-700 dark:bg-brand-600/25 dark:text-white shadow">
