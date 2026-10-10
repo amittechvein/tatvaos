@@ -7,6 +7,7 @@ import { Select } from '@/components/ui/Form';
 import { Field, Modal } from '@/components/ui/Modal';
 import { Alert, PageHeader } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
+import { IdentifierReadersCard } from '../_components/Identifiers';
 import { usePeopleAccess } from '../PeopleAccess';
 
 interface Member { userId: string; name: string | null; createdAt: string }
@@ -97,6 +98,8 @@ export default function PeopleHrPage() {
           </Table>
         )}
       </Card>
+
+      <IdentifierReadersCard canName={me.canNameHr} people={people} currentUserId={user?.id} />
 
       {adding && (
         <Modal title="Add to People HR" onClose={() => setAdding(false)} busy={busy}

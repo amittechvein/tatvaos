@@ -9,6 +9,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Alert, PageHeader } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
 import { bodyFrom, EmployeeForm } from '../_components/EmployeeForm';
+import { IdentifiersCard } from '../_components/Identifiers';
 import { STATUS_LABEL, TYPE_LABEL, usePeopleAccess, type Employee } from '../PeopleAccess';
 
 interface Change { fromManagerId: string | null; toManagerId: string | null; changedBy: string; changedAt: string }
@@ -122,6 +123,8 @@ export default function EmployeePage() {
           <div><dt className="text-ink-muted">Signs in to TatvaOS</dt><dd>{e.userId ? 'Yes' : 'No'}</dd></div>
         </dl>
       </Card>
+
+      <IdentifiersCard employeeId={e.id} own={me.employee?.id === e.id} isHr={me.isHr} exited={e.status === 'exited'} />
 
       {history && (
         <Card title="Who they report to, over time" padded={false}>

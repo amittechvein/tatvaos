@@ -119,7 +119,9 @@ public sealed class PeopleHrMember
 ///  ╚══════════════════════════════════════════════════════════════════════╝
 /// ─────────────────────────────────────────────────────────────────────────
 /// </summary>
-public sealed class PeopleAccess(AppDbContext db, TenantContext tenant, IHttpContextAccessor http)
+public sealed class PeopleAccess(
+    AppDbContext db, TenantContext tenant, IHttpContextAccessor http,
+    IdentifierCrypto crypto, ILogger<PeopleAccess> log)
 {
     private static readonly string[] AdminRoles = ["super_admin", "org_owner", "org_admin"];
     private bool? _hr;
@@ -365,6 +367,157 @@ public sealed class PeopleAccess(AppDbContext db, TenantContext tenant, IHttpCon
         row.UpdatedBy = tenant.UserId;
         row.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
+    }
+
+    // ============================================ identifiers (decision 0015)
+
+    /// <summary>Both identifier keys are set. False = every save and reveal is refused.</summary>
+    public bool IdentifiersConfigured => crypto.IsConfigured;
+
+    /// <summary>Named by the organisation to reveal full values (Amit, 10 Oct 2026).</summary>
+    public async Task<bool> IsIdentifierReaderAsync(CancellationToken ct) =>
+        tenant.UserId is Guid me && await db.Set<IdentifierReader>().AnyAsync(r => r.UserId == me, ct);
+
+    private async Task<bool> IsOwnRecordAsync(Guid employeeId, CancellationToken ct) =>
+        (await MeAsync(ct))?.Id == employeeId;
+
+    /// <summary>
+    /// Who sees the MASKED view (kind, last four, verified): People HR, the
+    /// named readers, and the employee. Not a manager - a manager's view of a
+    /// report never includes identity or bank details.
+    /// </summary>
+    public async Task<bool> CanSeeIdentifiersAsync(Guid employeeId, CancellationToken ct) =>
+        await ExistsAsync(employeeId, ct)
+        && (await IsHrAsync(ct) || await IsIdentifierReaderAsync(ct) || await IsOwnRecordAsync(employeeId, ct));
+
+    /// <summary>Who may REVEAL a full value: the named readers, and the employee for their own.</summary>
+    public async Task<bool> CanRevealAsync(Guid employeeId, CancellationToken ct) =>
+        await ExistsAsync(employeeId, ct)
+        && (await IsIdentifierReaderAsync(ct) || await IsOwnRecordAsync(employeeId, ct));
+
+    /// <summary>Who may enter or replace a value: People HR, and the employee for their own (pre-joining).</summary>
+    public async Task<bool> CanSetIdentifierAsync(Guid employeeId, CancellationToken ct) =>
+        await ExistsAsync(employeeId, ct) && (await IsHrAsync(ct) || await IsOwnRecordAsync(employeeId, ct));
+
+    public Task<List<EmployeeIdentifier>> MaskedIdentifiersAsync(Guid employeeId, CancellationToken ct) =>
+        db.Set<EmployeeIdentifier>().AsNoTracking().Where(i => i.EmployeeId == employeeId)
+            .OrderBy(i => i.Kind).ToListAsync(ct);
+
+    /// <summary>This organisation's newest data key, created (and wrapped) on first use.</summary>
+    private async Task<(short Version, byte[] Key)> DataKeyAsync(CancellationToken ct)
+    {
+        var row = await db.Set<IdentifierKey>().AsNoTracking().OrderByDescending(k => k.Version).FirstOrDefaultAsync(ct);
+        if (row is null)
+        {
+            var fresh = IdentifierCrypto.NewDataKey();
+            db.Set<IdentifierKey>().Add(new IdentifierKey
+            {
+                TenantId = tenant.TenantId, Version = 1, CreatedAt = DateTimeOffset.UtcNow,
+                WrappedKey = crypto.WrapDataKey(tenant.TenantId, 1, fresh),
+            });
+            try { await db.SaveChangesAsync(ct); }
+            catch (DbUpdateException)
+            {
+                // Two first saves at once: the other made version 1. Use theirs.
+                db.ChangeTracker.Clear();
+            }
+            row = await db.Set<IdentifierKey>().AsNoTracking().OrderByDescending(k => k.Version).FirstAsync(ct);
+        }
+        var key = crypto.UnwrapDataKey(tenant.TenantId, row.Version, row.WrappedKey)
+                  ?? throw new InvalidOperationException("This organisation's identifier data key will not open with the configured master key.");
+        return (row.Version, key);
+    }
+
+    /// <summary>
+    /// Encrypts and stores (or replaces) one identifier. The value is sealed
+    /// here, before Entity Framework sees it: no parameter log can hold it.
+    /// Replacing clears "verified": HR must see the new original.
+    /// </summary>
+    public async Task SaveIdentifierAsync(Guid employeeId, string kind, string value, string last4, string? ifsc, CancellationToken ct)
+    {
+        var (version, key) = await DataKeyAsync(ct);
+        var sealedValue = crypto.Encrypt(key, tenant.TenantId, employeeId, kind, value);
+        var hash = kind == "aadhaar" ? null : crypto.LookupHash(tenant.TenantId, kind, value);
+        var now = DateTimeOffset.UtcNow;
+        var row = await db.Set<EmployeeIdentifier>().FirstOrDefaultAsync(i => i.EmployeeId == employeeId && i.Kind == kind, ct);
+        if (row is null)
+        {
+            row = new EmployeeIdentifier { TenantId = tenant.TenantId, EmployeeId = employeeId, Kind = kind, CreatedAt = now, CreatedBy = tenant.UserId };
+            db.Set<EmployeeIdentifier>().Add(row);
+        }
+        row.Ciphertext = sealedValue;
+        row.KeyVersion = version;
+        row.Last4 = last4;
+        row.LookupHash = hash;
+        row.Ifsc = kind == "bank_account" ? ifsc : null;
+        row.VerifiedAt = null;
+        row.VerifiedBy = null;
+        row.UpdatedAt = now;
+        row.UpdatedBy = tenant.UserId;
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<bool> MarkVerifiedAsync(Guid employeeId, string kind, CancellationToken ct)
+    {
+        var row = await db.Set<EmployeeIdentifier>().FirstOrDefaultAsync(i => i.EmployeeId == employeeId && i.Kind == kind, ct);
+        if (row is null) return false;
+        row.VerifiedAt = DateTimeOffset.UtcNow;
+        row.VerifiedBy = tenant.UserId;
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    /// <summary>
+    /// Decrypts one value for display and writes ONE read row, shown or
+    /// failed, in the same save - there is no path to the value without the
+    /// row. A value that will not open (a moved ciphertext, a wrong key) is
+    /// logged at Error and audited as failed; it is never shown as empty.
+    /// Null = nothing stored, or it failed (the caller can tell from Outcome).
+    /// </summary>
+    public async Task<(string? Value, string Outcome)> RevealAsync(
+        Guid employeeId, string kind, string reason, string? note, CancellationToken ct)
+    {
+        var row = await db.Set<EmployeeIdentifier>().AsNoTracking().FirstOrDefaultAsync(i => i.EmployeeId == employeeId && i.Kind == kind, ct);
+        if (row is null) return (null, "absent");
+        var keyRow = await db.Set<IdentifierKey>().AsNoTracking().FirstOrDefaultAsync(k => k.Version == row.KeyVersion, ct);
+        var key = keyRow is null ? null : crypto.UnwrapDataKey(tenant.TenantId, keyRow.Version, keyRow.WrappedKey);
+        var value = key is null ? null : crypto.Decrypt(key, tenant.TenantId, employeeId, kind, row.Ciphertext);
+        var outcome = value is null ? "failed" : "shown";
+        if (value is null)
+            log.LogError("Identifier would not decrypt: tenant {Tenant}, employee {Employee}, kind {Kind}, key version {Version}. "
+                + "A moved ciphertext or a wrong master key. Audited as failed; nothing shown.",
+                tenant.TenantId, employeeId, kind, row.KeyVersion);
+        db.Set<IdentifierRead>().Add(new IdentifierRead
+        {
+            TenantId = tenant.TenantId, EmployeeId = employeeId, Kind = kind, ReaderId = tenant.UserId!.Value,
+            Reason = reason, Note = note, Outcome = outcome, ReadAt = DateTimeOffset.UtcNow,
+        });
+        await db.SaveChangesAsync(ct);
+        return (value, outcome);
+    }
+
+    public Task<List<IdentifierRead>> IdentifierReadsAsync(Guid employeeId, CancellationToken ct) =>
+        db.Set<IdentifierRead>().AsNoTracking().Where(r => r.EmployeeId == employeeId)
+            .OrderByDescending(r => r.ReadAt).Take(500).ToListAsync(ct);
+
+    public Task<List<IdentifierReader>> IdentifierReadersAsync(CancellationToken ct) =>
+        db.Set<IdentifierReader>().AsNoTracking().OrderBy(r => r.CreatedAt).ToListAsync(ct);
+
+    public async Task<bool> AddIdentifierReaderAsync(Guid userId, CancellationToken ct)
+    {
+        if (await db.Set<IdentifierReader>().AnyAsync(r => r.UserId == userId, ct)) return false;
+        db.Set<IdentifierReader>().Add(new IdentifierReader { TenantId = tenant.TenantId, UserId = userId, AddedBy = tenant.UserId, CreatedAt = DateTimeOffset.UtcNow });
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    public async Task<bool> RemoveIdentifierReaderAsync(Guid userId, CancellationToken ct)
+    {
+        var row = await db.Set<IdentifierReader>().FirstOrDefaultAsync(r => r.UserId == userId, ct);
+        if (row is null) return false;
+        db.Set<IdentifierReader>().Remove(row);
+        await db.SaveChangesAsync(ct);
+        return true;
     }
 
     /// <summary>

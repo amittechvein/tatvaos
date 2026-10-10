@@ -364,6 +364,15 @@ jobs:
       - name: "People: employee records and reporting lines"
         run: bash tests/people/test-employees.sh
 
+      # People: Aadhaar, PAN and bank details (decision 0015, Amit's answers
+      # of 10 Oct 2026). Nothing stored in the clear (text, hex, base64), a
+      # ciphertext moved to another person will not open, no keys = 503, one
+      # read row per reveal and never a value in it, no value in the API log
+      # under EF parameter logging, managers never see any of it. Starts its
+      # own API on :5115, twice. HELD FOR MR. SINGH with the PR that adds it.
+      - name: "People: Aadhaar, PAN and bank details"
+        run: bash tests/people/test-identifiers.sh
+
       # The development-only operator sign-in, against the BUILT API in six
       # configurations: refuses to boot as Production/Staging with the switch
       # on; not mapped with it off (CI's own Development included); a real

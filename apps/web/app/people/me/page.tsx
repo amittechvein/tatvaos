@@ -8,6 +8,7 @@ import { Select, Textarea } from '@/components/ui/Form';
 import { Alert, PageHeader } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
 import { FIELD_LABEL } from '../_components/fields';
+import { IdentifiersCard } from '../_components/Identifiers';
 import { STATUS_LABEL, TYPE_LABEL, usePeopleAccess, type Employee } from '../PeopleAccess';
 
 interface MyRecord {
@@ -50,7 +51,7 @@ const fmt = (iso: string) => new Date(iso).toLocaleDateString('en-IN', { day: 'n
 // ============================================================================
 export default function MyRecordPage() {
   const { authedFetch } = useAuth();
-  const { reload } = usePeopleAccess();
+  const { me, reload } = usePeopleAccess();
   const [rec, setRec] = useState<MyRecord | null | 'none'>(null);
   const [mine, setMine] = useState<Correction[]>([]);
   const [asking, setAsking] = useState(false);
@@ -126,6 +127,8 @@ export default function MyRecordPage() {
           {rec.exitOn && row('Last day', fmt(rec.exitOn))}
         </dl>
       </Card>
+
+      <IdentifiersCard employeeId={rec.id} own isHr={me.isHr} exited={left} />
 
       <Card title="My requests to HR" padded={false}>
         {mine.length === 0 ? (
