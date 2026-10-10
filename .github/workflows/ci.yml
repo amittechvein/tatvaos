@@ -516,6 +516,15 @@ jobs:
         working-directory: apps/render
         run: node --import ./spike/register.mjs spike/gate.mjs
 
+      # The editor's find and replace (components/docs/findReplace.ts, 10 Oct
+      # 2026): the search over real ProseMirror documents — a word across bold
+      # is one match, nothing runs across a paragraph, an image or a break,
+      # Indian scripts' whole words, replace all in place. Calibrated: with
+      # images skipped instead of walled off, "pic[image]nic" matched (red).
+      # Until this step no tests/docs/*.test.ts file ran in CI at all.
+      - name: "Docs: find and replace (the search, the highlights, replace all)"
+        run: node --import ./tests/sheets/register.mjs --test tests/docs/find-replace.test.ts
+
       - name: Build the API
         run: dotnet build -c Release apps/api/TatvaOS.Api.csproj
 

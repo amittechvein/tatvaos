@@ -171,3 +171,7 @@
   .collaboration-carets__caret, .collaboration-carets__label { display: none !important; }
   .ProseMirror-gapcursor, .ProseMirror-selectednode { outline: none !important; }
 }
+
+/* ---- find and replace (findReplace.ts) ---------------------------------- */
+.docs-content .docs-find { background: rgb(var(--brand-200) / 0.7); border-radius: 2px; }
+.docs-content .docs-find-current { background: rgb(var(--brand-500) / 0.45); outline: 1px solid rgb(var(--brand-600)); }
