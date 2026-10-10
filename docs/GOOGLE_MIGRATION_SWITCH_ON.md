@@ -81,8 +81,14 @@ range before going on.
 
 ## 4. The runner
 
-`Migration__Runner=on` for the API (in `infra/docker/.env`, recreate the
-container). Its log says `Migration job runner on, as <owner>`.
+`MIGRATION_RUNNER=on` in `infra/docker/.env`, then recreate the API container
+(compose passes it as `Migration__Runner`). Its log says
+`Migration job runner on, as <owner>`.
+
+Mail sign-in goes over **STARTTLS** to Dovecot (production refuses plaintext
+sign-in), the certificate checked against `MIGRATION_IMAP_TLS_NAME`, default
+`mail.tatvaos.com` - the name on the certificate deploy.sh copies from Caddy.
+Set it in `.env` only if that certificate is for another name.
 
 ## 5. The first customer: Techvein, one person
 
@@ -103,7 +109,7 @@ In `/org/migration`, as Techvein's owner:
 infra/scripts/migration-master.sh off
 ```
 
-Also: `Migration__Runner=off` (recreate the API), and "Remove access" in
+Also: `MIGRATION_RUNNER=off` in `.env` (recreate the API), and "Remove access" in
 `/org/migration`, which cancels unfinished jobs and tells the admin to delete
 the delegation entry in Google's Admin console. Deleting the key file stops
 all Google access for every organisation at once.
