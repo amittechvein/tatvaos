@@ -152,6 +152,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     // ---- Google Workspace migration. RLS forced; 20261009-migration-jobs.sql
     public DbSet<MigrationJob> MigrationJobs => Set<MigrationJob>();
     public DbSet<MigrationItem> MigrationItems => Set<MigrationItem>();
+    public DbSet<MigrationGrant> MigrationGrants => Set<MigrationGrant>();
 
     // ---- Connect. RLS enabled and forced; see 20260901-connect.sql -------
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeeting> ConnectMeetings
@@ -358,6 +359,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<MigrationItem>().ToTable("items", "migration");
         b.Entity<MigrationItem>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<MigrationItem>().Property(i => i.Id).UseIdentityAlwaysColumn();
+        b.Entity<MigrationGrant>().ToTable("grants", "migration");
+        b.Entity<MigrationGrant>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
 
         // ---- Connect -----------------------------------------------------
         // Explicit schema on every one, like everything else here: a default

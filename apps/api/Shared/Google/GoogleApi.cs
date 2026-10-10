@@ -170,6 +170,13 @@ public sealed class GoogleEndpoints
     public Uri Directory { get; init; } = new("https://admin.googleapis.com/admin/directory/v1/");
     public Uri People { get; init; } = new("https://people.googleapis.com/v1/");
     public Uri Calendar { get; init; } = new("https://www.googleapis.com/calendar/v3/");
+
+    /// <summary>Every API under one base - a fake Google for tests, never production (Program.cs).</summary>
+    public static GoogleEndpoints Under(Uri b) => new()
+    {
+        Gmail = new(b, "gmail/v1/"), Drive = new(b, "drive/v3/"), Directory = new(b, "admin/directory/v1/"),
+        People = new(b, "v1/"), Calendar = new(b, "calendar/v3/"),
+    };
 }
 
 /// <summary>A Google API call that failed for good. Never carries a token.</summary>
