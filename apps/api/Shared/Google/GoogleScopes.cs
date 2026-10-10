@@ -19,12 +19,18 @@ public static class GoogleScopes
     public const string GmailReadOnly    = "https://www.googleapis.com/auth/gmail.readonly";
     public const string CalendarReadOnly = "https://www.googleapis.com/auth/calendar.readonly";
     public const string ContactsReadOnly = "https://www.googleapis.com/auth/contacts.readonly";
+    /// <summary>
+    /// Gmail's "Other contacts" - addresses it saved from mail. ADDED 9 Oct
+    /// 2026 for review (decision 0019's PR): one more read-only scope every
+    /// customer is asked to authorise.
+    /// </summary>
+    public const string OtherContactsReadOnly = "https://www.googleapis.com/auth/contacts.other.readonly";
     public const string DriveReadOnly    = "https://www.googleapis.com/auth/drive.readonly";
     /// <summary>To list the people in the customer's domain, to know whom to migrate.</summary>
     public const string DirectoryUsersReadOnly = "https://www.googleapis.com/auth/admin.directory.user.readonly";
 
     public static readonly IReadOnlySet<string> Allowed = new HashSet<string>(StringComparer.Ordinal)
     {
-        GmailReadOnly, CalendarReadOnly, ContactsReadOnly, DriveReadOnly, DirectoryUsersReadOnly,
+        GmailReadOnly, CalendarReadOnly, ContactsReadOnly, OtherContactsReadOnly, DriveReadOnly, DirectoryUsersReadOnly,
     };
 }

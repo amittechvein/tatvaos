@@ -27,6 +27,15 @@
 # bridge's gateway address; if that address is inside the allowed range, the
 # allow-list is not doing its job and only the password is. Measure it.
 #
+# WHY `doveadm reload`, MEASURED 9 Oct 2026: Dovecot re-reads a passwd-file
+# at most once a second. Without the reload, an "off" landing in the same
+# second as a recent login was not seen - a master login still WORKED right
+# after "off" (2 of 3 trials), refused only a second later. There is no auth
+# cache to flush (the old `doveadm auth cache flush || true` flushed 0 entries
+# and hid that). The reload restarts the auth processes, so the file is read
+# again at once; it fails loudly, never `|| true`.
+# tests/migration-mail/test-master-login.sh checks the refusal IMMEDIATELY.
+#
 # Turn it OFF when no migration is running. Off = the file is empty, which
 # Dovecot reads as "no master user"; the file itself always stays (see the
 # master passdb note in local/dovecot/dovecot.conf for why).
@@ -51,7 +60,7 @@ on)
         chown root:dovecot "$DIR/master.passwd.new"; chmod 0640 "$DIR/master.passwd.new"
         mv "$DIR/master.password.new" "$DIR/master.password"
         mv "$DIR/master.passwd.new" "$DIR/master.passwd"
-        doveadm auth cache flush >/dev/null 2>&1 || true
+        doveadm reload
     '
     echo "migration master login: ON (allowed from $NETS) - turn it off when the migration is done"
     ;;
@@ -61,7 +70,7 @@ off)
         DIR=/etc/dovecot/migration
         : > "$DIR/master.passwd"
         rm -f "$DIR/master.password"
-        doveadm auth cache flush >/dev/null 2>&1 || true
+        doveadm reload
     '
     echo "migration master login: off"
     ;;

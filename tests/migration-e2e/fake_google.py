@@ -83,10 +83,16 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"users": [{"primaryEmail": e} for e in PEOPLE]})
         if p == "/drive/v3/about":
             return self.send(200, {"storageQuota": {"usage": str(3 * 1024**2), "usageInDrive": str(1024**2), "usageInDriveTrash": "0"}})
+        if p == "/drive/v3/drives":
+            return self.send(200, {"drives": []})
         if p == "/drive/v3/files":
             return self.send(200, {"files": []})
+        if p == "/calendar/v3/users/me/calendarList":
+            return self.send(200, {"items": [{"id": sub, "summary": sub, "primary": True}]})
         if p == "/calendar/v3/calendars/primary/events":
             return self.send(200, {"items": [], "timeZone": "Asia/Kolkata"})
+        if p == "/v1/otherContacts":
+            return self.send(200, {"otherContacts": []})
         if p == "/v1/contactGroups":
             return self.send(200, {"contactGroups": []})
         if p == "/v1/people/me/connections":

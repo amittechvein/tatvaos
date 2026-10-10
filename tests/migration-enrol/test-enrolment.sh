@@ -59,7 +59,8 @@ EMP=$(signin d1111111-1111-1111-1111-111111111112 +919999900423 employee)
 
 get() { curl -s -H "Authorization: Bearer $1" "$API/api/org/migration/people"; }
 code() { curl -s -o /dev/null -w "%{http_code}" ${1:+-H "Authorization: Bearer $1"} "$API/api/org/migration/people"; }
-same "Techvein's owner: its five enrolled addresses" "$(get "$TV" | J "len(d['people'])")" "5"
+same "Techvein's owner: its five enrolled people" "$(get "$TV" | J "d['totals']['people']")" "5"
+same "...and its two shared drives, counted apart" "$(get "$TV" | J "d['totals']['sharedDrives']")" "2"
 same "...three matched to a TatvaOS person" "$(get "$TV" | J "d['totals']['matched']")" "3"
 same "...amit's mail pending, contacts planned" \
     "$(get "$TV" | J "','.join(t['dataType']+'='+t['state'] for p in d['people'] if p['googleAddress']=='amit@techvein.local' for t in p['types'])")" \

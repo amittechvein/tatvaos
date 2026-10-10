@@ -120,7 +120,7 @@ OWNER=$(signin $AMIT +919999900431 org_owner); EMP=$(signin $HR +919999900432 em
 step "setup"
 r=$(call GET /setup "$OWNER")
 same "configured, with our client ID" "$(bd "$r" | J "str(d['configured']) + ' ' + str(d['clientId'])")" "True 1234567890"
-same "...and the five read-only scopes to authorise" "$(bd "$r" | J "len(d['scopes'])")" "5"
+same "...and the six read-only scopes to authorise" "$(bd "$r" | J "len(d['scopes'])")" "6"
 same "an employee is refused" "$(st "$(call GET /setup "$EMP")")" "403"
 
 step "grant"

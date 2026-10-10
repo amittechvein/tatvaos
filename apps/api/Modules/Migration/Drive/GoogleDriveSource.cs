@@ -35,7 +35,10 @@ namespace TatvaOS.Api.Modules.Migration.Drive;
 ///  SAFE TO REPEAT: a file already in its folder with the same name and size
 ///  is skipped. The ledger stops everything else.
 ///
-///  NOT REGISTERED in Program.cs (section 9).
+///  SHARED DRIVES (source_user "shareddrive:<id>:<name>") are the
+///  organisation's: read as one of the drive's members, saved by the admin
+///  who enrolled them into organisational folders under "Google Shared
+///  Drives/<name>", against the organisation's Space allocation.
 /// ─────────────────────────────────────────────────────────────────────────
 /// </summary>
 public sealed class GoogleDriveSource(
@@ -45,6 +48,19 @@ public sealed class GoogleDriveSource(
     IConfiguration config) : IMigrationSource
 {
     public const string RootFolder = "Google Drive";
+    /// <summary>Where SHARED drives land: organisational, one folder per drive.</summary>
+    public const string SharedRootFolder = "Google Shared Drives";
+
+    /// <summary>
+    /// A shared drive's job: source_user "shareddrive:&lt;drive id&gt;:&lt;name&gt;",
+    /// target the admin who enrolled it (MigrationEnrolment.EnrolSharedDrivesAsync).
+    /// </summary>
+    public static (string Id, string Name)? SharedDrive(MigrationJobView job) =>
+        job.SourceUser.StartsWith("shareddrive:", StringComparison.Ordinal)
+        && job.SourceUser.Split(':', 3) is [_, var id, var name] ? (id, name) : null;
+
+    private sealed record DriveItem(GoogleDriveFile File, string ActAs);
+    private readonly ConcurrentDictionary<Guid, string> _members = new();
     public string Source => "google_workspace";
     public string DataType => "drive";
 
@@ -57,14 +73,47 @@ public sealed class GoogleDriveSource(
     public async Task<MigrationPage> FetchAsync(MigrationJobView job, CancellationToken ct)
     {
         var account = await AccountAsync(job, ct);
-        var page = await google.ListOwnedFilesAsync(account, job.SourceUser, job.Cursor, PageSize, ct);
-        var items = page.Files.Select(f => new MigrationSourceItem(f.Id, null, f)).ToList();
+        GoogleDrivePage page;
+        string actAs;
+        if (SharedDrive(job) is { } drive)
+        {
+            actAs = await MemberAsync(account, job, drive.Id, ct);
+            page = await google.ListSharedDriveFilesAsync(account, actAs, drive.Id, job.Cursor, PageSize, ct);
+        }
+        else
+        {
+            actAs = job.SourceUser;
+            page = await google.ListOwnedFilesAsync(account, job.SourceUser, job.Cursor, PageSize, ct);
+        }
+        var items = page.Files.Select(f => new MigrationSourceItem(f.Id, null, new DriveItem(f, actAs))).ToList();
         return new MigrationPage(items, page.NextPageToken, IsLast: page.NextPageToken is null);
+    }
+
+    /// <summary>
+    /// A shared drive is read as one of its MEMBERS: the grant's admin can list
+    /// the drive (useDomainAdminAccess) but not necessarily open its files.
+    /// Asked once per job.
+    /// </summary>
+    private async Task<string> MemberAsync(GoogleServiceAccount account, MigrationJobView job, string driveId, CancellationToken ct)
+    {
+        if (_members.TryGetValue(job.Id, out var known)) return known;
+        await using var scope = scopes.CreateAsyncScope();
+        scope.ServiceProvider.GetRequiredService<TenantContext>().EnterAnonymousScope(job.TenantId, "system");
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.SyncTenantAsync(ct);
+        var admin = await db.MigrationGrants.AsNoTracking()
+            .Where(g => g.Source == "google_workspace" && g.RevokedAt == null).Select(g => g.GoogleAdmin).FirstOrDefaultAsync(ct)
+            ?? throw new InvalidOperationException("this organisation has no active Google grant");
+        var member = await google.MemberToReadAsAsync(account, admin, driveId, ct)
+                     ?? throw new InvalidOperationException("nobody in your Google domain is a member of this shared drive, so it cannot be read");
+        _members[job.Id] = member;
+        return member;
     }
 
     public async Task<MigrationWriteResult> WriteAsync(MigrationJobView job, MigrationSourceItem item, CancellationToken ct)
     {
-        var file = (GoogleDriveFile)item.Payload!;
+        var (file, actAs) = (DriveItem)item.Payload!;
+        var shared = SharedDrive(job);
         if (file.MimeType.StartsWith("application/vnd.google-apps.", StringComparison.Ordinal))
             return MigrationWriteResult.Skipped(file.MimeType switch
             {
@@ -74,20 +123,25 @@ public sealed class GoogleDriveSource(
             });
 
         var account = await AccountAsync(job, ct);
-        var path = await PathAsync(account, job, file, ct);
+        var path = await PathAsync(account, job, actAs, file, ct);
 
         await using var scope = scopes.CreateAsyncScope();
         var tenant = scope.ServiceProvider.GetRequiredService<TenantContext>();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        tenant.Set(job.TenantId, job.TargetUserId, "employee");
+        // A shared drive's files are the organisation's: saved by the admin who
+        // enrolled the drive, into organisational folders, against the
+        // organisation's Space allocation (the gateway decides by the folder).
+        tenant.Set(job.TenantId, job.TargetUserId, shared is null ? "employee" : "org_admin");
         await db.SyncTenantAsync(ct);
 
-        var folderId = await EnsureFoldersAsync(db, job, [RootFolder, .. path], ct);
+        var folderId = shared is { } sd
+            ? await EnsureFoldersAsync(db, job, [SharedRootFolder, sd.Name, .. path], organisational: true, ct)
+            : await EnsureFoldersAsync(db, job, [RootFolder, .. path], organisational: false, ct);
         if (file.Size is long size && await db.SpaceFiles.AnyAsync(
                 f => f.FolderId == folderId && f.Name == file.Name && f.SizeBytes == size && f.DeletedAt == null, ct))
             return MigrationWriteResult.Skipped("already in Space");
 
-        using var body = await google.DownloadAsync(account, job.SourceUser, file.Id, ct);
+        using var body = await google.DownloadAsync(account, actAs, file.Id, ct);
         var gateway = scope.ServiceProvider.GetRequiredService<SpaceContentGateway>();
         var saved = await gateway.SaveAsync(body.Stream, file.Name, file.MimeType,
             file.Size ?? body.Length ?? 0, folderId, ct: ct);
@@ -97,7 +151,7 @@ public sealed class GoogleDriveSource(
     }
 
     /// <summary>The folder names from My Drive down to the file's folder (My Drive itself excluded).</summary>
-    private async Task<List<string>> PathAsync(GoogleServiceAccount account, MigrationJobView job, GoogleDriveFile file, CancellationToken ct)
+    private async Task<List<string>> PathAsync(GoogleServiceAccount account, MigrationJobView job, string actAs, GoogleDriveFile file, CancellationToken ct)
     {
         var names = new List<string>();
         var parent = file.Parents.FirstOrDefault();
@@ -105,19 +159,23 @@ public sealed class GoogleDriveSource(
         {
             if (!_folders.TryGetValue((job.Id, parent), out var f))
             {
-                var meta = await google.GetAsync(account, job.SourceUser, parent, ct);
+                var meta = await google.GetAsync(account, actAs, parent, ct);
                 f = (meta.Name, meta.Parents.FirstOrDefault());
                 _folders[(job.Id, parent)] = f;
             }
-            if (f.Parent is null) break;   // the top: My Drive, which is RootFolder here
+            if (f.Parent is null) break;   // the top: My Drive or the shared drive's root
             names.Insert(0, f.Name);
             parent = f.Parent;
         }
         return names;
     }
 
-    /// <summary>Each path segment found by name under its parent, else created - personal, the person's.</summary>
-    private static async Task<Guid> EnsureFoldersAsync(AppDbContext db, MigrationJobView job, IReadOnlyList<string> path, CancellationToken ct)
+    /// <summary>
+    /// Each path segment found by name under its parent, else created -
+    /// personal and the person's, or organisational (no owner) for a shared drive.
+    /// </summary>
+    private static async Task<Guid> EnsureFoldersAsync(
+        AppDbContext db, MigrationJobView job, IReadOnlyList<string> path, bool organisational, CancellationToken ct)
     {
         Guid? parent = null;
         foreach (var raw in path)
@@ -125,14 +183,17 @@ public sealed class GoogleDriveSource(
             var name = raw.Trim() is { Length: > 0 } n ? (n.Length > 300 ? n[..300] : n) : "Untitled";
             var existing = await db.SpaceFolders
                 .Where(f => f.ParentFolderId == parent && f.Name == name && f.DeletedAt == null
-                            && f.OwnershipType == "personal" && f.OwnerUserId == job.TargetUserId)
+                            && (organisational
+                                ? f.OwnershipType == "organisational"
+                                : f.OwnershipType == "personal" && f.OwnerUserId == job.TargetUserId))
                 .Select(f => (Guid?)f.Id).FirstOrDefaultAsync(ct);
             if (existing is Guid id) { parent = id; continue; }
 
             var folder = new SpaceFolder
             {
                 TenantId = job.TenantId, ParentFolderId = parent, CreatedByUserId = job.TargetUserId,
-                OwnershipType = "personal", OwnerUserId = job.TargetUserId, Name = name,
+                OwnershipType = organisational ? "organisational" : "personal",
+                OwnerUserId = organisational ? null : job.TargetUserId, Name = name,
             };
             db.SpaceFolders.Add(folder);
             await db.SaveChangesAsync(ct);

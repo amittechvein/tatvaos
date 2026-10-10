@@ -157,6 +157,36 @@ try
     Same("...the three files skipped as already in Space", second.Count(r => r.Reason == "already in Space"), 3);
     Same("...amit's Space unchanged", await Super(Tree), before);
     Same("...and no second folder of any name", await Super($"SELECT count(*) - count(DISTINCT (parent_folder_id, name)) FROM space.folders WHERE owner_user_id = '{AMIT}' AND deleted_at IS NULL"), "0");
+
+    Console.WriteLine("\n>> a SHARED drive - the organisation's");
+    await Super($"INSERT INTO migration.grants (tenant_id, google_domain, google_admin, client_id) VALUES ('{TECHVEIN}', 'techvein.local', 'admin@techvein.local', 'x')");
+    // The "Space" allocation the organisational gate checks.
+    await Super($"INSERT INTO core.storage_allocations (tenant_id, product_code, allocated_bytes) VALUES ('{TECHVEIN}', 'drive', 1073741824) ON CONFLICT (tenant_id, product_code) DO UPDATE SET allocated_bytes = 1073741824");
+    var sjob = new MigrationJobView(Guid.NewGuid(), TECHVEIN, "google_workspace", "drive", "shareddrive:SD1:Finance", AMIT, null, null, 0);
+    var sres = new List<(string, string, string?)>();
+    var sp = await source.FetchAsync(sjob, CancellationToken.None);
+    foreach (var item in sp.Items)
+        try { var r = await source.WriteAsync(sjob, item, CancellationToken.None); sres.Add((item.SourceId, r.Outcome, r.Reason)); }
+        catch (Exception ex) { sres.Add((item.SourceId, $"threw {ex.GetType().Name}", ex.InnerException?.Message ?? ex.Message)); }
+    Same("the shared drive's file written", string.Join(",", sres.Select(r => $"{r.Item1}={r.Item2}{(r.Item3 is null ? "" : ":" + r.Item3)}")), "sd1=done");
+    Same("...read as the drive's ORGANISER, a person - not the admin, not a group", string.Join(",", fake.SharedListedAs.Distinct()), "fin@techvein.local");
+    Same("...into ORGANISATIONAL folders: Google Shared Drives/Finance/Q3",
+        await Super("""
+            WITH RECURSIVE p AS (
+                SELECT id, name::text AS path FROM space.folders WHERE parent_folder_id IS NULL AND ownership_type = 'organisational' AND deleted_at IS NULL
+                UNION ALL SELECT f.id, p.path || '/' || f.name FROM space.folders f JOIN p ON f.parent_folder_id = p.id
+                 WHERE f.ownership_type = 'organisational' AND f.deleted_at IS NULL)
+            SELECT string_agg(p.path || '/' || x.name || ' ' || x.ownership_type, ', ') FROM space.files x JOIN p ON p.id = x.folder_id WHERE x.name = 'budget.xlsx'
+            """), "Google Shared Drives/Finance/Q3/budget.xlsx organisational");
+    await using (var c = new NpgsqlConnection(appConn))
+    {
+        await c.OpenAsync();
+        await new NpgsqlCommand($"SELECT set_config('app.tenant_id', '{TECHVEIN}', false), set_config('app.user_id', '{HR}', false)", c).ExecuteNonQueryAsync();
+        Same("hr sees the organisation's file - it is not amit's",
+            (await new NpgsqlCommand("SELECT count(*) FROM space.files WHERE name = 'budget.xlsx'", c).ExecuteScalarAsync())?.ToString(), "1");
+    }
+    var again = await source.WriteAsync(sjob, (await source.FetchAsync(sjob, CancellationToken.None)).Items[0], CancellationToken.None);
+    Same("again: already in Space", again.Reason, "already in Space");
 }
 finally { Directory.Delete(blobRoot, true); }
 
@@ -173,9 +203,13 @@ sealed class OneAccount(GoogleServiceAccount a) : IGoogleCredentialProvider
 sealed class FakeDrive : HttpMessageHandler
 {
     public readonly List<string> FolderLookups = [];
+    /// <summary>Whose token listed the Finance shared drive's files.</summary>
+    public readonly List<string> SharedListedAs = [];
+    private readonly Dictionary<string, string> _tokens = [];
     static readonly Dictionary<string, (string Name, string? Parent)> Folders = new()
     {
         ["root0"] = ("My Drive", null), ["A"] = ("A", "root0"), ["B"] = ("B", "A"),
+        ["SD1"] = ("Finance", null), ["Q3"] = ("Q3", "SD1"),
     };
     static readonly (string Id, string Name, string Mime, string Parent, string? Body)[] Files =
     [
@@ -187,28 +221,47 @@ sealed class FakeDrive : HttpMessageHandler
         ("f6", "big.bin", "application/octet-stream", "root0", new string('x', 2000)),
     ];
 
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
     {
         var path = req.RequestUri!.AbsolutePath;
         var q = req.RequestUri.Query;
-        if (path == "/token") return Json("""{"access_token":"ya29.fake","expires_in":3600}""");
+        if (path == "/token")
+        {
+            var form = await req.Content!.ReadAsStringAsync(ct);
+            var part = Uri.UnescapeDataString(form.Split("assertion=")[1].Split('&')[0]).Split('.')[1].Replace('-', '+').Replace('_', '/');
+            var sub = JsonDocument.Parse(Convert.FromBase64String(part + new string('=', (4 - part.Length % 4) % 4))).RootElement.GetProperty("sub").GetString()!;
+            var tok = $"ya29.fake{_tokens.Count}"; _tokens[tok] = sub;
+            return await Json($$"""{"access_token":"{{tok}}","expires_in":3600}""");
+        }
+        var who = _tokens.GetValueOrDefault(req.Headers.Authorization?.Parameter ?? "") ?? "";
+        if (path.EndsWith("/drives"))
+            return await Json("""{"drives":[{"id":"SD1","name":"Finance"}]}""");
+        if (path.EndsWith("/SD1/permissions"))
+            return await Json("""{"permissions":[{"type":"group","role":"organizer","emailAddress":"all@techvein.local"},{"type":"user","role":"reader","emailAddress":"reader@techvein.local"},{"type":"user","role":"organizer","emailAddress":"fin@techvein.local"}]}""");
+        if (path.EndsWith("/files") && q.Contains("driveId=SD1"))
+        {
+            SharedListedAs.Add(who);
+            return await Json("""{"files":[{"id":"sd1","name":"budget.xlsx","mimeType":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","parents":["Q3"],"size":"7"}]}""");
+        }
+        if (path.EndsWith("/sd1") && q.Contains("alt=media"))
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Encoding.ASCII.GetBytes("BUDGET!")) };
         if (path.EndsWith("/files"))
         {
             var from = q.Contains("pageToken=") ? int.Parse(q.Split("pageToken=")[1].Split('&')[0]) : 0;
             var page = Files.Skip(from).Take(2).Select(f =>
                 $$"""{"id":"{{f.Id}}","name":"{{f.Name}}","mimeType":"{{f.Mime}}","parents":["{{f.Parent}}"]{{(f.Body is null ? "" : $",\"size\":\"{f.Body.Length}\"")}}}""");
             var next = from + 2 < Files.Length ? $",\"nextPageToken\":\"{from + 2}\"" : "";
-            return Json($"{{\"files\":[{string.Join(",", page)}]{next}}}");
+            return await Json($"{{\"files\":[{string.Join(",", page)}]{next}}}");
         }
         var id = path.Split('/')[^1];
         if (q.Contains("alt=media"))
         {
             var f = Files.Single(x => x.Id == id);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Encoding.ASCII.GetBytes(f.Body!)) });
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Encoding.ASCII.GetBytes(f.Body!)) };
         }
         FolderLookups.Add(id);
         var (name, parent) = Folders[id];
-        return Json($$"""{"id":"{{id}}","name":"{{name}}","mimeType":"application/vnd.google-apps.folder"{{(parent is null ? "" : $",\"parents\":[\"{parent}\"]")}}}""");
+        return await Json($$"""{"id":"{{id}}","name":"{{name}}","mimeType":"application/vnd.google-apps.folder"{{(parent is null ? "" : $",\"parents\":[\"{parent}\"]")}}}""");
     }
 
     static Task<HttpResponseMessage> Json(string body) =>

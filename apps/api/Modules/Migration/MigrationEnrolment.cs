@@ -149,6 +149,46 @@ public sealed class MigrationEnrolment(AppDbContext db)
     }
 
     /// <summary>
+    /// The organisation's SHARED drives -> one planned 'drive' job each,
+    /// source_user "shareddrive:&lt;id&gt;:&lt;name&gt;", acting through
+    /// <paramref name="adminUserId"/> (who saves them into organisational Space
+    /// folders). Matched by the drive's id, so a drive renamed in Google
+    /// renames its job instead of adding a second. Returns (created, renamed).
+    /// </summary>
+    public async Task<(int Created, int Renamed)> EnrolSharedDrivesAsync(
+        Guid tenantId, IReadOnlyList<GoogleSharedDrive> drives, Guid adminUserId, CancellationToken ct)
+    {
+        var conn = await OpenAsync(ct);
+        int created = 0, renamed = 0;
+        foreach (var d in drives)
+        {
+            var name = d.Name.Replace(':', ' ').Trim() is { Length: > 0 } n ? (n.Length > 200 ? n[..200] : n) : d.Id;
+            var sourceUser = $"shareddrive:{d.Id}:{name}";
+            await using var upd = new NpgsqlCommand("""
+                UPDATE migration.jobs SET source_user = @su, updated_at = now()
+                 WHERE source = 'google_workspace' AND data_type = 'drive'
+                   AND source_user LIKE @prefix AND source_user <> @su
+                """, conn);
+            upd.Parameters.AddWithValue("su", sourceUser);
+            upd.Parameters.AddWithValue("prefix", $"shareddrive:{d.Id}:%");
+            renamed += await upd.ExecuteNonQueryAsync(ct);
+
+            await using var ins = new NpgsqlCommand("""
+                INSERT INTO migration.jobs (tenant_id, source, data_type, source_user, target_user_id, created_by)
+                SELECT @tenant, 'google_workspace', 'drive', @su, @admin, @admin
+                 WHERE NOT EXISTS (SELECT 1 FROM migration.jobs
+                                    WHERE source = 'google_workspace' AND data_type = 'drive' AND source_user LIKE @prefix)
+                """, conn);
+            ins.Parameters.AddWithValue("tenant", tenantId);
+            ins.Parameters.AddWithValue("su", sourceUser);
+            ins.Parameters.AddWithValue("admin", adminUserId);
+            ins.Parameters.AddWithValue("prefix", $"shareddrive:{d.Id}:%");
+            created += await ins.ExecuteNonQueryAsync(ct);
+        }
+        return (created, renamed);
+    }
+
+    /// <summary>
     /// Mail that arrived in Gmail since a person's mail job finished: put
     /// their COMPLETED mail jobs back to pending, keeping the cursor
     /// ("d:&lt;historyId&gt;"), so the next run brings only what was added.

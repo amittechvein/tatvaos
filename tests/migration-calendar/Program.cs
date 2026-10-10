@@ -92,8 +92,10 @@ var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<str
 var source = new GoogleCalendarSource(new GoogleCalendarClient(api), new OneAccount(account), provider.GetRequiredService<IServiceScopeFactory>(), config);
 
 MigrationJobView Job(string google, Guid target) => new(Guid.NewGuid(), TECHVEIN, "google_workspace", "calendar", google, target, null, null, 0);
-async Task<List<(string Id, string Outcome, string? Reason)>> RunAll(MigrationJobView j)
+Task<List<(string Id, string Outcome, string? Reason)>> RunAll(MigrationJobView j) => RunFrom(j, null);
+async Task<List<(string Id, string Outcome, string? Reason)>> RunFrom(MigrationJobView j, string? cursor)
 {
+    j = j with { Cursor = cursor };
     var results = new List<(string, string, string?)>();
     while (true)
     {
@@ -114,14 +116,32 @@ async Task<string> Super(string sql)
 string Outcomes(List<(string Id, string Outcome, string? Reason)> rs) => string.Join(",", rs.Select(r => $"{r.Id}={r.Outcome}"));
 string InCal(Guid owner) => $"FROM calendar.events e JOIN calendar.calendars c ON c.id = e.calendar_id WHERE c.owner_user_id = '{owner}' AND c.is_primary";
 
+// nomig: in the organisation, never migrated (no calendar job). hr: their
+// calendar job is QUEUED while amit's runs - the sweep must wait for it.
+await Super($"""
+    INSERT INTO core.users (id, tenant_id, email, display_name, status)
+    VALUES ('e1111111-1111-4111-8111-000000000426', '{TECHVEIN}', 'nomig@techvein.local', 'Nomig', 'active');
+    INSERT INTO migration.jobs (tenant_id, data_type, source_user, target_user_id, state)
+    VALUES ('{TECHVEIN}', 'calendar', 'hr@customer.test', '{HR}', 'pending');
+    """);
+
 Console.WriteLine("\n>> amit's calendar");
 var a1 = await RunAll(Job("amit@customer.test", AMIT));
-Same("outcomes (the moved occurrence is listed first, written in the second pass)",
-    Outcomes(a1), "weekly=done,allday=done,byhr=skipped,external=done,weekly_moved=done,weekly_gone=done");
+Same("outcomes: events, then the sweep, then the moved occurrence (listed first by Google, written last), then the extra calendar",
+    Outcomes(a1), "weekly=done,allday=done,byhr=skipped,external=done,bynomig=skipped," +
+                  "sweep:byhr=threw InvalidOperationException,sweep:external=skipped,sweep:bynomig=done," +
+                  "weekly_moved=done,weekly_gone=done,cricket@group.calendar.google.com/match1=done");
+Same("the extra calendar is a calendar of amit's own, by name, not his primary, holding its event",
+    await Super($"SELECT c.name || '|' || c.is_primary || '|' || string_agg(e.title, ',') FROM calendar.calendars c JOIN calendar.events e ON e.calendar_id = c.id WHERE c.owner_user_id = '{AMIT}' AND NOT c.is_primary GROUP BY c.name, c.is_primary"),
+    "Cricket club|false|Net practice");
+Same("the sweep WAITS while hr's own calendar is queued",
+    a1.Single(r => r.Id == "sweep:byhr").Reason, "waiting for hr@techvein.local's calendar to finish before placing their meetings with attendees");
+Same("the sweep places nomig's meeting with amit - nomig is not being migrated, saying so",
+    a1.Single(r => r.Id == "sweep:bynomig").Reason, "organised by nomig@techvein.local, whose calendar is not being migrated: placed with this attendee");
 Same("...hr's meeting skipped, saying why",
     a1.Single(r => r.Id == "byhr").Reason, "organised by hr@techvein.local, in this organisation: it arrives with their calendar");
-Same("three events in amit's primary calendar; the deleted one is not among them",
-    await Super($"SELECT string_agg(e.uid, ',' ORDER BY e.uid) {InCal(AMIT)}"), "allday@google.com,external@partner.test,weekly@google.com");
+Same("four events in amit's primary calendar (nomig's swept in); the deleted one is not among them",
+    await Super($"SELECT string_agg(e.uid, ',' ORDER BY e.uid) {InCal(AMIT)}"), "allday@google.com,bynomig@google.com,external@partner.test,weekly@google.com");
 Same("the weekly meeting: rule, zone, start in UTC, Meet link, organiser",
     await Super($"SELECT e.recurrence_rule || '|' || e.timezone || '|' || to_char(e.starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') || '|' || e.meeting_url || '|' || (e.organiser_user_id = '{AMIT}') {InCal(AMIT)} AND e.uid = 'weekly@google.com'"),
     "FREQ=WEEKLY;BYDAY=MO|Asia/Kolkata|2026-10-05 04:30|https://meet.google.com/abc-defg-hij|true");
@@ -141,11 +161,18 @@ Same("the external meeting is amit's, with no organiser in this organisation",
 
 Console.WriteLine("\n>> hr's calendar");
 var h1 = await RunAll(Job("hr@customer.test", HR));
-Same("outcomes", Outcomes(h1), "byhr=done,external=skipped");
+Same("outcomes", Outcomes(h1), "byhr=done,external=skipped,sweep:external=skipped");
 Same("...the external meeting: already in amit's calendar, not a second copy",
     h1.Single(r => r.Id == "external").Reason, "already in amit@techvein.local's calendar");
 Same("hr's meeting is in hr's calendar, with amit linked as an attendee",
     await Super($"SELECT count(*) FROM calendar.event_attendees a JOIN calendar.events e ON e.id = a.event_id JOIN calendar.calendars c ON c.id = e.calendar_id WHERE e.uid = 'byhr@google.com' AND c.owner_user_id = '{HR}' AND a.user_id = '{AMIT}'"), "1");
+// hr's calendar finished: amit's job, retried from its sweep, now finds
+// hr's meeting already with hr.
+await Super($"UPDATE migration.jobs SET state = 'completed', finished_at = now() WHERE source_user = 'hr@customer.test' AND data_type = 'calendar'");
+var retry = await RunFrom(Job("amit@customer.test", AMIT), "s:");
+Same("amit's sweep, retried after hr's calendar finished: hr's meeting arrived with hr",
+    retry.Single(r => r.Id == "sweep:byhr").Reason, "arrived with hr@techvein.local's calendar");
+Same("...and amit's calendar did NOT get a copy", await Super($"SELECT count(*) {InCal(AMIT)} AND e.uid = 'byhr@google.com'"), "0");
 Same("one row per meeting in the organisation", await Super("SELECT count(*) - count(DISTINCT uid) FROM calendar.events WHERE tenant_id = '11111111-1111-1111-1111-111111111111'"), "0");
 
 Console.WriteLine("\n>> again, and from elsewhere");
@@ -185,6 +212,7 @@ sealed class FakeCalendar : HttpMessageHandler
         """{"id":"allday","iCalUID":"allday@google.com","status":"confirmed","summary":"Diwali","transparency":"transparent", "start":{"date":"2026-10-20"},"end":{"date":"2026-10-21"},"organizer":{"email":"amit@techvein.local","self":true}}""",
         """{"id":"byhr","iCalUID":"byhr@google.com","status":"confirmed","summary":"HR review", "start":{"dateTime":"2026-10-07T15:00:00+05:30"},"end":{"dateTime":"2026-10-07T16:00:00+05:30"}, "organizer":{"email":"hr@techvein.local"}, "attendees":[{"email":"hr@techvein.local","organizer":true,"responseStatus":"accepted"},{"email":"amit@techvein.local","self":true,"responseStatus":"accepted"}]}""",
         """{"id":"external","iCalUID":"external@partner.test","status":"confirmed","summary":"Partner call", "start":{"dateTime":"2026-10-08T09:00:00Z"},"end":{"dateTime":"2026-10-08T10:00:00Z"}, "organizer":{"email":"boss@partner.test"}, "attendees":[{"email":"boss@partner.test","organizer":true,"responseStatus":"accepted"}, {"email":"amit@techvein.local","self":true,"responseStatus":"accepted"},{"email":"hr@techvein.local","responseStatus":"tentative"}]}""",
+        """{"id":"bynomig","iCalUID":"bynomig@google.com","status":"confirmed","summary":"Nomig's review", "start":{"dateTime":"2026-10-09T15:00:00+05:30"},"end":{"dateTime":"2026-10-09T16:00:00+05:30"}, "organizer":{"email":"nomig@techvein.local"}, "attendees":[{"email":"nomig@techvein.local","organizer":true,"responseStatus":"accepted"},{"email":"amit@techvein.local","self":true,"responseStatus":"accepted"}]}""",
         """{"id":"weekly_gone","iCalUID":"weekly@google.com","recurringEventId":"weekly","status":"cancelled", "originalStartTime":{"dateTime":"2026-10-26T10:00:00+05:30","timeZone":"Asia/Kolkata"}}""",
         """{"id":"deleted","iCalUID":"deleted@google.com","status":"cancelled"}""",
     ];
@@ -211,6 +239,20 @@ sealed class FakeCalendar : HttpMessageHandler
         {
             var who = Token[req.Headers.Authorization!.Parameter!];
             var q = req.RequestUri.Query;
+            if (path.EndsWith("/users/me/calendarList"))
+            {
+                // amit owns an extra calendar; a calendar merely SHARED with
+                // him is not listed (minAccessRole=owner) and must not arrive.
+                body = who.StartsWith("amit")
+                    ? """{"items":[{"id":"cricket@group.calendar.google.com","summary":"Cricket club"},{"id":"amit@techvein.local","summary":"amit@techvein.local","primary":true}]}"""
+                    : """{"items":[{"id":"hr@techvein.local","summary":"hr@techvein.local","primary":true}]}""";
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+            }
+            if (path.Contains("cricket"))
+            {
+                body = """{"timeZone":"Asia/Kolkata","items":[{"id":"match1","iCalUID":"match1@google.com","status":"confirmed","summary":"Net practice","start":{"dateTime":"2026-10-11T07:00:00+05:30"},"end":{"dateTime":"2026-10-11T09:00:00+05:30"},"organizer":{"email":"cricket@group.calendar.google.com","self":true}}]}""";
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+            }
             var showDeleted = q.Contains("showDeleted=true");
             var size = int.Parse(System.Text.RegularExpressions.Regex.Match(q, "maxResults=(\\d+)").Groups[1].Value);
             var from = q.Contains("pageToken=") ? int.Parse(System.Text.RegularExpressions.Regex.Match(q, "pageToken=(\\d+)").Groups[1].Value) : 0;
