@@ -25,24 +25,54 @@ namespace TatvaOS.Api.Modules.Migration.Mail;
 ///  Message-ID cannot be checked this way and is appended - the job's ledger
 ///  still stops it in every case but the page in flight at a kill.
 ///
-///  HOW IT SIGNS IN IS NOT DECIDED HERE. IMigrationMailboxLogin supplies the
-///  credentials. The obvious production answer is a Dovecot master user
-///  ("person*master"), which is an authentication change to the mail server
-///  and needs Mr. Singh's ruling first. Until then no production login is
-///  registered, and the Gmail source is not registered either.
+///  HOW IT SIGNS IN: IMigrationMailboxLogin supplies the credentials -
+///  MasterMailboxLogin, Dovecot's migration master user (decision 0019 §2).
+///  OVER TLS in production (STARTTLS on 143, Migration:Imap:Security), the
+///  certificate checked against Migration:Imap:TlsName.
 /// ─────────────────────────────────────────────────────────────────────────
 /// </summary>
 public sealed class DovecotAppender(IConfiguration config)
 {
     private string Host => config["Migration:Imap:Host"] ?? "dovecot";
     private int Port => config.GetValue("Migration:Imap:Port", 143);
-    /// <summary>"none" on the internal network (as the API's own 10587 path), "starttls" or "ssl" otherwise.</summary>
+    /// <summary>
+    /// "none" for the local stack (its Dovecot has ssl = no); "starttls" in
+    /// production and staging, whose Dovecot has disable_plaintext_auth = yes
+    /// and refuses any sign-in before TLS (local/dovecot/entrypoint.sh). The
+    /// compose file sets it; "ssl" is TLS from the first byte (993).
+    /// </summary>
     private SecureSocketOptions Security => (config["Migration:Imap:Security"] ?? "none").ToLowerInvariant() switch
     {
         "ssl" => SecureSocketOptions.SslOnConnect,
         "starttls" => SecureSocketOptions.StartTls,
         _ => SecureSocketOptions.None,
     };
+
+    /// <summary>
+    /// The name on Dovecot's certificate (mail.tatvaos.com: deploy.sh copies
+    /// Caddy's mail.* certificate into the mailcerts volume). The API reaches
+    /// Dovecot by its compose name, "dovecot", which is not on the certificate,
+    /// so the certificate is checked against THIS name instead - see
+    /// <see cref="CertificateIsTrusted"/>. Unset = the host name, as usual.
+    /// </summary>
+    private string? TlsName => config["Migration:Imap:TlsName"] is { Length: > 0 } n ? n : null;
+
+    /// <summary>
+    /// A certificate is accepted when it is valid in every way, or when its
+    /// ONLY fault is a name mismatch and it is valid for <paramref name="tlsName"/>.
+    /// An untrusted chain, an expired certificate or a different name is
+    /// refused - TLS is not switched off, only pointed at the right name.
+    /// </summary>
+    public static bool CertificateIsTrusted(
+        System.Security.Cryptography.X509Certificates.X509Certificate? cert,
+        System.Net.Security.SslPolicyErrors errors, string? tlsName)
+    {
+        if (errors == System.Net.Security.SslPolicyErrors.None) return true;
+        if (tlsName is null || cert is null
+            || errors != System.Net.Security.SslPolicyErrors.RemoteCertificateNameMismatch) return false;
+        using var c2 = new System.Security.Cryptography.X509Certificates.X509Certificate2(cert);
+        return c2.MatchesHostname(tlsName);
+    }
     /// <summary>
     /// Optional parent for every migrated folder, e.g. "Imported from Google".
     /// Empty (the default) puts INBOX in INBOX. Tests use it to keep to a
@@ -53,6 +83,9 @@ public sealed class DovecotAppender(IConfiguration config)
     public async Task<DovecotSession> OpenAsync(MailboxLogin login, CancellationToken ct)
     {
         var client = new ImapClient();
+        var tlsName = TlsName;
+        if (Security != SecureSocketOptions.None)
+            client.ServerCertificateValidationCallback = (_, cert, _, errors) => CertificateIsTrusted(cert, errors, tlsName);
         try
         {
             await client.ConnectAsync(Host, Port, Security, ct);
