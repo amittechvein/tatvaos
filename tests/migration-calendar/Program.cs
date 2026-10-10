@@ -56,6 +56,8 @@ void Same<T>(string what, T got, T want)
 
 Guid TECHVEIN = Guid.Parse("11111111-1111-1111-1111-111111111111"), SCHOOL = Guid.Parse("22222222-2222-2222-2222-222222222222");
 Guid AMIT = Guid.Parse("d1111111-1111-1111-1111-111111111111"), HR = Guid.Parse("d1111111-1111-1111-1111-111111111112");
+const string NOMIG_ID = "e1111111-1111-4111-8111-000000000426";
+Guid NOMIG = Guid.Parse(NOMIG_ID);
 
 // ---- Pure rules first -----------------------------------------------------------
 Console.WriteLine("\n  Google Calendar into the calendar module\n\n>> the event map");
@@ -128,8 +130,8 @@ await Super($"""
 Console.WriteLine("\n>> amit's calendar");
 var a1 = await RunAll(Job("amit@customer.test", AMIT));
 Same("outcomes: events, then the sweep, then the moved occurrence (listed first by Google, written last), then the extra calendar",
-    Outcomes(a1), "weekly=done,allday=done,byhr=skipped,external=done,bynomig=skipped," +
-                  "sweep:byhr=threw InvalidOperationException,sweep:external=skipped,sweep:bynomig=done," +
+    Outcomes(a1), "weekly=done,allday=done,byhr=skipped,external=done,bynomig=skipped,extnoatt=done," +
+                  "sweep:byhr=threw InvalidOperationException,sweep:external=skipped,sweep:bynomig=done,sweep:extnoatt=skipped," +
                   "weekly_moved=done,weekly_gone=done,cricket@group.calendar.google.com/match1=done");
 Same("the extra calendar is a calendar of amit's own, by name, not his primary, holding its event",
     await Super($"SELECT c.name || '|' || c.is_primary || '|' || string_agg(e.title, ',') FROM calendar.calendars c JOIN calendar.events e ON e.calendar_id = c.id WHERE c.owner_user_id = '{AMIT}' AND NOT c.is_primary GROUP BY c.name, c.is_primary"),
@@ -140,8 +142,8 @@ Same("the sweep places nomig's meeting with amit - nomig is not being migrated, 
     a1.Single(r => r.Id == "sweep:bynomig").Reason, "organised by nomig@techvein.local, whose calendar is not being migrated: placed with this attendee");
 Same("...hr's meeting skipped, saying why",
     a1.Single(r => r.Id == "byhr").Reason, "organised by hr@techvein.local, in this organisation: it arrives with their calendar");
-Same("four events in amit's primary calendar (nomig's swept in); the deleted one is not among them",
-    await Super($"SELECT string_agg(e.uid, ',' ORDER BY e.uid) {InCal(AMIT)}"), "allday@google.com,bynomig@google.com,external@partner.test,weekly@google.com");
+Same("five events in amit's primary calendar (nomig's swept in); the deleted one is not among them",
+    await Super($"SELECT string_agg(e.uid, ',' ORDER BY e.uid) {InCal(AMIT)}"), "allday@google.com,bynomig@google.com,external@partner.test,extnoatt@partner.test,weekly@google.com");
 Same("the weekly meeting: rule, zone, start in UTC, Meet link, organiser",
     await Super($"SELECT e.recurrence_rule || '|' || e.timezone || '|' || to_char(e.starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') || '|' || e.meeting_url || '|' || (e.organiser_user_id = '{AMIT}') {InCal(AMIT)} AND e.uid = 'weekly@google.com'"),
     "FREQ=WEEKLY;BYDAY=MO|Asia/Kolkata|2026-10-05 04:30|https://meet.google.com/abc-defg-hij|true");
@@ -159,6 +161,17 @@ Same("the all-day event: midnight Kolkata, all-day",
 Same("the external meeting is amit's, with no organiser in this organisation",
     await Super($"SELECT (e.organiser_user_id IS NULL)::text {InCal(AMIT)} AND e.uid = 'external@partner.test'"), "true");
 
+Console.WriteLine("\n>> decision 0019 §3: the organiser is recorded, never promoted");
+Same("an external organiser Google did not list: NOT promoted (organiser stays NULL)",
+    await Super($"SELECT (e.organiser_user_id IS NULL)::text {InCal(AMIT)} AND e.uid = 'extnoatt@partner.test'"), "true");
+Same("...but recorded as the chair, by email and name, with no TatvaOS person",
+    await Super("SELECT string_agg(a.email || ':' || a.role || ':' || coalesce(a.display_name, '-') || ':' || coalesce(a.user_id::text, 'none'), ', ' ORDER BY a.role) FROM calendar.event_attendees a JOIN calendar.events e ON e.id = a.event_id WHERE e.uid = 'extnoatt@partner.test'"),
+    "ceo@partner.test:chair:Partner CEO:none, amit@techvein.local:req-participant:-:" + AMIT);
+Same("the swept meeting names its real organiser (in this organisation, not migrating), not amit",
+    await Super($"SELECT e.organiser_user_id::text {InCal(AMIT)} AND e.uid = 'bynomig@google.com'"), NOMIG_ID);
+Same("...and nomig is its chair, linked to nomig's account",
+    await Super($"SELECT a.role || ':' || a.user_id::text FROM calendar.event_attendees a JOIN calendar.events e ON e.id = a.event_id WHERE e.uid = 'bynomig@google.com' AND a.email = 'nomig@techvein.local'"), "chair:" + NOMIG_ID);
+
 Console.WriteLine("\n>> hr's calendar");
 var h1 = await RunAll(Job("hr@customer.test", HR));
 Same("outcomes", Outcomes(h1), "byhr=done,external=skipped,sweep:external=skipped");
@@ -174,6 +187,24 @@ Same("amit's sweep, retried after hr's calendar finished: hr's meeting arrived w
     retry.Single(r => r.Id == "sweep:byhr").Reason, "arrived with hr@techvein.local's calendar");
 Same("...and amit's calendar did NOT get a copy", await Super($"SELECT count(*) {InCal(AMIT)} AND e.uid = 'byhr@google.com'"), "0");
 Same("one row per meeting in the organisation", await Super("SELECT count(*) - count(DISTINCT uid) FROM calendar.events WHERE tenant_id = '11111111-1111-1111-1111-111111111111'"), "0");
+
+Console.WriteLine("\n>> decision 0019 §3 rule 3: nomig is migrated after all - the organiser's run ADOPTS the meeting");
+await Super($"INSERT INTO migration.jobs (tenant_id, data_type, source_user, target_user_id, state) VALUES ('{TECHVEIN}', 'calendar', 'nomig@customer.test', '{NOMIG}', 'pending')");
+var n1 = await RunAll(Job("nomig@customer.test", NOMIG));
+Same("outcomes: adopted, not copied and not skipped", Outcomes(n1), "bynomig=done");
+Same("...saying so", n1.Single(r => r.Id == "bynomig").Reason, "adopted from amit@techvein.local's calendar: the organiser's meeting is now in the organiser's calendar");
+Same("the meeting is now in nomig's primary calendar, with nomig as organiser",
+    await Super($"SELECT (e.organiser_user_id = '{NOMIG}')::text {InCal(NOMIG)} AND e.uid = 'bynomig@google.com'"), "true");
+Same("...and no longer in amit's", await Super($"SELECT count(*) {InCal(AMIT)} AND e.uid = 'bynomig@google.com'"), "0");
+Same("...still one row for its uid", await Super("SELECT count(*) FROM calendar.events WHERE uid = 'bynomig@google.com'"), "1");
+Same("its attendees: nomig the chair; amit kept as an attendee; the guest from nomig's copy added",
+    await Super("SELECT string_agg(a.email || ':' || a.role || ':' || a.status, ', ' ORDER BY a.email) FROM calendar.event_attendees a JOIN calendar.events e ON e.id = a.event_id WHERE e.uid = 'bynomig@google.com'"),
+    "amit@techvein.local:req-participant:accepted, guest@partner.test:req-participant:tentative, nomig@techvein.local:chair:accepted");
+await Super("UPDATE migration.jobs SET state = 'completed', finished_at = now() WHERE source_user = 'nomig@customer.test'");
+var a3 = await RunAll(Job("amit@customer.test", AMIT));
+Same("amit after that: nomig's meeting is now 'already in nomig's calendar', and the sweep says it arrived with nomig",
+    a3.Single(r => r.Id == "bynomig").Reason + " | " + a3.Single(r => r.Id == "sweep:bynomig").Reason,
+    "already in nomig@techvein.local's calendar | arrived with nomig@techvein.local's calendar");
 
 Console.WriteLine("\n>> again, and from elsewhere");
 var before = await Super("SELECT (SELECT count(*) FROM calendar.events) || '/' || (SELECT count(*) FROM calendar.event_exceptions) || '/' || (SELECT count(*) FROM calendar.event_attendees) || '/' || (SELECT count(*) FROM calendar.event_reminders)");
@@ -213,8 +244,18 @@ sealed class FakeCalendar : HttpMessageHandler
         """{"id":"byhr","iCalUID":"byhr@google.com","status":"confirmed","summary":"HR review", "start":{"dateTime":"2026-10-07T15:00:00+05:30"},"end":{"dateTime":"2026-10-07T16:00:00+05:30"}, "organizer":{"email":"hr@techvein.local"}, "attendees":[{"email":"hr@techvein.local","organizer":true,"responseStatus":"accepted"},{"email":"amit@techvein.local","self":true,"responseStatus":"accepted"}]}""",
         """{"id":"external","iCalUID":"external@partner.test","status":"confirmed","summary":"Partner call", "start":{"dateTime":"2026-10-08T09:00:00Z"},"end":{"dateTime":"2026-10-08T10:00:00Z"}, "organizer":{"email":"boss@partner.test"}, "attendees":[{"email":"boss@partner.test","organizer":true,"responseStatus":"accepted"}, {"email":"amit@techvein.local","self":true,"responseStatus":"accepted"},{"email":"hr@techvein.local","responseStatus":"tentative"}]}""",
         """{"id":"bynomig","iCalUID":"bynomig@google.com","status":"confirmed","summary":"Nomig's review", "start":{"dateTime":"2026-10-09T15:00:00+05:30"},"end":{"dateTime":"2026-10-09T16:00:00+05:30"}, "organizer":{"email":"nomig@techvein.local"}, "attendees":[{"email":"nomig@techvein.local","organizer":true,"responseStatus":"accepted"},{"email":"amit@techvein.local","self":true,"responseStatus":"accepted"}]}""",
+        // An external organiser Google does NOT list among the attendees (common
+        // for meetings called from outside): decision 0019 §3 still wants them
+        // recorded as the chair, by email, and nobody promoted to organiser.
+        """{"id":"extnoatt","iCalUID":"extnoatt@partner.test","status":"confirmed","summary":"Vendor briefing", "start":{"dateTime":"2026-10-10T09:00:00Z"},"end":{"dateTime":"2026-10-10T09:30:00Z"}, "organizer":{"email":"CEO@partner.test","displayName":"Partner CEO"}, "attendees":[{"email":"amit@techvein.local","self":true,"responseStatus":"accepted"}]}""",
         """{"id":"weekly_gone","iCalUID":"weekly@google.com","recurringEventId":"weekly","status":"cancelled", "originalStartTime":{"dateTime":"2026-10-26T10:00:00+05:30","timeZone":"Asia/Kolkata"}}""",
         """{"id":"deleted","iCalUID":"deleted@google.com","status":"cancelled"}""",
+    ];
+    // nomig's own copy, for when nomig IS migrated later: the organiser's run
+    // must ADOPT the meeting the sweep placed with amit, not copy or skip it.
+    static readonly string[] Nomig =
+    [
+        """{"id":"bynomig","iCalUID":"bynomig@google.com","status":"confirmed","summary":"Nomig's review", "start":{"dateTime":"2026-10-09T15:00:00+05:30"},"end":{"dateTime":"2026-10-09T16:00:00+05:30"}, "organizer":{"email":"nomig@techvein.local","self":true}, "attendees":[{"email":"nomig@techvein.local","organizer":true,"self":true,"responseStatus":"accepted"},{"email":"amit@techvein.local","responseStatus":"accepted"},{"email":"guest@partner.test","responseStatus":"tentative"}]}""",
     ];
     static readonly string[] Hr =
     [
@@ -245,7 +286,7 @@ sealed class FakeCalendar : HttpMessageHandler
                 // him is not listed (minAccessRole=owner) and must not arrive.
                 body = who.StartsWith("amit")
                     ? """{"items":[{"id":"cricket@group.calendar.google.com","summary":"Cricket club"},{"id":"amit@techvein.local","summary":"amit@techvein.local","primary":true}]}"""
-                    : """{"items":[{"id":"hr@techvein.local","summary":"hr@techvein.local","primary":true}]}""";
+                    : $$"""{"items":[{"id":"{{who}}","summary":"{{who}}","primary":true}]}""";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
             }
             if (path.Contains("cricket"))
@@ -256,7 +297,7 @@ sealed class FakeCalendar : HttpMessageHandler
             var showDeleted = q.Contains("showDeleted=true");
             var size = int.Parse(System.Text.RegularExpressions.Regex.Match(q, "maxResults=(\\d+)").Groups[1].Value);
             var from = q.Contains("pageToken=") ? int.Parse(System.Text.RegularExpressions.Regex.Match(q, "pageToken=(\\d+)").Groups[1].Value) : 0;
-            var all = (who.StartsWith("amit") ? Amit : Hr)
+            var all = (who.StartsWith("amit") ? Amit : who.StartsWith("nomig") ? Nomig : Hr)
                 .Where(e => showDeleted || !e.Contains("\"status\":\"cancelled\"")).ToList();
             var page = all.Skip(from).Take(size).ToList();
             var next = from + size < all.Count ? $",\"nextPageToken\":\"{from + size}\"" : "";

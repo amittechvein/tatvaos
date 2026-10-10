@@ -117,6 +117,23 @@ calendar job in the organisation is still pending or running.
 
 ---
 
+### The sweep, built (Mr. Singh's ruling, 10 Oct 2026)
+1. **No attendee is promoted to organiser.** `organiser_user_id` stays NULL
+   for a meeting nobody in the organisation called; for a meeting swept in
+   because its in-organisation organiser is not migrating, it names that
+   person.
+2. **The real organiser is always a `chair` attendee row**, with their email
+   and name, even when Google does not list them among the attendees (it
+   often does not, for external meetings). Before this, such a meeting
+   arrived with no trace of who called it.
+3. **Dedupe on the RFC 5545 UID, and adopt.** When the organiser's own
+   calendar is migrated later, their run finds the meeting already placed
+   with an attendee and moves it into the organiser's calendar, naming them
+   and completing the attendee list from their copy, instead of skipping it
+   or making a second copy. The in-flight guard (the sweep waits while the
+   organiser's job is queued or running) stays. One row per UID per
+   organisation, proven by the test.
+
 ## §4 Which disk, and the reserve
 
 ### Context
