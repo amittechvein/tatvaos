@@ -31,7 +31,9 @@
 
 import { execSync } from 'node:child_process';
 
-const API = process.env.DOCSAI_API ?? 'http://localhost:5171/api';
+// DOCS_API: when run on tests/docs/run-docs-live.sh's throwaway stack
+// (DOCS_TEST=tests/ai/docs-ai-switch.test.mjs, with the Ai__* settings below).
+const API = process.env.DOCSAI_API ?? process.env.DOCS_API ?? 'http://localhost:5171/api';
 const FAKE = process.env.FAKE ?? 'http://127.0.0.1:5199';
 const [EMAIL, PASSWORD] = (process.env.AI_ADMIN ?? 'platform@docs.local,dev-only-platform-pass').split(',');
 
@@ -78,6 +80,10 @@ const settingsNow = async () => Object.fromEntries((await call('GET', '/admin/se
 const found = await settingsNow();
 const foundSwitches = (await org()).body;
 const docsWasOn = (await call('GET', `/admin/organisations/${TENANT}/docs`)).body?.enabled === true;
+// Sheets on too, so step 5 can prove a spreadsheet's AI is not governed by the
+// Docs switch (the first run, 10 Oct, skipped it: Sheets was off). Put back.
+const sheetsWasOn = (await call('GET', `/admin/organisations/${TENANT}/sheets`)).body?.enabled === true;
+await call('PUT', `/admin/organisations/${TENANT}/sheets`, { enabled: true });
 
 try {
   // Docs (the product) on, so there is a document to ask about; AI limits lifted.
@@ -153,7 +159,8 @@ try {
     check('a spreadsheet\'s AI state never carries the Docs sentence', s?.reason !== OFF && s?.reason !== NOT_OFFERED, JSON.stringify(s));
     await call('DELETE', `/space/files/${sheet.body.id}`);
   } else {
-    console.log(`        (Sheets is off here, ${sheet.status}: spreadsheet check skipped)`);
+    // Not skipped quietly: the run switches Sheets on, so a refusal here is a fault.
+    check('a spreadsheet to compare with (201)', false, `${sheet.status} ${JSON.stringify(sheet.body)}`);
   }
 
   // ── 6. Off again ─────────────────────────────────────────────────────────
@@ -169,6 +176,7 @@ try {
   await call('PUT', '/admin/settings', found);
   await setAi({ enabled: foundSwitches.enabled, docs: false });
   if (!docsWasOn) await call('PUT', `/admin/organisations/${TENANT}/docs`, { enabled: false });
+  if (!sheetsWasOn) await call('PUT', `/admin/organisations/${TENANT}/sheets`, { enabled: false });
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
