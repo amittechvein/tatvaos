@@ -431,6 +431,15 @@ jobs:
       - name: "Hire: candidates past their retention period are deleted, and only they"
         run: bash tests/hire/test-retention.sh
 
+      # Hire interviews (Phase 2; 20261009-s): only recruiters/admins schedule;
+      # a panel is only people who can already see the application; feedback
+      # by panel members about themselves only (the database refuses any other
+      # row - red with that FK removed); colleagues' feedback hidden until you
+      # give yours; erasure takes every word. Starts its own API on :5113.
+      # Proposed 9 Oct 2026, held for Mr. Singh with the PR that adds it.
+      - name: "Hire: interviews and feedback"
+        run: bash tests/hire/test-interviews.sh
+
       - name: Install the web app's TypeScript (for the PiP check)
         run: pnpm install --frozen-lockfile
 

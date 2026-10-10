@@ -1160,6 +1160,49 @@ run_as tatvaos_app "DELETE FROM people.correction_requests WHERE false" >/dev/nu
     && fail "the app can DELETE correction requests (they are the record of the request)" \
     || pass "the app has no DELETE on correction requests"
 
+hdr "Hire interviews, panels and feedback are isolated (20261009-s)"
+
+# One ABC School interview with a panel member and feedback, as postgres.
+run_as postgres "
+    INSERT INTO hire.pipeline_stages (id, tenant_id, key, name, position) VALUES
+        ('0c000000-0000-0000-0000-0000000000c9','$SCHOOL','iso_iv_stage','iso-iv-stage',10) ON CONFLICT DO NOTHING;
+    INSERT INTO hire.candidates (id, tenant_id, full_name, email) VALUES
+        ('0d000000-0000-0000-0000-0000000000d9','$SCHOOL','iso-iv-cand','iso-iv@example.test') ON CONFLICT DO NOTHING;
+    INSERT INTO hire.job_openings (id, tenant_id, title) VALUES
+        ('0b000000-0000-0000-0000-0000000000e9','$SCHOOL','iso-iv-job') ON CONFLICT DO NOTHING;
+    INSERT INTO hire.applications (id, tenant_id, candidate_id, job_id, stage_id) VALUES
+        ('0f000000-0000-0000-0000-0000000000f9','$SCHOOL','0d000000-0000-0000-0000-0000000000d9','0b000000-0000-0000-0000-0000000000e9','0c000000-0000-0000-0000-0000000000c9') ON CONFLICT DO NOTHING;
+    INSERT INTO hire.interviews (id, tenant_id, application_id, scheduled_at) VALUES
+        ('1a000000-0000-0000-0000-0000000000a9','$SCHOOL','0f000000-0000-0000-0000-0000000000f9', now()) ON CONFLICT DO NOTHING;
+    INSERT INTO hire.interview_panel (tenant_id, interview_id, user_id) VALUES
+        ('$SCHOOL','1a000000-0000-0000-0000-0000000000a9','d2222222-2222-2222-2222-222222222222') ON CONFLICT DO NOTHING;
+    INSERT INTO hire.interview_feedback (tenant_id, interview_id, interviewer_id, rating, recommendation, notes) VALUES
+        ('$SCHOOL','1a000000-0000-0000-0000-0000000000a9','d2222222-2222-2222-2222-222222222222',4,'yes','iso-iv-note') ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+fx=$(scalar_as postgres "SELECT (SELECT count(*) FROM hire.interviews WHERE id='1a000000-0000-0000-0000-0000000000a9')
+                             ||'/'||(SELECT count(*) FROM hire.interview_panel WHERE interview_id='1a000000-0000-0000-0000-0000000000a9')
+                             ||'/'||(SELECT count(*) FROM hire.interview_feedback WHERE interview_id='1a000000-0000-0000-0000-0000000000a9')")
+[ "$fx" = "1/1/1" ] && pass "fixture: ABC School has an interview, a panel member and feedback" \
+                    || fail "interview fixture incomplete ($fx) - the checks below would prove nothing"
+for tbl in hire.interviews hire.interview_panel hire.interview_feedback; do
+    leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM $tbl WHERE tenant_id = '$SCHOOL'")
+    [ "${leak:-1}" -eq 0 ] && pass "$tbl: Techvein cannot see ABC School's rows" \
+                           || fail "LEAK: $tbl shows $leak ABC School row(s) to Techvein"
+    n=$(no_context "SELECT count(*) FROM $tbl")
+    [ "${n:-1}" -eq 0 ] && pass "$tbl: no tenant context returns zero rows" \
+                        || fail "DANGEROUS: $tbl shows ${n} row(s) with no tenant set"
+done
+out=$(run_as postgres "INSERT INTO hire.interview_panel (tenant_id, interview_id, user_id) VALUES
+        ('$SCHOOL','1a000000-0000-0000-0000-0000000000a9','d1111111-1111-1111-1111-111111111111');" 2>&1)
+grep -qi 'foreign key' <<< "$out" \
+    && pass "a Techvein person cannot sit on ABC School's panel, even bypassing RLS" \
+    || fail "LEAK: a Techvein person was put on ABC School's interview panel"
+run_as tatvaos_app "DELETE FROM hire.interviews WHERE false" >/dev/null 2>&1 \
+    && fail "the app can DELETE interviews (they are cancelled, not deleted)" \
+    || pass "the app has no DELETE on interviews"
+run_as postgres "DELETE FROM hire.candidates WHERE id = '0d000000-0000-0000-0000-0000000000d9';
+    DELETE FROM hire.job_openings WHERE id = '0b000000-0000-0000-0000-0000000000e9';
+    DELETE FROM hire.pipeline_stages WHERE key = 'iso_iv_stage';" >/dev/null 2>&1
+
 run_as postgres "DELETE FROM people.employees WHERE full_name LIKE 'iso-emp-%' AND reports_to IS NOT NULL;
     DELETE FROM people.employees WHERE full_name LIKE 'iso-emp-%';
     DELETE FROM people.hr_members WHERE tenant_id = '$SCHOOL' AND user_id = 'd2222222-2222-2222-2222-222222222222';" >/dev/null 2>&1

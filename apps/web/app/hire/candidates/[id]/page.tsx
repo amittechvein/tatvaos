@@ -11,6 +11,7 @@ import { Alert, PageHeader } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
 import { ApplicationActions, OutcomeBadge, type Outcome, type Stage } from '../_components/ApplicationActions';
 import { CandidateForm, SOURCE_LABEL, type Candidate } from '../_components/CandidateForm';
+import { Interviews } from '../_components/Interviews';
 
 // ============================================================================
 //  One candidate: their applications first (what a recruiter came to do),
@@ -131,6 +132,8 @@ function CandidatePage() {
                   )}
                   <ApplicationActions applicationId={a.id} stageId={a.stageId} outcome={a.outcome}
                                       stages={stages} jobOpen={jobOpen} onChanged={() => void load()} />
+                  <Interviews applicationId={a.id} canSchedule={detail.canEdit}
+                              open={jobOpen && a.outcome === 'active'} />
                 </li>
               );
             })}

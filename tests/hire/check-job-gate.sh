@@ -28,10 +28,10 @@ GATE="Modules/Hire/HireAccess.cs"
 
 # Careers sites (20260924-f) joined 24 Sept: the public page resolves them
 # through hire.resolve_careers_site(), a function, which is not matched here.
-TYPES='(JobOpening|HireCareersSite|HireCandidate|HireApplication|HireApplicationEvent|HirePipelineStage|HireSetting)'
+TYPES='(JobOpening|HireCareersSite|HireCandidate|HireApplication|HireApplicationEvent|HirePipelineStage|HireSetting|HireInterview|HireInterviewPanelMember|HireInterviewFeedback)'
 SET_RE="Set<[[:space:]]*(TatvaOS\\.Api\\.Modules\\.Hire\\.)?${TYPES}[[:space:]]*>"
 DBSET_RE="DbSet<[[:space:]]*(TatvaOS\\.Api\\.Modules\\.Hire\\.)?${TYPES}[[:space:]]*>"
-SQL_RE='hire\.(job_openings|careers_sites|candidates|applications|application_events|pipeline_stages|settings)\b'
+SQL_RE='hire\.(job_openings|careers_sites|candidates|applications|application_events|pipeline_stages|settings|interviews|interview_panel|interview_feedback)\b'
 PROP_RE='\.(JobOpenings|HireCareersSites|CareersSites|HireCandidates|HireApplications|HireApplicationEvents|HirePipelineStages|Candidates|Applications)\b[^(]'
 
 fails=0

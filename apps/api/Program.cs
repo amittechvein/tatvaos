@@ -984,6 +984,8 @@ TatvaOS.Api.Modules.Hire.JobOpeningEndpoints.MapJobOpeningEndpoints(app);
 TatvaOS.Api.Modules.Hire.HireTeamEndpoints.MapHireTeamEndpoints(app);
 // Candidates, applications and the pipeline (24 Sept 2026).
 TatvaOS.Api.Modules.Hire.CandidateEndpoints.MapCandidateEndpoints(app);
+// Interviews and interview feedback (Phase 2; 20261009-s).
+TatvaOS.Api.Modules.Hire.InterviewEndpoints.MapInterviewEndpoints(app);
 // The public careers page and its admin setup (decision 0010, switched off).
 TatvaOS.Api.Modules.Hire.CareersEndpoints.MapCareersEndpoints(app);
 app.MapStorageEndpoints();
