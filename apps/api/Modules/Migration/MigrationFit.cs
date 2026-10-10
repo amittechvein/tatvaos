@@ -119,21 +119,73 @@ public sealed record MigrationVerdict(
     string State, IReadOnlyList<string> Reasons, IReadOnlyList<PersonSize> OverQuota, IReadOnlyList<string> NotChecked);
 
 /// <summary>
-/// Free and total bytes of the filesystem a path is on. Two paths are taken to
-/// share a filesystem when their totals are equal and their free figures agree
-/// to within 1% - .NET does not expose the filesystem id. Wrongly judging two
-/// disks to be one ADDS their needs together, which can only refuse more.
+/// Free and total bytes of the filesystem a path is on, and WHICH filesystem
+/// (Volume). Two paths share a filesystem when their Volume ids are equal:
+/// exact, where comparing sizes was a guess (Mr. Singh on #420, 10 Oct 2026).
+///
+/// Volume is the device id "major:minor" of the mount holding the path, read
+/// from /proc/self/mountinfo on Linux - NOT the mount point. The API runs in a
+/// container where every Docker volume is its own mount point, so by mount
+/// point the two volumes on production's ONE disk would read as two
+/// filesystems. Judging one disk as two PERMITS a migration whose mail fits
+/// and whose Drive files fit but which together do not; judging two disks as
+/// one measures both against one disk's free space. Neither error is safe,
+/// so the identity has to be exact, and bind mounts of one device share its
+/// id. Off Linux (the laptop) it is DriveInfo.Name. Null when nothing useful
+/// could be read; only then does the old size comparison decide.
 /// </summary>
-public sealed record DiskFigures(string Path, long FreeBytes, long TotalBytes)
+public sealed record DiskFigures(string Path, long FreeBytes, long TotalBytes, string? Volume = null)
 {
     public bool SameFilesystemAs(DiskFigures other) =>
+        !string.IsNullOrEmpty(Volume) && !string.IsNullOrEmpty(other.Volume)
+            ? string.Equals(Volume, other.Volume, StringComparison.Ordinal)
+            : SizesAgreeWith(other);
+
+    /// <summary>
+    /// The old guess, kept as the last resort: equal totals and free figures
+    /// within 1%. Two separate disks of one size with similar usage pass it,
+    /// which is why it no longer decides when a Volume id is known.
+    /// </summary>
+    public bool SizesAgreeWith(DiskFigures other) =>
         TotalBytes == other.TotalBytes
         && Math.Abs(FreeBytes - other.FreeBytes) <= Math.Max(1, TotalBytes / 100);
 
     /// <summary>Measures where <paramref name="path"/> lives. Throws if it does not exist.</summary>
     public static DiskFigures Of(string path)
     {
-        var d = new DriveInfo(System.IO.Path.GetFullPath(path));
-        return new DiskFigures(path, d.AvailableFreeSpace, d.TotalSize);
+        var full = System.IO.Path.GetFullPath(path);
+        var d = new DriveInfo(full);
+        return new DiskFigures(path, d.AvailableFreeSpace, d.TotalSize, VolumeId(full, d));
+    }
+
+    /// <summary>
+    /// Linux: "major:minor" of the mount that holds the path - the entry of
+    /// /proc/self/mountinfo whose mount point is the longest whole-segment
+    /// prefix of the path. Elsewhere: DriveInfo.Name. Null if unreadable.
+    /// </summary>
+    internal static string? VolumeId(string fullPath, DriveInfo? drive = null)
+    {
+        try
+        {
+            if (OperatingSystem.IsLinux() && File.Exists("/proc/self/mountinfo"))
+            {
+                string? best = null; var bestLen = -1;
+                foreach (var line in File.ReadLines("/proc/self/mountinfo"))
+                {
+                    // 36 35 8:0 / /var/mail/vhosts rw,relatime - ext4 /dev/sda rw
+                    var f = line.Split(' ');
+                    if (f.Length < 5) continue;
+                    var mount = f[4].Replace("\\040", " ");
+                    if (mount.Length <= bestLen) continue;
+                    var prefix = mount.TrimEnd('/') + "/";
+                    if (fullPath == mount || fullPath.StartsWith(prefix, StringComparison.Ordinal))
+                    { best = f[2]; bestLen = mount.Length; }
+                }
+                if (best is not null) return best;
+            }
+            var name = (drive ?? new DriveInfo(fullPath)).Name;
+            return string.IsNullOrWhiteSpace(name) ? null : name;
+        }
+        catch { return null; }
     }
 }

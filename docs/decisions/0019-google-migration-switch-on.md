@@ -118,6 +118,28 @@ filesystem, and checks each disk separately when they do not.
 - **When the estimate refuses, it names the shortfall** ("short by 37 GiB"),
   which is the size of Linode Block Storage volume to attach.
 
+### Built, and why the single-disk case matters (10 Oct 2026)
+- **Today there is one data disk.** The Core session measured the server on
+  9 Oct: `/dev/sda`, 157 GB, 72 GB free, and Postgres (`pgdata`), the mail
+  store (`vmail`) and Space (`spaceblobs`) are all on it. So checking the
+  mail store's path covers the database too. **That is a fact about today's
+  hardware, not about the logic**: the moment Block Storage is attached for
+  a large customer, mail and Space may land on different filesystems, and
+  that is when the comparison below starts doing real work rather than
+  agreeing with itself. Re-check `df` before trusting it.
+- **The double count is in `MigrationFit`** (`mailOnDisk = MailBytes * 2`),
+  confirmed, not a thing to do.
+- **Which filesystem a path is on is decided by identity, not by size.**
+  `DiskFigures.Volume` is the device id ("major:minor" from
+  `/proc/self/mountinfo`) of the mount holding the path. Not the mount
+  point: inside the API container every Docker volume is its own mount
+  point, so by mount point the two volumes on the one disk would read as
+  two filesystems - and judging one disk as two permits a migration whose
+  mail fits and whose Drive files fit but which together do not. Two disks
+  judged as one is the opposite error. Bind mounts of one device share its
+  id, so the identity is exact either way. The old size comparison remains
+  only as a last resort when no id could be read.
+
 **For Amit:** the design treated the disk as a hard limit because Amit did
 not want another server. Additional storage (Block Storage) changes
 "refuse" into "refuse and say how much to add". That is a change to the
