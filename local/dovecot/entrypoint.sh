@@ -191,6 +191,18 @@ else
     rm -f "$OVR"
 fi
 
+# The migration master passdb's file MUST exist (dovecot.conf): created empty
+# - "off" - when the volume is new. Never written with content here; only
+# infra/scripts/migration-master.sh puts an entry in it.
+mkdir -p /etc/dovecot/migration
+if [ ! -f /etc/dovecot/migration/master.passwd ]; then
+    : > /etc/dovecot/migration/master.passwd
+    echo "[dovecot] migration master login: off (empty file created)"
+fi
+chown root:dovecot /etc/dovecot/migration/master.passwd
+chmod 0640 /etc/dovecot/migration/master.passwd
+echo "[dovecot] migration master login: $( [ -s /etc/dovecot/migration/master.passwd ] && echo ON || echo off)"
+
 echo "[dovecot] waiting for postgres"
 for i in $(seq 1 30); do
     if (echo > /dev/tcp/postgres/5432) 2>/dev/null; then

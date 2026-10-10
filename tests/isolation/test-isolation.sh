@@ -1213,6 +1213,58 @@ run_as postgres "DELETE FROM people.employees WHERE full_name LIKE 'iso-emp-%' A
     DELETE FROM people.hr_members WHERE tenant_id = '$SCHOOL' AND user_id = 'd2222222-2222-2222-2222-222222222222';" >/dev/null 2>&1
 
 # ---------------------------------------------------------------------------
+hdr "Google migration jobs are isolated"
+
+# migration.jobs says whose Google mailbox is being read and how far it got;
+# migration.items lists every message id. 20261009-migration-jobs.sql. A
+# fixture of its own, inserted as postgres and removed at the end.
+run_as postgres "
+    INSERT INTO migration.jobs (id, tenant_id, data_type, source_user) VALUES
+        ('0c000000-0000-0000-0000-0000000000c1','$TECHVEIN','mail','iso-mig-techvein@example.test'),
+        ('0c000000-0000-0000-0000-0000000000c2','$SCHOOL','mail','iso-mig-school@example.test')
+    ON CONFLICT DO NOTHING;
+    INSERT INTO migration.items (tenant_id, job_id, source_id, outcome) VALUES
+        ('$TECHVEIN','0c000000-0000-0000-0000-0000000000c1','iso-mig-item-t','done'),
+        ('$SCHOOL','0c000000-0000-0000-0000-0000000000c2','iso-mig-item-s','done')
+    ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+
+own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM migration.jobs WHERE source_user = 'iso-mig-techvein@example.test'")
+[ "${own:-0}" -eq 1 ] && pass "Techvein sees its own migration job" \
+                      || fail "Techvein cannot see its own migration job (got '${own}') - fixture or RLS too strict"
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM migration.jobs WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's migration jobs" \
+                       || fail "LEAK: $leak ABC School migration job(s) visible to Techvein"
+leak=$(as_tenant "$SCHOOL" "SELECT count(*) FROM migration.items WHERE source_id = 'iso-mig-item-t'")
+[ "${leak:-1}" -eq 0 ] && pass "ABC School cannot see Techvein's migration items" \
+                       || fail "LEAK: a Techvein migration item is visible to ABC School"
+n=$(no_context "SELECT count(*) FROM migration.jobs")
+[ "${n:-1}" -eq 0 ] && pass "no tenant context returns zero migration jobs" \
+                    || fail "DANGEROUS: ${n} migration job(s) visible with no tenant set"
+run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    UPDATE migration.jobs SET source_user = 'iso-mig-hijacked' WHERE tenant_id = '$SCHOOL';" >/dev/null 2>&1
+hij=$(scalar_as postgres "SELECT count(*) FROM migration.jobs WHERE source_user = 'iso-mig-hijacked'")
+[ "${hij:-1}" -eq 0 ] && pass "Techvein cannot rewrite ABC School's migration job" \
+                      || fail "LEAK: Techvein rewrote an ABC School migration job"
+# migration.grants says which organisation let TatvaOS read its Google data
+# (decision 0019 §1). Another organisation must not see, or end, the grant.
+run_as postgres "INSERT INTO migration.grants (id, tenant_id, google_domain, google_admin, client_id) VALUES
+    ('0d000000-0000-0000-0000-0000000000d2','$SCHOOL','abcschool.example','admin@abcschool.example','iso-client')
+    ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+own=$(as_tenant "$SCHOOL" "SELECT count(*) FROM migration.grants WHERE client_id = 'iso-client'")
+[ "${own:-0}" -eq 1 ] && pass "ABC School sees its own Google grant" \
+                      || fail "ABC School cannot see its own grant (got '${own}') - fixture or RLS too strict"
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM migration.grants WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's Google grant" \
+                       || fail "LEAK: ABC School's Google grant visible to Techvein"
+run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    UPDATE migration.grants SET revoked_at = now() WHERE tenant_id = '$SCHOOL';" >/dev/null 2>&1
+ended=$(scalar_as postgres "SELECT count(*) FROM migration.grants WHERE client_id = 'iso-client' AND revoked_at IS NOT NULL")
+[ "${ended:-1}" -eq 0 ] && pass "Techvein cannot end ABC School's Google grant" \
+                        || fail "LEAK: Techvein ended ABC School's Google grant"
+run_as postgres "DELETE FROM migration.grants WHERE id = '0d000000-0000-0000-0000-0000000000d2';" >/dev/null 2>&1
+run_as postgres "DELETE FROM migration.jobs WHERE id IN ('0c000000-0000-0000-0000-0000000000c1','0c000000-0000-0000-0000-0000000000c2');" >/dev/null 2>&1
+
+# ---------------------------------------------------------------------------
 printf '\n%s%s%s\n' "$CYAN" "----------------------------------------" "$RST"
 printf '  passed: %s%d%s   failed: %s%d%s\n' \
     "$GREEN" "$PASSED" "$RST" \

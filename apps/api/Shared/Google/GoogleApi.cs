@@ -51,6 +51,36 @@ public sealed class GoogleApi(HttpClient http, GoogleTokenSource tokens, GoogleE
     public async Task<JsonDocument> GetJsonAsync(
         GoogleServiceAccount account, string subject, IReadOnlyCollection<string> scopes, Uri url, CancellationToken ct)
     {
+        using var resp = await SendAsync(account, subject, scopes, url, ct);
+        return await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// GET a body as a STREAM - a Drive file's bytes, up to Space's limit -
+    /// with the same retries as everything else. Retries happen only before
+    /// the body is read; once the caller is reading, a broken connection is
+    /// the caller's error, and the job runner retries the page. The caller
+    /// disposes the result, which disposes the response.
+    /// </summary>
+    public async Task<GoogleBody> GetStreamAsync(
+        GoogleServiceAccount account, string subject, IReadOnlyCollection<string> scopes, Uri url, CancellationToken ct)
+    {
+        var resp = await SendAsync(account, subject, scopes, url, ct);
+        try
+        {
+            return new GoogleBody(resp, await resp.Content.ReadAsStreamAsync(ct), resp.Content.Headers.ContentLength);
+        }
+        catch
+        {
+            resp.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>The one retry loop. Returns a SUCCESSFUL response, headers read; the caller disposes it.</summary>
+    private async Task<HttpResponseMessage> SendAsync(
+        GoogleServiceAccount account, string subject, IReadOnlyCollection<string> scopes, Uri url, CancellationToken ct)
+    {
         var refreshedOnce = false;
         for (var attempt = 1; ; attempt++)
         {
@@ -58,28 +88,30 @@ public sealed class GoogleApi(HttpClient http, GoogleTokenSource tokens, GoogleE
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-            if (resp.IsSuccessStatusCode)
-                return await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
+            var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (resp.IsSuccessStatusCode) return resp;
 
-            var status = (int)resp.StatusCode;
-            var body = await resp.Content.ReadAsStringAsync(ct);
-            var (reason, message) = ReadError(body);
-
-            // A token Google revoked before its hour was up: get a new one,
-            // once. A second 401 is a real refusal.
-            if (resp.StatusCode == HttpStatusCode.Unauthorized && !refreshedOnce)
+            using (resp)
             {
-                refreshedOnce = true;
-                tokens.Forget(account, subject);
-                attempt--;
-                continue;
+                var status = (int)resp.StatusCode;
+                var body = await resp.Content.ReadAsStringAsync(ct);
+                var (reason, message) = ReadError(body);
+
+                // A token Google revoked before its hour was up: get a new one,
+                // once. A second 401 is a real refusal.
+                if (resp.StatusCode == HttpStatusCode.Unauthorized && !refreshedOnce)
+                {
+                    refreshedOnce = true;
+                    tokens.Forget(account, subject);
+                    attempt--;
+                    continue;
+                }
+
+                if (!Retryable(status, reason) || attempt >= MaxAttempts)
+                    throw new GoogleApiException(status, reason, message, attempt);
+
+                await _delay(WaitBefore(attempt, resp.Headers.RetryAfter), ct);
             }
-
-            if (!Retryable(status, reason) || attempt >= MaxAttempts)
-                throw new GoogleApiException(status, reason, message, attempt);
-
-            await _delay(WaitBefore(attempt, resp.Headers.RetryAfter), ct);
         }
     }
 
@@ -121,12 +153,30 @@ public sealed class GoogleApi(HttpClient http, GoogleTokenSource tokens, GoogleE
     }
 }
 
+/// <summary>A response body being streamed. Disposing it closes the response.</summary>
+public sealed class GoogleBody(HttpResponseMessage response, Stream stream, long? length) : IDisposable
+{
+    public Stream Stream { get; } = stream;
+    /// <summary>Content-Length, when Google sent one.</summary>
+    public long? Length { get; } = length;
+    public void Dispose() { Stream.Dispose(); response.Dispose(); }
+}
+
 /// <summary>Where the Google APIs are. Google's own, unless a test points them at a fake.</summary>
 public sealed class GoogleEndpoints
 {
     public Uri Gmail { get; init; } = new("https://gmail.googleapis.com/gmail/v1/");
     public Uri Drive { get; init; } = new("https://www.googleapis.com/drive/v3/");
     public Uri Directory { get; init; } = new("https://admin.googleapis.com/admin/directory/v1/");
+    public Uri People { get; init; } = new("https://people.googleapis.com/v1/");
+    public Uri Calendar { get; init; } = new("https://www.googleapis.com/calendar/v3/");
+
+    /// <summary>Every API under one base - a fake Google for tests, never production (Program.cs).</summary>
+    public static GoogleEndpoints Under(Uri b) => new()
+    {
+        Gmail = new(b, "gmail/v1/"), Drive = new(b, "drive/v3/"), Directory = new(b, "admin/directory/v1/"),
+        People = new(b, "v1/"), Calendar = new(b, "calendar/v3/"),
+    };
 }
 
 /// <summary>A Google API call that failed for good. Never carries a token.</summary>

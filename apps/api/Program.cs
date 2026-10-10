@@ -490,10 +490,51 @@ builder.Services.AddHostedService<MailTriageWorker>();
 // per (source, data type); only the Development-only synthetic one exists yet.
 // tests/migration/test-job-runner.sh kills it mid-run and watches it resume.
 builder.Services.AddScoped<TatvaOS.Api.Modules.Migration.MigrationJobRunner>();
+builder.Services.AddScoped<TatvaOS.Api.Modules.Migration.MigrationEnrolment>();
 foreach (var dataType in new[] { "mail", "contacts", "calendar", "drive" })
     builder.Services.AddSingleton<TatvaOS.Api.Modules.Migration.IMigrationSource>(sp =>
         new TatvaOS.Api.Modules.Migration.SyntheticSource(dataType, sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddHostedService<MigrationJobWorker>();
+
+// The Google side (decision 0019, proposed). The clients are always here - they
+// hold nothing - but the REAL sources register only when the server has
+// TatvaOS's Google key (Migration:Google:KeyFile), and mail only when Dovecot's
+// migration master password file exists too. Without them the runner parks
+// google_workspace jobs as "no source for ... in this build", and the admin
+// endpoints say what is missing.
+builder.Services.AddHttpClient("google", c => c.Timeout = TimeSpan.FromMinutes(10));
+builder.Services.AddSingleton(sp => new TatvaOS.Api.Shared.Google.GoogleTokenSource(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("google")));
+builder.Services.AddSingleton(sp => new TatvaOS.Api.Shared.Google.GoogleApi(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("google"),
+    sp.GetRequiredService<TatvaOS.Api.Shared.Google.GoogleTokenSource>(),
+    // Development ONLY: every Google API under one base URL, for the fake
+    // Google tests/migration-e2e runs. Ignored anywhere else, so production
+    // can never be pointed away from Google by a stray setting.
+    builder.Environment.IsDevelopment() && builder.Configuration["Migration:Google:ApiBase"] is { Length: > 0 } fake
+        ? TatvaOS.Api.Shared.Google.GoogleEndpoints.Under(new Uri(fake))
+        : null));
+builder.Services.AddSingleton<TatvaOS.Api.Shared.Google.GmailClient>();
+builder.Services.AddSingleton<TatvaOS.Api.Shared.Google.GoogleWorkspaceClient>();
+builder.Services.AddSingleton<TatvaOS.Api.Shared.Google.GoogleContactsClient>();
+builder.Services.AddSingleton<TatvaOS.Api.Shared.Google.GoogleCalendarClient>();
+builder.Services.AddSingleton<TatvaOS.Api.Shared.Google.GoogleDriveClient>();
+builder.Services.AddSingleton<TatvaOS.Api.Modules.Migration.MigrationSizeEstimator>();
+if (TatvaOS.Api.Modules.Migration.FileGoogleCredentialProvider.IsConfigured(builder.Configuration))
+{
+    builder.Services.AddSingleton<TatvaOS.Api.Modules.Migration.FileGoogleCredentialProvider>();
+    builder.Services.AddSingleton<TatvaOS.Api.Modules.Migration.Mail.IGoogleCredentialProvider>(sp =>
+        sp.GetRequiredService<TatvaOS.Api.Modules.Migration.FileGoogleCredentialProvider>());
+    builder.Services.AddSingleton<TatvaOS.Api.Modules.Migration.IMigrationSource, TatvaOS.Api.Modules.Migration.Contacts.GoogleContactsSource>();
+    builder.Services.AddSingleton<TatvaOS.Api.Modules.Migration.IMigrationSource, TatvaOS.Api.Modules.Migration.Calendar.GoogleCalendarSource>();
+    builder.Services.AddSingleton<TatvaOS.Api.Modules.Migration.IMigrationSource, TatvaOS.Api.Modules.Migration.Drive.GoogleDriveSource>();
+    if (TatvaOS.Api.Modules.Migration.Mail.MasterMailboxLogin.IsConfigured(builder.Configuration))
+    {
+        builder.Services.AddSingleton<TatvaOS.Api.Modules.Migration.Mail.IMigrationMailboxLogin, TatvaOS.Api.Modules.Migration.Mail.MasterMailboxLogin>();
+        builder.Services.AddSingleton<TatvaOS.Api.Modules.Migration.Mail.DovecotAppender>();
+        builder.Services.AddSingleton<TatvaOS.Api.Modules.Migration.IMigrationSource, TatvaOS.Api.Modules.Migration.Mail.GmailMailSource>();
+    }
+}
 
 // iMIP: what Mail's ingest calls when a delivered message carries a calendar
 // reply (docs/MAIL_IMIP_SEAM.md §4). Scoped, because it runs inside the
@@ -950,6 +991,8 @@ TatvaOS.Api.Modules.Hire.CandidateEndpoints.MapCandidateEndpoints(app);
 // The public careers page and its admin setup (decision 0010, switched off).
 TatvaOS.Api.Modules.Hire.CareersEndpoints.MapCareersEndpoints(app);
 app.MapStorageEndpoints();
+// Google migration progress, per person (read-only; enrolling needs section 9).
+TatvaOS.Api.Modules.Migration.MigrationEndpoints.MapMigrationEndpoints(app);
 app.MapAuditEndpoints();
 // Shared mailboxes are PROVISIONING — the same act as creating a person, so
 // Core owns it. Mail owns who may read one.
@@ -1069,6 +1112,14 @@ app.Lifetime.ApplicationStarted.Register(() =>
     TatvaOS.Api.Shared.Data.OperatorWriteTransaction.Report(
         ((IEndpointRouteBuilder)app).DataSources,
         app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("OperatorWriteTransaction")));
+
+// The Google migration's master login: CRITICAL at every start while it is
+// on, naming since when (decision 0019 §2). Its cron twin on the server is
+// infra/scripts/migration-master-alert.sh.
+app.Lifetime.ApplicationStarted.Register(() =>
+    TatvaOS.Api.Modules.Migration.Mail.MasterMailboxLogin.ReportAtStartup(
+        app.Configuration,
+        app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("MigrationMasterLogin")));
 
 app.Run();
 

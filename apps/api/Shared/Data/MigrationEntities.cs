@@ -69,3 +69,21 @@ public class MigrationItem
     public long Bytes { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
+
+/// <summary>
+/// An organisation's grant of read-only Google access to TatvaOS's service
+/// account (decision 0019 §1; 20261009-z-migration-grants.sql). Holds no key.
+/// </summary>
+public class MigrationGrant
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public string Source { get; set; } = "google_workspace";
+    public string GoogleDomain { get; set; } = "";
+    public string GoogleAdmin { get; set; } = "";
+    public string ClientId { get; set; } = "";
+    public DateTimeOffset GrantedAt { get; set; } = DateTimeOffset.UtcNow;
+    public Guid? GrantedBy { get; set; }
+    public DateTimeOffset? RevokedAt { get; set; }
+    public Guid? RevokedBy { get; set; }
+}
