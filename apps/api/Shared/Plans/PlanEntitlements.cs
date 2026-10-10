@@ -136,6 +136,9 @@ public static class PlanEntitlements
             ["ai.enabled"] = t.AllowAi,
             ["mail.ai"] = t.AllowMailAi || t.MailAiTriageSince != null
                           || await aiThisMonth.AnyAsync(u => u.Feature.StartsWith("mail."), ct),
+            // Docs AI's own switch (#406), or any Docs AI used this month.
+            ["docs.ai"] = t.AllowDocsAi
+                          || await aiThisMonth.AnyAsync(u => u.Feature.StartsWith("docs."), ct),
             ["mail.shared_mailboxes"] = shared > 0,
             ["mail.send_api"] = await db.MailApiKeys.AsNoTracking()
                 .AnyAsync(k => k.TenantId == tenantId && k.RevokedAt == null, ct),

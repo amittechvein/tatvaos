@@ -50,7 +50,10 @@ consts = {}
 for m in re.finditer(r'public const string (\w+)\s*=\s*((?:\s*\+?\s*"(?:[^"\\]|\\.)*")+)\s*;', text['disclosure']):
     consts[m.group(1)] = ''.join(re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(2)))
 WANTED = ['HelpMeWrite', 'SuggestedReplies', 'Summarise', 'Sorting', 'NeverSent', 'WhoDecides', 'Retention',
-          'MeetingNotes']
+          'MeetingNotes',
+          # Docs AI (#384 wording, #406 switch, 10 Oct 2026): on the privacy
+          # page word for word, and on the admin page's Docs AI disclosure.
+          'DocsSummarise', 'DocsRewrite', 'DocsTranslate', 'DocsWrite', 'DocsNeverSent', 'DocsWhoDecides']
 # Sentences the privacy page carries but the ADMIN page does not show
 # (meetings and captions are not on the Mail AI card).
 PRIVACY_ONLY = {'MeetingNotes'}

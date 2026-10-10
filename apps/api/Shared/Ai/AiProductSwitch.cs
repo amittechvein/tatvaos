@@ -21,8 +21,8 @@ namespace TatvaOS.Api.Shared.Ai;
 ///  be read, the answer is no.
 ///
 ///  A new product that wants its own switch adds a prefix and a column here;
-///  products without one (connect.*, docs) are governed by allow_ai alone,
-///  exactly as before.
+///  products without one (connect.*, sheets) are governed by allow_ai alone,
+///  exactly as before. Docs got its own on 10 Oct 2026 (#406, below).
 /// ─────────────────────────────────────────────────────────────────────────
 /// </summary>
 public static class AiProductSwitch
@@ -205,6 +205,60 @@ public static class AiProductSwitch
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             log.LogWarning(ex, "Could not read the Mail AI switch for tenant {Tenant} — refused fail-closed.",
+                tenant.TenantId);
+            return false;
+        }
+    }
+
+    // ── DOCS AI'S OWN SWITCH (10 Oct 2026, #406) ─────────────────────────────
+    //
+    //  Found 7 Oct: the approved sentence AiDisclosure.DocsWhoDecides says
+    //  "Docs AI is off by default. Only your organisation's administrator can
+    //  turn it on". Docs AI was in fact governed by allow_ai — the switch that
+    //  sends MEETING TRANSCRIPTS for minutes — so an organisation with minutes
+    //  on would have had Docs AI the moment it joined ai.docs.organisations,
+    //  with no administrator choosing it, and could not turn Docs AI off
+    //  without losing minutes. Nothing was exposed: the list was empty.
+    //
+    //  Now built exactly like Mail's: core.tenants.allow_docs_ai, default off
+    //  (20261010-docs-ai-switch.sql); checked here, in the gateway, for every
+    //  docs.* label, so no Docs caller can forget it; turned on only by an
+    //  administrator, only once the organisation is on ai.docs.organisations
+    //  (OrgAiEndpoints), audited. Fail-closed: unreadable means no.
+
+    public const string DocsPrefix = "docs.";
+
+    public const string DocsOff =
+        "Docs AI is switched off for your organisation. An administrator can turn it on.";
+
+    public const string DocsNotOffered =
+        "TatvaOS AI in Docs is not available for your organisation yet.";
+
+    public static bool IsDocs(string feature) =>
+        feature.StartsWith(DocsPrefix, StringComparison.Ordinal);
+
+    /// <summary>Whether this organisation is on ai.docs.organisations (AiGate's list for docs.*). Fail-closed.</summary>
+    public static Task<bool> DocsOfferedToAsync(AppDbContext db, Guid tenantId, ILogger log, CancellationToken ct) =>
+        AiGate.AllowedAsync(db, tenantId, AiGate.Docs, log, ct);
+
+    /// <summary>
+    /// Whether the CURRENT tenant has Docs AI on: switched on AND on the Docs
+    /// list. Says nothing about allow_ai; the gateway checks that first.
+    /// </summary>
+    public static async Task<bool> DocsAllowedAsync(AppDbContext db, TenantContext tenant, ILogger log, CancellationToken ct)
+    {
+        if (!tenant.HasTenant) return false;
+        try
+        {
+            var on = await db.Tenants.AsNoTracking()
+                .Where(t => t.Id == tenant.TenantId)
+                .Select(t => t.AllowDocsAi)
+                .FirstOrDefaultAsync(ct);
+            return on && await DocsOfferedToAsync(db, tenant.TenantId, log, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log.LogWarning(ex, "Could not read the Docs AI switch for tenant {Tenant} — refused fail-closed.",
                 tenant.TenantId);
             return false;
         }

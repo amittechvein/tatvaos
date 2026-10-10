@@ -84,6 +84,13 @@ interface AiState {
   /** False for hospitals and clinics (Amit, 25 Sept 2026); the sentence says why. */
   mailTriageOffered: boolean;
   mailTriageNotOffered: string | null;
+  /** Docs AI's own switch (allow_docs_ai, #406, 10 Oct 2026). Works only while `enabled` is on. */
+  docsEnabled: boolean;
+  /** False until this organisation is on ai.docs.organisations; the sentence says so. */
+  docsOffered: boolean;
+  docsNotOffered: string | null;
+  /** What Docs AI sends, in the approved words (AiDisclosure.Docs*). */
+  docsDisclosure: string;
   usage: AiUsage;
   credits: AiCreditsState;
 }
@@ -114,6 +121,7 @@ export default function OrgAiPage() {
   const [confirmOn, setConfirmOn] = useState(false);
   const [confirmMail, setConfirmMail] = useState(false);
   const [confirmTriage, setConfirmTriage] = useState(false);
+  const [confirmDocs, setConfirmDocs] = useState(false);
 
   const load = useCallback(() => {
     setError(null);
@@ -128,7 +136,7 @@ export default function OrgAiPage() {
   useEffect(() => { load(); }, [load]);
 
   async function save(change: {
-    enabled?: boolean; mail?: boolean; mailTriage?: boolean; mailFeatures?: Partial<MailFeatureFlags>;
+    enabled?: boolean; mail?: boolean; mailTriage?: boolean; mailFeatures?: Partial<MailFeatureFlags>; docs?: boolean;
   }) {
     setSaving(true);
     setError(null);
@@ -140,6 +148,7 @@ export default function OrgAiPage() {
       setConfirmOn(false);
       setConfirmMail(false);
       setConfirmTriage(false);
+      setConfirmDocs(false);
       load();
     } catch (e) {
       setError((e as Error).message);
@@ -225,6 +234,11 @@ export default function OrgAiPage() {
         />
       )}
 
+      {state?.platformConfigured && (
+        <DocsAiCard state={state} saving={saving}
+          onOff={() => save({ docs: false })} onOn={() => setConfirmDocs(true)} />
+      )}
+
       {state?.platformConfigured && <CreditsCard credits={state.credits} />}
       {state?.platformConfigured && <UsageCard usage={state.usage} />}
 
@@ -247,6 +261,26 @@ export default function OrgAiPage() {
             </Button>
             <Button variant="primary" disabled={saving} onClick={() => save({ mailTriage: true })}>
               {saving ? 'Turning on…' : 'I agree — sort incoming mail'}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {confirmDocs && state && (
+        <Modal
+          onClose={() => !saving && setConfirmDocs(false)}
+          title="Turn on TatvaOS AI in Docs?"
+          busy={saving}
+        >
+          {/* Built by the API from the approved sentences (AiDisclosure.Docs*,
+              #384) — the same words the privacy page carries. */}
+          <p>{state.docsDisclosure}</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="ghost" disabled={saving} onClick={() => setConfirmDocs(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" disabled={saving} onClick={() => save({ docs: true })}>
+              {saving ? 'Turning on…' : 'I agree — turn it on for Docs'}
             </Button>
           </div>
         </Modal>
@@ -309,6 +343,55 @@ export default function OrgAiPage() {
  * every email off the provider — the reason Translate stays on our own server.
  * Same asymmetry as above: ON asks first, OFF is immediate.
  */
+/**
+ * Docs AI's own switch (allow_docs_ai, #406, 10 Oct 2026). Until then Docs AI
+ * rode on the organisation switch above — the one that sends MEETING
+ * transcripts — so turning minutes on would have turned Docs AI on as well.
+ * Now it is chosen here, separately, as the approved sentence says
+ * (AiDisclosure.DocsWhoDecides).
+ */
+function DocsAiCard({ state, saving, onOn, onOff }: {
+  state: AiState; saving: boolean; onOn: () => void; onOff: () => void;
+}) {
+  return (
+    <Card
+      title="TatvaOS AI in Docs"
+      subtitle="Summarise, improve, translate and write in documents"
+      actions={!state.docsOffered ? undefined : state.docsEnabled ? (
+        <Button variant="danger" disabled={saving} onClick={onOff}>
+          {saving ? 'Turning off…' : 'Turn off for Docs'}
+        </Button>
+      ) : (
+        <Button variant="primary" disabled={saving} onClick={onOn}>Turn on for Docs</Button>
+      )}
+    >
+      {!state.docsOffered && (
+        <p className="mb-0"><Badge tone="neutral">Not available</Badge>{' '}{state.docsNotOffered}</p>
+      )}
+      {state.docsOffered && state.docsEnabled && (
+        <>
+          <p className="mb-2">
+            <Badge tone="ok">On</Badge>{' '}
+            People editing a document can use TatvaOS AI on it, only when they click.
+          </p>
+          {!state.enabled && (
+            <p className="mb-2 text-warn">
+              Docs is switched on, but TatvaOS AI is off for the organisation above, so nothing is sent.
+            </p>
+          )}
+          <p className="text-ink-muted text-[0.75rem] mb-0">{state.docsDisclosure}</p>
+        </>
+      )}
+      {state.docsOffered && !state.docsEnabled && (
+        <p className="mb-0">
+          <Badge tone="neutral">Off</Badge>{' '}
+          Nothing from Docs is sent to TatvaOS AI, and documents show no AI tools.
+        </p>
+      )}
+    </Card>
+  );
+}
+
 function MailAiCard({
   state, saving, onOn, onOff, onTriageOn, onTriageOff, onFeature,
 }: {

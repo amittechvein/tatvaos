@@ -56,6 +56,13 @@ const AI = {
   whoDecides: "Mail AI is off by default. Only your organisation's administrator can turn it on, and they can turn each feature off again at any time. When Mail AI is turned on, Help me write starts on; suggested replies, Summarise and sorting stay off until the administrator turns each one on. Sorting is not offered to hospitals and clinics.",
   retention: "OpenAI does not use what we send to train its models. OpenAI keeps it for up to 30 days to check for misuse, unless the law requires it to be kept longer.",
   meetingNotes: "the meeting's transcript",
+  // Docs AI (#384 wording, #406 switch, 10 Oct 2026).
+  docsSummarise: "the text of the document, when a person asks for a summary",
+  docsRewrite: "only the text a person has selected, when they ask for it to be improved, shortened, expanded, made formal or made simpler",
+  docsTranslate: "only the text a person has selected, and the language they choose, when they ask for a translation",
+  docsWrite: "what a person asks to be written, together with the text of the document for context, when they ask TatvaOS AI to write something",
+  docsNeverSent: "Pictures, comments, earlier versions and the names of the people who edited a document are never sent. Only text is sent, and no more than about 24,000 characters of it at a time. Nothing is sent unless a person clicks.",
+  docsWhoDecides: "Docs AI is off by default. Only your organisation's administrator can turn it on, and they can turn it off again at any time.",
   toWhom: 'OpenAI, in the United States',
 };
 const CONTACT = 'support@tatvaos.com';
@@ -143,18 +150,28 @@ export default function PrivacyPage() {
           <><strong className="text-ink">Text messages:</strong> to send you a one-time sign-in or recovery
             code, your mobile number and the code are passed to our SMS provider (Infobip or MSG91).</>,
           <><strong className="text-ink">AI features, only if your organisation turns them on:</strong>{' '}
-            TatvaOS AI is off unless your organisation&rsquo;s administrator switches it on. Meetings and
-            mail are switched on separately, and in mail each feature has its own switch. When a feature
-            is on, the following is sent to {AI.toWhom}:
+            TatvaOS AI is off unless your organisation&rsquo;s administrator switches it on. Meetings, mail
+            and documents are switched on separately, and in mail each feature has its own switch. When a
+            feature is on, the following is sent to {AI.toWhom}:
             <ul className="mt-1.5 list-[circle] space-y-1 pl-5">
               <li>for meeting notes: {AI.meetingNotes};</li>
               <li>Help me write: {AI.helpMeWrite};</li>
               <li>Suggested replies: {AI.suggestedReplies};</li>
               <li>Summarise conversation: {AI.summarise};</li>
-              <li>Sort incoming mail: {AI.sorting}.</li>
+              <li>Sort incoming mail: {AI.sorting};</li>
+              <li>Summarise a document: {AI.docsSummarise};</li>
+              <li>Improve, shorten, expand, make formal or make simpler: {AI.docsRewrite};</li>
+              <li>Translate in a document: {AI.docsTranslate};</li>
+              <li>Write in a document: {AI.docsWrite}.</li>
             </ul>
             <span className="mt-1.5 block">
-              {AI.neverSent} {AI.whoDecides} {AI.retention} Nothing is sent while these are off.
+              {AI.neverSent} {AI.whoDecides}
+            </span>
+            <span className="mt-1.5 block">
+              {AI.docsNeverSent} {AI.docsWhoDecides}
+            </span>
+            <span className="mt-1.5 block">
+              {AI.retention} Nothing is sent while these are off.
             </span></>,
           <><strong className="text-ink">The people you communicate with:</strong> the recipients of your
             emails, the participants in your meetings, and anyone you share a file with.</>,
