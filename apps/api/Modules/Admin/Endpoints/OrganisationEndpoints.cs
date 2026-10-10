@@ -495,6 +495,11 @@ public static class OrganisationEndpoints
         if (await db.Domains.IgnoreQueryFilters().AnyAsync(d => d.Fqdn == fqdn, ct))
             return Results.Conflict(new { error = $"The domain {fqdn} is already registered on this platform." });
 
+        // Or it belonged to an organisation that was deleted and its mail is
+        // still on the server (the database refuses it too, as a trigger).
+        if (await DeletedOrganisationDomains.IsHeldAsync(db, fqdn, ct))
+            return Results.Conflict(new { error = DeletedOrganisationDomains.Refusal(fqdn) });
+
         if (!await db.Plans.AnyAsync(p => p.Id == req.PlanId && p.Audience == "organisation", ct))
             return Results.BadRequest(new { error = "Unknown plan." });
 
@@ -758,7 +763,10 @@ public static class OrganisationEndpoints
         // Taken, or reserved: the bounce subdomain must never be allocated
         // (see ReservedDomains). "Bounces Pvt Ltd" gets bounces2.<zone>.
         while (ReservedDomains.IsBounceDomain(config, candidate)
-               || await db.Domains.IgnoreQueryFilters().AnyAsync(d => d.Fqdn == candidate, ct))
+               || await db.Domains.IgnoreQueryFilters().AnyAsync(d => d.Fqdn == candidate, ct)
+               // …or held back: a deleted organisation's mail is still on disk
+               // under this name (see OrganisationDeletionEndpoints).
+               || await DeletedOrganisationDomains.IsHeldAsync(db, candidate, ct))
         {
             n++;
             candidate = $"{slug}{n}.{zone}";

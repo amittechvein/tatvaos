@@ -153,6 +153,11 @@ Same("alice's Drive leaves out her trash", alice.DriveBytes, 2 * GiB);
 Same("totals: mail (alice 7, carol 1, admin 1; bob not counted)", report.MailBytes, 9 * GiB);
 Same("totals: Drive (alice 2, carol 4, admin 0)", report.DriveBytes, 6 * GiB);
 
+var directoryCallsBefore = fake.DirectoryCallers.Count;
+var one = await new MigrationSizeEstimator(new GoogleWorkspaceClient(api)).MeasurePeopleAsync(account, ["alice@customer.test"], CancellationToken.None);
+Same("one named person: measured, nobody else", string.Join(",", one.People.Select(p => p.Email)), "alice@customer.test");
+Same("...and the directory was NOT read (no admin, no colleagues' data)", fake.DirectoryCallers.Count, directoryCallsBefore);
+
 Console.WriteLine($"\n  -----------------------------------------------");
 if (failed == 0) { Console.WriteLine($"  PASS  {passed} checks\n"); return 0; }
 Console.WriteLine($"  FAIL  {failed} of {passed + failed} checks\n"); return 1;
