@@ -130,6 +130,14 @@ public static class OrgStructureEndpoints
                 error = $"{jobs} job opening(s) are at {row.Name}. Switch off In use instead — "
                       + "it disappears from new choices and those jobs keep their location.",
             });
+        // And while an employee record names it (People, 0018; RESTRICT behind it).
+        var employees = await People.PeopleAccess.OrganisationWide.CountNamingLocationAsync(db, id, ct);
+        if (employees > 0)
+            return Results.Conflict(new
+            {
+                error = $"{employees} employee record(s) are at {row.Name}. Switch off In use instead — "
+                      + "it disappears from new choices and those records keep their location.",
+            });
 
         db.OrgLocations.Remove(row);
         await db.SaveChangesAsync(ct);
@@ -254,6 +262,13 @@ public static class OrgStructureEndpoints
             {
                 error = $"{jobs} job opening(s) use {row.Title}. Switch off In use instead — "
                       + "it disappears from new choices and those jobs keep their title.",
+            });
+        var employees = await People.PeopleAccess.OrganisationWide.CountNamingDesignationAsync(db, id, ct);
+        if (employees > 0)
+            return Results.Conflict(new
+            {
+                error = $"{employees} employee record(s) use {row.Title}. Switch off In use instead — "
+                      + "it disappears from new choices and those records keep their title.",
             });
 
         db.OrgDesignations.Remove(row);

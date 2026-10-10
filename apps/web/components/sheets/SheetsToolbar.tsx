@@ -104,7 +104,7 @@ export function SheetsToolbar({ f, canEdit, canComment, zoom, onZoom, canUndo, c
 
   return (
     <div role="toolbar" aria-label="Formatting"
-      className="docs-toolbar scroll-thin flex items-center gap-0.5 overflow-x-auto rounded-full bg-[#edf2fa] px-3 py-1 dark:bg-[#2a2f3a]">
+      className="docs-toolbar scroll-thin flex items-center gap-0.5 overflow-x-auto rounded-full border border-line bg-surface px-3 py-1">
       <Btn title="Undo (Ctrl+Z)" disabled={off || !canUndo} onClick={a.undo}><I.undo /></Btn>
       <Btn title="Redo (Ctrl+Y)" disabled={off || !canRedo} onClick={a.redo}><I.redo /></Btn>
       <Btn title="Print (Ctrl+P)" onClick={a.print}><I.print /></Btn>

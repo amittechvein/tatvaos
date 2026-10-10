@@ -18,9 +18,21 @@
 //    3. Writing: the smallest set of parts Excel and Google Sheets open
 //       without a repair prompt.
 //
+//  Conditional formats are kept as colour rules (rules.ts) where TatvaOS has
+//  the kind — cell value, text contains/begins/ends, blanks — and written
+//  back the same way (readColourRules, colourRuleXml).
+//
 //  What an .xlsx can hold that the snapshot cannot, and so is dropped on
-//  import: hidden rows and columns, row/column default styles, conditional
-//  formats, data validation, comments, images and charts, defined names,
+//  List validations are kept as dropdowns (dropdowns.ts): a typed list, or
+//  a range on the same sheet read as values (readDropdowns, dropdownsXml).
+//  The autofilter is kept as the sheet's filter (filter.ts) where its
+//  columns filter by value lists (readFilter, autoFilterXml).
+//
+//  What an .xlsx can hold that the snapshot cannot, and so is dropped on
+//  import: hidden rows and columns, row/column default styles, the other
+//  conditional formats (colour scales, data bars, icon sets, formula rules),
+//  other data validation (numbers, dates, lists from another sheet or a
+//  name), comments, images and charts, defined names,
 //  hyperlinks, rich text formatting inside a cell (the text is kept), and
 //  array-formula ranges (the formula is kept in its first cell).
 //
@@ -30,7 +42,15 @@
 
 import { colIndex, colName, cellName, parseRect, MAX_ROWS, MAX_COLS, type Rect } from '../engine/address';
 import { CellError, INDIA, type ErrorCode, type Scalar } from '../engine/types';
-import { parseInput } from '../engine/input';
+import { parseInput, parseNumberText } from '../engine/input';
+import {
+  cleanRule, cleanStyle, operandCount, type ColourRule, type RuleKind, type RuleStyle,
+} from '../rules';
+import { cleanDropdown, MAX_ITEMS, type Dropdown } from '../dropdowns';
+import {
+  cleanHiddenValues, columnValues, filterKey, hiddenRows, type FilterData, type PlacedFilter,
+} from '../filter';
+import { formatValue } from '../engine/format';
 import {
   DEFAULT_COLS, DEFAULT_COL_WIDTH, DEFAULT_ROWS, DEFAULT_ROW_HEIGHT, cellKey, parseCellKey,
   type BorderSide, type BorderStyle, type CellData, type CellFormat, type SheetData, type WorkbookData,
@@ -504,6 +524,8 @@ const WRITE_BUILTIN: Record<string, number> = {
 interface Styles {
   /** cellXfs index → format (undefined for "no formatting"). */
   xfs: (CellFormat | undefined)[];
+  /** dxfs index → what a conditional format lays on a cell (undefined if nothing TatvaOS can show). */
+  dxfs: (RuleStyle | undefined)[];
 }
 
 const truthy = (v: string | undefined) => v !== undefined && v !== '0' && v !== 'false';
@@ -517,8 +539,20 @@ const BORDER_STYLES: Record<string, BorderStyle> = {
 };
 
 function readStyles(xml: string | undefined, theme: string[]): Styles {
-  if (!xml) return { xfs: [] };
+  if (!xml) return { xfs: [], dxfs: [] };
   const root = parseXml(xml);
+
+  // Differential formats (colour rules). In a dxf a solid fill's colour is
+  // bgColor — the opposite of a cell's fill — so bgColor is read first.
+  const dxfs = kids(kid(root, 'dxfs'), 'dxf').map((d): RuleStyle | undefined => {
+    const f = kid(d, 'font');
+    const p = kid(kid(d, 'fill'), 'patternFill');
+    return cleanStyle({
+      b: flag(kid(f, 'b')), i: flag(kid(f, 'i')), s: flag(kid(f, 'strike')),
+      color: readColor(kid(f, 'color'), theme),
+      bg: p && p.attrs.patternType !== 'none' ? readColor(kid(p, 'bgColor'), theme) ?? readColor(kid(p, 'fgColor'), theme) : undefined,
+    });
+  });
 
   const numFmts = new Map<number, string>();
   for (const nf of kids(kid(root, 'numFmts'), 'numFmt')) {
@@ -601,7 +635,7 @@ function readStyles(xml: string | undefined, theme: string[]): Styles {
     }
     return Object.keys(f).length ? f : undefined;
   });
-  return { xfs };
+  return { xfs, dxfs };
 }
 
 /** Text of a shared-string item or inline string: <t>, or the <t> of every run. Phonetic hints skipped. */
@@ -715,6 +749,137 @@ export async function readXlsx(bytes: Uint8Array): Promise<WorkbookData> {
   }
   if (sheets.length === 0) throw new Error('This file has no worksheets.');
   return { sheets };
+}
+
+const CELL_IS_KIND: Record<string, RuleKind> = {
+  greaterThan: 'gt', greaterThanOrEqual: 'gte', lessThan: 'lt', lessThanOrEqual: 'lte',
+  equal: 'eq', notEqual: 'ne', between: 'between', notBetween: 'notBetween',
+};
+const TEXT_KIND: Record<string, RuleKind> = {
+  containsText: 'contains', notContainsText: 'notContains', beginsWith: 'startsWith', endsWith: 'endsWith',
+  containsBlanks: 'empty', notContainsBlanks: 'notEmpty',
+};
+/** A file can hold any number of rules; a sheet keeps this many. */
+const MAX_RULES_PER_SHEET = 200;
+
+/**
+ * A cellIs operand as TatvaOS keeps it: a number or a quoted string. Anything
+ * else — a cell reference, an expression — is a formula rule TatvaOS cannot
+ * keep, so the rule is dropped (undefined), never evaluated.
+ */
+function cfOperand(f: string | undefined): string | undefined {
+  const t = (f ?? '').trim();
+  const q = /^"((?:[^"]|"")*)"$/.exec(t);
+  if (q) return q[1]!.replace(/""/g, '"');
+  return PLAIN_NUMBER.test(t) && Number.isFinite(Number(t)) ? t : undefined;
+}
+
+/**
+ * The file's conditional formats that TatvaOS can keep, as colour rules in
+ * the order they apply (Excel's priority, lowest first). Kept: "cell value
+ * is …", "text contains / begins / ends", "blanks / no blanks". Dropped:
+ * colour scales, data bars, icon sets, top/bottom, above average,
+ * duplicates, date periods, formula rules, and any rule whose look TatvaOS
+ * cannot show. A rule over several ranges becomes one rule per range.
+ */
+function readColourRules(root: XmlNode, styles: Styles): (Rect & ColourRule)[] {
+  const found: { priority: number; seq: number; rule: Rect & ColourRule }[] = [];
+  for (const cf of kids(root, 'conditionalFormatting')) {
+    const rects = (cf.attrs.sqref ?? '').trim().split(/\s+/)
+      .map((ref) => (ref ? parseRect(ref.replace(/\$/g, '')) : null))
+      .filter((r): r is Rect => r !== null);
+    for (const el of kids(cf, 'cfRule')) {
+      const style = styles.dxfs[Number(el.attrs.dxfId)];
+      if (!style) continue;
+      const type = el.attrs.type ?? '';
+      let rule: ColourRule | undefined;
+      if (type === 'cellIs') {
+        const kind = CELL_IS_KIND[el.attrs.operator ?? ''];
+        const [fa, fb] = kids(el, 'formula').map((f) => cfOperand(f.text));
+        if (kind) rule = cleanRule({ kind, a: fa, b: fb, style });
+      } else if (TEXT_KIND[type]) {
+        rule = cleanRule({ kind: TEXT_KIND[type], a: el.attrs.text, style });
+      }
+      if (!rule) continue;
+      const priority = Number(el.attrs.priority);
+      for (const rect of rects) {
+        found.push({ priority: Number.isFinite(priority) ? priority : Infinity, seq: found.length, rule: { ...rule, ...rect } });
+      }
+    }
+  }
+  return found
+    .sort((x, y) => x.priority - y.priority || x.seq - y.seq)
+    .slice(0, MAX_RULES_PER_SHEET)
+    .map((x) => x.rule);
+}
+
+/**
+ * The file's autofilter as the sheet's filter. Excel lists the values each
+ * column SHOWS; TatvaOS keeps the ones it hides (filter.ts), so a column's
+ * hidden values are the ones in its data not on Excel's list — worked out
+ * from the cells as they show. Only value lists (<filters>) are kept: a
+ * custom condition ("greater than"), top 10, a date period or a colour
+ * filter keeps the filter's range but not that column's condition.
+ */
+function readFilter(root: XmlNode, cells: Map<string, CellData>): FilterData | undefined {
+  const af = kid(root, 'autoFilter');
+  const rect = af?.attrs.ref ? parseRect(af.attrs.ref.replace(/\$/g, '')) : null;
+  if (!af || !rect || rect.r2 <= rect.r1) return undefined;
+  const shown = (r: number, c: number) => cellShownText(cells.get(cellKey(r, c)));
+  const hidden: Record<number, string[]> = {};
+  for (const fc of kids(af, 'filterColumn')) {
+    const c = rect.c1 + Number(fc.attrs.colId);
+    const list = kid(fc, 'filters');
+    if (!list || !Number.isInteger(c) || c < rect.c1 || c > rect.c2) continue;
+    const keep = new Set(kids(list, 'filter').map((x) => filterKey(x.attrs.val)));
+    if (truthy(list.attrs.blank)) keep.add('');
+    const hide = cleanHiddenValues(columnValues(rect, c, shown).filter((v) => !keep.has(v.key)).map((v) => v.text));
+    if (hide.length > 0) hidden[c] = hide;
+  }
+  return { ...rect, hidden };
+}
+
+/** A file can hold any number of validations; a sheet keeps this many dropdowns. */
+const MAX_DROPDOWNS_PER_SHEET = 200;
+
+/**
+ * The file's list validations as dropdowns. Two sources are read: a list
+ * typed into the rule ("Paid,Due,Waived"), and a range on the SAME sheet
+ * ($H$2:$H$6), whose cells are read now, as values — the dropdown keeps the
+ * choices, not a link to those cells. A range on another sheet, a named
+ * range or any other formula is dropped, never evaluated; so are the other
+ * validation types (whole number, date, text length, custom).
+ */
+function readDropdowns(root: XmlNode, cells: Map<string, CellData>): (Rect & Dropdown)[] {
+  const out: (Rect & Dropdown)[] = [];
+  for (const v of kids(kid(root, 'dataValidations'), 'dataValidation')) {
+    if (v.attrs.type !== 'list' || out.length >= MAX_DROPDOWNS_PER_SHEET) continue;
+    const f = (kid(v, 'formula1')?.text ?? '').trim();
+    let items: string[] | null = null;
+    const literal = /^"((?:[^"]|"")*)"$/.exec(f);
+    if (literal) {
+      items = literal[1]!.replace(/""/g, '"').split(',');
+    } else {
+      const src = /^\$?[A-Za-z]{1,3}\$?\d+(:\$?[A-Za-z]{1,3}\$?\d+)?$/.test(f) ? parseRect(f.replace(/\$/g, '')) : null;
+      if (src && (src.r2 - src.r1 + 1) * (src.c2 - src.c1 + 1) <= MAX_ITEMS) {
+        items = [];
+        for (let r = Math.min(src.r1, src.r2); r <= Math.max(src.r1, src.r2); r += 1) {
+          for (let c = Math.min(src.c1, src.c2); c <= Math.max(src.c1, src.c2); c += 1) {
+            const cell = cells.get(cellKey(r, c));
+            const shown = cell?.input?.startsWith('=') ? cell.value : cell?.input;
+            if (typeof shown === 'string' || typeof shown === 'number') items.push(String(shown).replace(/^'/, ''));
+          }
+        }
+      }
+    }
+    const dd = items ? cleanDropdown({ items, strict: truthy(v.attrs.showErrorMessage) && v.attrs.errorStyle !== 'warning' && v.attrs.errorStyle !== 'information' }) : undefined;
+    if (!dd) continue;
+    for (const ref of (v.attrs.sqref ?? '').trim().split(/\s+/)) {
+      const rect = ref ? parseRect(ref.replace(/\$/g, '')) : null;
+      if (rect && out.length < MAX_DROPDOWNS_PER_SHEET) out.push({ ...dd, ...rect });
+    }
+  }
+  return out;
 }
 
 function readSheet(
@@ -848,6 +1013,22 @@ function readSheet(
     }
   }
 
+  const rules = readColourRules(root, styles);
+  if (rules.length > 0) {
+    sheet.rules = rules;
+    for (const rule of rules) grow(rule.r2, rule.c2);
+  }
+  const dropdowns = readDropdowns(root, sheet.cells);
+  if (dropdowns.length > 0) {
+    sheet.dropdowns = dropdowns;
+    for (const d of dropdowns) grow(d.r2, d.c2);
+  }
+  const filter = readFilter(root, sheet.cells);
+  if (filter) {
+    sheet.filter = filter;
+    grow(filter.r2, filter.c2);
+  }
+
   sheet.rows = Math.min(MAX_ROWS, Math.max(DEFAULT_ROWS, maxRow + 1, sheet.frozenRows + 1));
   sheet.cols = Math.min(MAX_COLS, Math.max(DEFAULT_COLS, maxCol + 1, sheet.frozenCols + 1));
 
@@ -906,6 +1087,9 @@ class StyleTable {
   borders: string[] = ['<border><left/><right/><top/><bottom/><diagonal/></border>'];
   numFmts: { id: number; code: string }[] = [];
   xfs: string[] = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'];
+  /** Differential formats: what a colour rule lays over a cell (rules.ts). */
+  dxfs: string[] = [];
+  private dxfIx = new Map<string, number>();
   private index = new Map<string, number>();
   private fontIx = new Map<string, number>();
   private fillIx = new Map<string, number>();
@@ -982,6 +1166,17 @@ class StyleTable {
     return id;
   }
 
+  /** The dxfs index for a colour rule's style. In a dxf, a solid fill's colour is bgColor. */
+  dxf(s: RuleStyle): number {
+    const color = argb(s.color);
+    const bg = argb(s.bg);
+    const font = s.b || s.i || s.s || color
+      ? `<font>${s.b ? '<b/>' : ''}${s.i ? '<i/>' : ''}${s.s ? '<strike/>' : ''}${color ? `<color rgb="${color}"/>` : ''}</font>`
+      : '';
+    const fill = bg ? `<fill><patternFill patternType="solid"><fgColor rgb="${bg}"/><bgColor rgb="${bg}"/></patternFill></fill>` : '';
+    return this.intern(this.dxfs, this.dxfIx, `<dxf>${font}${fill}</dxf>`);
+  }
+
   toXml(): string {
     const nf = this.numFmts.length
       ? `<numFmts count="${this.numFmts.length}">${this.numFmts
@@ -994,7 +1189,7 @@ class StyleTable {
       '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
       `<cellXfs count="${this.xfs.length}">${this.xfs.join('')}</cellXfs>` +
       '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
-      '<dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>' +
+      `<dxfs count="${this.dxfs.length}">${this.dxfs.join('')}</dxfs>` + '<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>' +
       '</styleSheet>';
   }
 }
@@ -1077,6 +1272,121 @@ function cellXml(ref: string, cell: CellData, styles: StyleTable, strings: Strin
   return `<c r="${ref}"${s ? ` s="${s}"` : ''}${type ? ` t="${type}"` : ''}>${body}</c>`;
 }
 
+const CELL_IS_OPERATOR: Partial<Record<RuleKind, string>> = {
+  gt: 'greaterThan', gte: 'greaterThanOrEqual', lt: 'lessThan', lte: 'lessThanOrEqual',
+  eq: 'equal', ne: 'notEqual', between: 'between', notBetween: 'notBetween',
+};
+
+/** Text as an Excel string constant. */
+const xlString = (s: string) => `"${s.replace(/"/g, '""')}"`;
+
+/**
+ * One colour rule → its <conditionalFormatting> element ('' if it cannot be
+ * written). What a person typed into the rule goes in ONLY as a quoted
+ * string or a plain number — never as formula text — and every formula
+ * built here is also put through formulaIsSafe, the check the server runs
+ * on the file (XlsxGuard.cs); a rule that failed it would be left out of
+ * the file rather than cost the save. stopIfTrue: in TatvaOS the first
+ * matching rule wins whole (rules.ts); without it Excel would combine them.
+ */
+function colourRuleXml(rule: Rect & ColourRule, priority: number, styles: StyleTable): string {
+  const clean = cleanRule(rule);
+  const r1 = Math.min(rule.r1, rule.r2); const r2 = Math.max(rule.r1, rule.r2);
+  const c1 = Math.min(rule.c1, rule.c2); const c2 = Math.max(rule.c1, rule.c2);
+  if (!clean || r1 < 0 || c1 < 0 || r2 >= XL_MAX_ROWS || c2 >= XL_MAX_COLS) return '';
+  const sqref = r1 === r2 && c1 === c2 ? cellName(r1, c1) : `${cellName(r1, c1)}:${cellName(r2, c2)}`;
+  const tl = cellName(r1, c1); // formulas are written for the top-left cell, relative
+  const number = (s: string) => { const n = parseNumberText(s, INDIA); return n !== null && Number.isFinite(n) ? numberText(n) : xlString(s); };
+  const a = clean.a ?? ''; const qa = xlString(a);
+  let attrs: string; let formulas: string[];
+  switch (clean.kind) {
+    case 'contains': attrs = `type="containsText" operator="containsText" text="${escapeXml(a)}"`; formulas = [`NOT(ISERROR(SEARCH(${qa},${tl})))`]; break;
+    case 'notContains': attrs = `type="notContainsText" operator="notContains" text="${escapeXml(a)}"`; formulas = [`ISERROR(SEARCH(${qa},${tl}))`]; break;
+    case 'startsWith': attrs = `type="beginsWith" operator="beginsWith" text="${escapeXml(a)}"`; formulas = [`LEFT(${tl},LEN(${qa}))=${qa}`]; break;
+    case 'endsWith': attrs = `type="endsWith" operator="endsWith" text="${escapeXml(a)}"`; formulas = [`RIGHT(${tl},LEN(${qa}))=${qa}`]; break;
+    case 'empty': attrs = 'type="containsBlanks"'; formulas = [`LEN(TRIM(${tl}))=0`]; break;
+    case 'notEmpty': attrs = 'type="notContainsBlanks"'; formulas = [`LEN(TRIM(${tl}))>0`]; break;
+    default:
+      attrs = `type="cellIs" operator="${CELL_IS_OPERATOR[clean.kind]}"`;
+      formulas = operandCount(clean.kind) === 2 ? [number(a), number(clean.b ?? '')] : [number(a)];
+  }
+  if (!formulas.every((f) => formulaIsSafe(f))) return '';
+  const dxfId = styles.dxf(clean.style);
+  return `<conditionalFormatting sqref="${sqref}"><cfRule ${attrs} dxfId="${dxfId}" priority="${priority}" stopIfTrue="1">` +
+    `${formulas.map((f) => `<formula>${escapeXml(f)}</formula>`).join('')}</cfRule></conditionalFormatting>`;
+}
+
+/** What a snapshot cell shows, as text — the value a filter compares (filter.ts), as the grid does. */
+function cellShownText(cell: CellData | undefined): string {
+  if (!cell) return '';
+  const v = cell.value !== undefined ? cell.value : cell.input === null ? null : parseInput(cell.input, INDIA).value;
+  return formatValue(v ?? null, cell.format?.nf, INDIA).text;
+}
+
+/** A snapshot's filter as positions with comparison keys (the model's PlacedFilter shape). */
+function placedFilter(d: FilterData): PlacedFilter | null {
+  const r1 = Math.min(d.r1, d.r2); const r2 = Math.min(Math.max(d.r1, d.r2), XL_MAX_ROWS - 1);
+  const c1 = Math.min(d.c1, d.c2); const c2 = Math.min(Math.max(d.c1, d.c2), XL_MAX_COLS - 1);
+  if (r1 < 0 || c1 < 0 || r2 <= r1) return null;
+  const hidden = new Map<number, Set<string>>();
+  for (const [k, values] of Object.entries(d.hidden ?? {})) {
+    const c = Number(k);
+    const clean = cleanHiddenValues(values);
+    if (Number.isInteger(c) && c >= c1 && c <= c2 && clean.length > 0) hidden.set(c, new Set(clean.map(filterKey)));
+  }
+  return { r1, c1, r2, c2, hidden };
+}
+
+/**
+ * The filter → <autoFilter>. Excel lists the values a column SHOWS (TatvaOS
+ * keeps the ones it hides — filter.ts says why), so each filtered column's
+ * shown values are worked out from the data now; blanks are a flag, not a
+ * value. The values go in as attribute text, not as a formula.
+ */
+function autoFilterXml(f: PlacedFilter, shown: (r: number, c: number) => string): string {
+  const cols: string[] = [];
+  for (const [c, hiddenKeys] of [...f.hidden].sort((a, b) => a[0] - b[0])) {
+    const visible = columnValues(f, c, shown).filter((v) => !hiddenKeys.has(v.key));
+    const blank = visible.some((v) => v.key === '');
+    const vals = visible.filter((v) => v.key !== '').map((v) => `<filter val="${escapeXml(v.text)}"/>`).join('');
+    cols.push(`<filterColumn colId="${c - f.c1}"><filters${blank ? ' blank="1"' : ''}>${vals}</filters></filterColumn>`);
+  }
+  const ref = `${cellName(f.r1, f.c1)}:${cellName(f.r2, f.c2)}`;
+  return cols.length ? `<autoFilter ref="${ref}">${cols.join('')}</autoFilter>` : `<autoFilter ref="${ref}"/>`;
+}
+
+/** Excel's limit on a list typed into the rule itself ("a,b,c"). */
+const XL_LIST_MAX = 255;
+
+/**
+ * A sheet's dropdowns → one <dataValidations> ('' if none can be written).
+ * Written as a list typed into the rule, so the file needs no helper sheet.
+ * That form holds at most 255 characters and cannot hold a comma inside an
+ * item: a dropdown that does not fit is left out of the FILE only — the
+ * values in its cells are written as ever, and it stays in TatvaOS. Strict
+ * → Excel's "stop" message; loose → no message, the nearest Excel has to
+ * TatvaOS's red corner. The list goes in as a quoted string, and through
+ * formulaIsSafe, like a colour rule's operands (colourRuleXml).
+ */
+function dropdownsXml(list: (Rect & Dropdown)[]): string {
+  const out: string[] = [];
+  for (const d of list) {
+    const clean = cleanDropdown(d);
+    const r1 = Math.min(d.r1, d.r2); const r2 = Math.max(d.r1, d.r2);
+    const c1 = Math.min(d.c1, d.c2); const c2 = Math.max(d.c1, d.c2);
+    if (!clean || r1 < 0 || c1 < 0 || r2 >= XL_MAX_ROWS || c2 >= XL_MAX_COLS) continue;
+    if (clean.items.some((it) => it.includes(','))) continue;
+    const literal = clean.items.join(',');
+    if (literal.length > XL_LIST_MAX) continue;
+    const formula = xlString(literal);
+    if (!formulaIsSafe(formula)) continue;
+    const sqref = r1 === r2 && c1 === c2 ? cellName(r1, c1) : `${cellName(r1, c1)}:${cellName(r2, c2)}`;
+    out.push(`<dataValidation type="list" allowBlank="1" showErrorMessage="${clean.strict ? 1 : 0}" sqref="${sqref}">` +
+      `<formula1>${escapeXml(formula)}</formula1></dataValidation>`);
+  }
+  return out.length ? `<dataValidations count="${out.length}">${out.join('')}</dataValidations>` : '';
+}
+
 function sheetXml(sheet: SheetData, selected: boolean, styles: StyleTable, strings: StringTable): string {
   // Rows, then cells within each row, in order: Excel insists.
   const byRow = new Map<number, [number, CellData][]>();
@@ -1092,6 +1402,12 @@ function sheetXml(sheet: SheetData, selected: boolean, styles: StyleTable, strin
     const r = Number(k);
     if (Number.isInteger(r) && r >= 0 && r < XL_MAX_ROWS && !byRow.has(r)) byRow.set(r, []);
   }
+  // Rows the sheet's filter hides go into the file hidden, as Excel's own
+  // autofilter leaves them — so the file opens looking as it did here.
+  const filter = sheet.filter ? placedFilter(sheet.filter) : null;
+  const shown = (r: number, c: number) => cellShownText(sheet.cells.get(cellKey(r, c)));
+  const hiddenByFilter = filter ? hiddenRows(filter, shown) : new Set<number>();
+  for (const r of hiddenByFilter) if (r < XL_MAX_ROWS && !byRow.has(r)) byRow.set(r, []);
 
   const rowsXml: string[] = [];
   for (const r of [...byRow.keys()].sort((a, b) => a - b)) {
@@ -1103,9 +1419,10 @@ function sheetXml(sheet: SheetData, selected: boolean, styles: StyleTable, strin
     }
     const h = sheet.rowHeights[r];
     const ht = h !== undefined && Number.isFinite(h) && h >= 0 ? ` ht="${Math.round(h * 0.75 * 100) / 100}" customHeight="1"` : '';
-    if (!cx.length && !ht) continue;
+    const hid = hiddenByFilter.has(r) ? ' hidden="1"' : '';
+    if (!cx.length && !ht && !hid) continue;
     if (cx.length) maxR = Math.max(maxR, r);
-    rowsXml.push(`<row r="${r + 1}"${ht}>${cx.join('')}</row>`);
+    rowsXml.push(`<row r="${r + 1}"${ht}${hid}>${cx.join('')}</row>`);
   }
 
   const parts: string[] = [`${XML_HEAD}<worksheet xmlns="${NS_MAIN}" xmlns:r="${NS_REL}">`];
@@ -1148,6 +1465,8 @@ function sheetXml(sheet: SheetData, selected: boolean, styles: StyleTable, strin
   }
 
   parts.push(rowsXml.length ? `<sheetData>${rowsXml.join('')}</sheetData>` : '<sheetData/>');
+  // autoFilter: right after sheetData, before mergeCells (the schema's order).
+  if (filter) parts.push(autoFilterXml(filter, shown));
 
   const merges = sheet.merges
     .map((m: Rect) => ({ r1: Math.min(m.r1, m.r2), c1: Math.min(m.c1, m.c2), r2: Math.max(m.r1, m.r2), c2: Math.max(m.c1, m.c2) }))
@@ -1156,6 +1475,11 @@ function sheetXml(sheet: SheetData, selected: boolean, styles: StyleTable, strin
     parts.push(`<mergeCells count="${merges.length}">${merges
       .map((m) => `<mergeCell ref="${cellName(m.r1, m.c1)}:${cellName(m.r2, m.c2)}"/>`).join('')}</mergeCells>`);
   }
+  // After mergeCells and before pageMargins: the order the schema requires
+  // (conditionalFormatting, then dataValidations).
+  parts.push(...(sheet.rules ?? []).map((rule, i) => colourRuleXml(rule, i + 1, styles)).filter((x) => x !== ''));
+  const lists = dropdownsXml(sheet.dropdowns ?? []);
+  if (lists) parts.push(lists);
   parts.push('<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>');
   return parts.join('');
 }
