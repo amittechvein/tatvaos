@@ -144,6 +144,30 @@ public static class SheetsAdminEndpoints
                 statusCode: StatusCodes.Status409Conflict);
         }
 
+        // No file a BROWSER wrote may go live — Docs' guard, now Sheets' own
+        // (9 Oct 2026). Until this, the only thing between a browser-written
+        // .xlsx and production was an operator remembering to run the count
+        // by hand (SHEETS_SERVER_RENDER_DESIGN.md §switch). The count is the
+        // organisation's documents AND spreadsheets: the design asked for that
+        // one number to be 0 before Sheets goes on, and a browser-written
+        // document is the same breach of decision 0011 as a spreadsheet.
+        if (req.Enabled)
+        {
+            var browserWritten = await BrowserWrittenFiles.CountAsync(db, id, ct);
+            if (browserWritten > 0)
+            {
+                loggers.CreateLogger("TatvaOS.Sheets.Switch").LogWarning(
+                    "Sheets switch-on REFUSED: organisation {OrganisationId} has {Count} file(s) a browser wrote before the server built them; operator {OperatorId}",
+                    id, browserWritten, Actor(http));
+                return Results.Json(new
+                {
+                    error = $"Sheets cannot be switched on for this organisation: {browserWritten} of its documents or spreadsheets were saved by a browser before TatvaOS built their files on the server.",
+                    reason = "browser_files",
+                    count = browserWritten,
+                }, statusCode: StatusCodes.Status409Conflict);
+            }
+        }
+
         // Platform scope sets the tenant for this one operation; it does not
         // switch row-level security off (see OrganisationEndpoints).
         tenant.EnterPlatformScope(id, Actor(http));
