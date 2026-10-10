@@ -11,7 +11,9 @@
 //                          mail counted twice on disk - 12 GiB of mail fits a
 //                            20 GiB usable disk once, and must not fit twice
 //                          the reserve - max(10% of the disk, 5 GiB)
-//                          one filesystem vs two
+//                          one filesystem vs two - decided by the filesystem's
+//                          identity (device id), NOT by matching sizes (Mr.
+//                          Singh on #420): two same-size disks stay two
 //                          the organisation's mail and Space allocations
 //                          per-person quota, by name
 //                          unmeasured people: never "fits"
@@ -53,8 +55,8 @@ MigrationSizeReport Report(params (string Email, long Mail, long Drive)[] people
     new(people.Select(p => new PersonSize(p.Email, p.Mail, p.Drive)).ToList(), [], []);
 var roomy = Cap(10_000 * GiB, 0);
 // One 100 GiB filesystem with 30 GiB free: reserve 10 GiB, so 20 GiB usable.
-var disk = new DiskFigures("/var/mail/vhosts", 30 * GiB, 100 * GiB);
-var sameDisk = disk with { Path = "/var/lib/space/blobs" };
+var disk = new DiskFigures("/var/mail/vhosts", 30 * GiB, 100 * GiB, "8:0");
+var sameDisk = disk with { Path = "/var/lib/space/blobs" };   // same device id
 
 Console.WriteLine("\n  Migration size estimate and verdict");
 
@@ -68,7 +70,7 @@ Has("...with the shortfall", v, "short by 4.0 GiB");
 v = MigrationFit.Judge(Report(("a@x", 6 * GiB, 9 * GiB)), disk, sameDisk, roomy, roomy, null);
 Same("one filesystem: 12 GiB mail-on-disk + 9 GiB Drive > 20 usable is refused", v.State, "refused");
 Has("...as one disk", v, "the mail and Space disk");
-var otherDisk = new DiskFigures("/srv/space", 400 * GiB, 500 * GiB);
+var otherDisk = new DiskFigures("/srv/space", 400 * GiB, 500 * GiB, "8:16");
 v = MigrationFit.Judge(Report(("a@x", 6 * GiB, 9 * GiB)), disk, otherDisk, roomy, roomy, null);
 Same("...the same on two filesystems fits (each disk judged on its own)", v.State, "fits");
 var small = new DiskFigures("/var/mail/vhosts", 8 * GiB, 20 * GiB);
@@ -121,6 +123,30 @@ try
 }
 finally { Directory.Delete(sub); }
 Same("a different total is a different filesystem", disk.SameFilesystemAs(otherDisk), false);
+
+Console.WriteLine("\n>> disk identity, not disk size (Mr. Singh on #420, 10 Oct 2026)");
+// Two genuinely separate disks of the same size with the same usage. By size
+// they are indistinguishable; by device id they are two.
+var twin = new DiskFigures("/srv/space", 30 * GiB, 100 * GiB, "8:16");
+Same("two same-size disks with different device ids are two filesystems", disk.SameFilesystemAs(twin), false);
+Same("...and the old size guess would have called them one - the case this exists for", disk.SizesAgreeWith(twin), true);
+v = MigrationFit.Judge(Report(("a@x", 6 * GiB, 9 * GiB)), disk, twin, roomy, roomy, null);
+Same("...so 12 GiB mail-on-disk + 9 GiB Drive on two such disks fits, each judged alone", v.State, "fits");
+v = MigrationFit.Judge(Report(("a@x", 6 * GiB, 9 * GiB)), disk, twin with { Volume = "8:0" }, roomy, roomy, null);
+Same("...and on ONE disk (same device id) the same figures are refused: 21 > 20 usable", v.State, "refused");
+// One disk whose free figure moved between the two readings (something wrote
+// 20 GiB in between): still one filesystem, which the size guess denied.
+var later = disk with { Path = "/var/lib/space/blobs", FreeBytes = 10 * GiB };
+Same("one device id with free figures 20 GiB apart is still one filesystem", disk.SameFilesystemAs(later), true);
+Same("...which the size guess got wrong", disk.SizesAgreeWith(later), false);
+var noIdA = new DiskFigures("/a", 30 * GiB, 100 * GiB); var noIdB = new DiskFigures("/b", 30 * GiB, 100 * GiB);
+Same("no device id on either side: the size guess decides, as the last resort", noIdA.SameFilesystemAs(noIdB), true);
+Same("a device id on one side only is not enough: sizes decide", disk.SameFilesystemAs(noIdB), true);
+var real = DiskFigures.Of(home);
+if (string.IsNullOrEmpty(real.Volume)) Fail($"a real directory has no volume id: {real}"); else Ok($"a real directory carries a volume id ({(OperatingSystem.IsLinux() ? "device" : "drive")}: {real.Volume})");
+if (OperatingSystem.IsLinux())
+    Same("on Linux the id is major:minor from /proc/self/mountinfo", System.Text.RegularExpressions.Regex.IsMatch(real.Volume ?? "", "^[0-9]+:[0-9]+$"), true);
+Same("the same real filesystem by two paths: one id", DiskFigures.Of(Path.Combine(home, ".")).Volume, real.Volume);
 
 Console.WriteLine("\n>> the estimator, against a fake Google");
 using var rsa = RSA.Create(2048);
