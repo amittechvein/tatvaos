@@ -45,6 +45,31 @@ infra/scripts/migration-master.sh status
 Expect `migration master login: off`. And in the console, `/org/migration`
 says "Not available on this server yet".
 
+**Prove the size estimate sees one disk, not two** (Mr. Singh on #450).
+The estimate decides whether the mail store and Space share a filesystem by
+the **device id** of the mount holding each path, read inside the API
+container - not by mount point, because inside the container every Docker
+volume is its own mount point, and one disk judged as two would permit a
+migration that overfills it. From the server:
+
+```bash
+docker exec tatvaos-api-1 sh -c 'cat /proc/self/mountinfo' | awk '$5=="/var/mail/vhosts"||$5=="/var/lib/space/blobs"{print $3, $5}'
+```
+
+Expect two lines with the **same** `major:minor`. On 10 Oct 2026 (one disk,
+`/dev/sda`) it printed:
+
+```
+8:0 /var/mail/vhosts
+8:0 /var/lib/space/blobs
+```
+
+If the ids differ while `df` on the host shows one disk, **stop**: that is
+the exact condition under which the estimate would permit a migration that
+does not fit. (When Block Storage is attached later, a different id for one
+of them is the correct answer, and the estimate then checks each disk on
+its own.)
+
 ## 2. TatvaOS's Google key (decision 0019 §1)
 
 1. In Google Cloud, a service account for TatvaOS (one, for all customers).
@@ -57,6 +82,24 @@ says "Not available on this server yet".
    added after a container is created is invisible inside it).
 4. **Prove it**: `/org/migration` now shows TatvaOS's client ID and six
    read-only scopes. The API log says `Google service account loaded: <address>`.
+5. **Prove it is in no backup** (decision 0019 §1: the key must never travel
+   with the data). `backup.sh` dumps Postgres, archives exactly the volumes
+   `spaceblobs`, `vmail` and `dkimkeys` (and `connectrec` off-box), and
+   copies `infra/docker/.env` as `env.txt`. It never reads
+   `/srv/tatvaos-secrets`, and the new `tatvaos_migration-master` volume is
+   not on its list either. Show it on the newest backup, from the server:
+
+   ```bash
+   B=/srv/backups/tatvaos; N=$(ls -1t "$B" | grep -E '^[0-9]' | head -1); echo "$N"; ls "$B/$N"
+   for t in "$B/$N"/*.tar.gz; do echo "$(basename "$t"): $(tar tzf "$t" | grep -c tatvaos-secrets) member(s) under tatvaos-secrets"; done
+   echo "env.txt: $(grep -c tatvaos-secrets "$B/$N/env.txt") line(s) naming tatvaos-secrets"
+   ```
+
+   Expect the listing to show only `dkimkeys.tar.gz`, `env.txt`,
+   `postgres.sql.gz`, `spaceblobs.tar.gz`, `vmail.tar.gz`, and every count
+   to be `0`. On 10 Oct 2026 (backup `20261010-103001`, 35,196 archive
+   members) every count was 0. Run it again after the key is in place; a
+   non-zero count means the key is in a backup and the switch stops.
 
 ## 3. The mailbox sign-in (decision 0019 §2)
 
@@ -71,6 +114,11 @@ docker network inspect tatvaos_mailnet -f '{{(index .IPAM.Config 0).Subnet}}'
 ```bash
 DOVECOT_CONTAINER=tatvaos-dovecot-1 MIGRATION_MASTER_NETS=<that subnet> infra/scripts/migration-master.sh on
 ```
+
+The password itself lives in the `tatvaos_migration-master` volume
+(`/etc/dovecot/migration/` in Dovecot, `/run/migration/` read-only in the
+API). `backup.sh` does not archive that volume, so the password is in no
+backup; and `migration-master.sh off` empties it.
 
 **Prove the fence from OUTSIDE the server** (a laptop): an IMAP login as
 `anyone@theirdomain*migration` with any password must be refused. If it is
