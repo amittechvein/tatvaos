@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
@@ -34,6 +35,45 @@ public sealed class MasterMailboxLogin(IConfiguration config, IServiceScopeFacto
     /// </summary>
     public static bool IsConfigured(IConfiguration config) =>
         config["Migration:Imap:MasterPasswordFile"] is { Length: > 0 };
+
+    /// <summary>
+    /// What the API says about the master login at every start (decision 0019
+    /// §2, Mr. Singh 10 Oct 2026): CRITICAL while its password file is
+    /// non-empty, naming since when - the file's mtime, which
+    /// migration-master.sh sets on "on" - and how to switch it off. One
+    /// Information line otherwise, so the state is in the log either way. A
+    /// guarantee that lives in a person's memory is not a guarantee; this and
+    /// its cron twin, infra/scripts/migration-master-alert.sh, are the
+    /// system noticing. Size and time only: the content is never read.
+    /// </summary>
+    public static (LogLevel Level, string Message) StartupReport(IConfiguration config, DateTimeOffset? now = null)
+    {
+        var path = config["Migration:Imap:MasterPasswordFile"];
+        if (string.IsNullOrWhiteSpace(path))
+            return (LogLevel.Information, "migration master login: not configured on this server (Migration:Imap:MasterPasswordFile is not set)");
+        FileInfo f;
+        try
+        {
+            f = new FileInfo(path);
+            if (!f.Exists || f.Length == 0)
+                return (LogLevel.Information, $"migration master login: off ({path} is empty or absent)");
+        }
+        catch (Exception ex)
+        {
+            return (LogLevel.Warning, $"migration master login: could not read {path} ({ex.GetType().Name}) - treat as unknown and check it by hand: infra/scripts/migration-master.sh status");
+        }
+        var since = new DateTimeOffset(f.LastWriteTimeUtc, TimeSpan.Zero);
+        var days = (int)((now ?? DateTimeOffset.UtcNow) - since).TotalDays;
+        return (LogLevel.Critical,
+            $"MIGRATION MASTER LOGIN IS ON since {since:yyyy-MM-dd'T'HH:mm:ss'Z'} ({days} day(s)): a credential that can open ANY mailbox on this server. " +
+            "It is for the days a migration runs. Switch it off when the migration is done: infra/scripts/migration-master.sh off");
+    }
+
+    public static void ReportAtStartup(IConfiguration config, ILogger log)
+    {
+        var (level, message) = StartupReport(config);
+        log.Log(level, "{Message}", message);
+    }
 
     private string MasterUser => config["Migration:Imap:MasterUser"] ?? "migration";
 

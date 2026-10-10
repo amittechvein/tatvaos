@@ -1109,6 +1109,14 @@ app.Lifetime.ApplicationStarted.Register(() =>
         ((IEndpointRouteBuilder)app).DataSources,
         app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("OperatorWriteTransaction")));
 
+// The Google migration's master login: CRITICAL at every start while it is
+// on, naming since when (decision 0019 §2). Its cron twin on the server is
+// infra/scripts/migration-master-alert.sh.
+app.Lifetime.ApplicationStarted.Register(() =>
+    TatvaOS.Api.Modules.Migration.Mail.MasterMailboxLogin.ReportAtStartup(
+        app.Configuration,
+        app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("MigrationMasterLogin")));
+
 app.Run();
 
 /// <summary>Exposed so the integration and isolation tests can boot the app.</summary>
