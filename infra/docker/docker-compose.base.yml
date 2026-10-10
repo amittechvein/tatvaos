@@ -228,6 +228,17 @@ services:
     environment:
       Migration__Imap__MasterPasswordFile: /run/migration/master.password
       Migration__Google__KeyFile: ${MIGRATION_GOOGLE_KEY_FILE:-}
+      # The background runner: "on" in .env to start taking jobs. Without this
+      # line a MIGRATION_RUNNER in .env never reached the container (found
+      # 10 Oct 2026 writing the test guide) and no job ever ran.
+      Migration__Runner: ${MIGRATION_RUNNER:-off}
+      # Dovecot here has disable_plaintext_auth = yes (entrypoint.sh's
+      # production overlay): a sign-in before TLS is refused. So STARTTLS on
+      # 143, the certificate checked against the name it was issued for
+      # (deploy.sh copies Caddy's mail.* certificate) - the API reaches
+      # Dovecot as "dovecot", which is not on the certificate.
+      Migration__Imap__Security: starttls
+      Migration__Imap__TlsName: ${MIGRATION_IMAP_TLS_NAME:-mail.tatvaos.com}
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-tatvaos_mail};Username=tatvaos_app;Password=${APP_DB_PASSWORD:?APP_DB_PASSWORD must be set};Pooling=true"
       # Docs' file is built by the render service (below), on rendernet.
       Docs__RenderUrl: http://render:8080
